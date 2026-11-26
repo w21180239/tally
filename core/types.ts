@@ -31,6 +31,9 @@ export type UserRow = {
   toolUseId?: string;
   results?: { toolUseId: string; chars: number }[];
   text?: string;
+  /** Where a prompt line starts: transcript path and byte offset, so the full text can be fetched on demand. */
+  fileKey?: string;
+  offset?: number;
 };
 
 export type MetaRow = {

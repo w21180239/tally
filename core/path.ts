@@ -70,3 +70,11 @@ export function repoOf(cwd: string): string {
   }
   return parts.length ? parts[parts.length - 1] : "";
 }
+
+// Session id implied by a transcript path: `<id>.jsonl`, or the folder above `subagents`.
+export function sessionOfPath(path: string): string {
+  const parts = splitPath(path);
+  const at = parts.lastIndexOf("subagents");
+  if (at > 0) return parts[at - 1];
+  return baseName(path).replace(/\.jsonl$/, "");
+}

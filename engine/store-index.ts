@@ -1,5 +1,5 @@
 import type { FsReadCall } from "claude-code";
-import { decodeShard, encodeShardEx, readHeader } from "../core/shard.ts";
+import { decodeShardAsync, encodeShardAsync, readHeader } from "../core/shard.ts";
 import type { Shard } from "../core/shard.ts";
 import { joinPath } from "../core/path.ts";
 
@@ -29,6 +29,8 @@ const dirOf = (cfg: string, project: string) => joinPath(cfg, "tally", "index", 
 type Slot = "A" | "B";
 type Head = { seq: number; nonce: string; slot: Slot; parts: number };
 type Found = { shard: Shard; seq: number; slot: Slot };
+type Tick = () => Promise<void>;
+const noTick: Tick = async () => {};
 
 async function readHead(env: StoreEnv, dir: string): Promise<Head | null> {
   try {
@@ -40,16 +42,21 @@ async function readHead(env: StoreEnv, dir: string): Promise<Head | null> {
   }
 }
 
-// A slot is valid only when all its parts belong to one save of this project; `want` (from HEAD) also pins seq/nonce/n.
-async function readSlot(env: StoreEnv, dir: string, slot: Slot, project: string, want?: Head): Promise<Found | null> {
+// A slot is valid only when all its parts belong to one save under `name`; `want` (from HEAD) also pins seq/nonce/n,
+// `seq` pins the save counter alone.
+async function readSlot(env: StoreEnv, dir: string, slot: Slot, name: string, tick: Tick, want?: Head, seq?: number): Promise<Found | null> {
   try {
     const p0 = await env.fs.read(joinPath(dir, `${slot}-0.json`), { as: "text" });
     const hd = readHeader(p0);
-    if (!hd || hd.project !== project) return null;
+    if (!hd || hd.project !== name) return null;
     if (want && (hd.seq !== want.seq || hd.nonce !== want.nonce || hd.n !== want.parts)) return null;
+    if (seq !== undefined && hd.seq !== seq) return null;
     const parts = [p0];
-    for (let i = 1; i < hd.n; i++) parts.push(await env.fs.read(joinPath(dir, `${slot}-${i}.json`), { as: "text" }));
-    return { shard: decodeShard(parts), seq: hd.seq, slot };
+    for (let i = 1; i < hd.n; i++) {
+      await tick();
+      parts.push(await env.fs.read(joinPath(dir, `${slot}-${i}.json`), { as: "text" }));
+    }
+    return { shard: await decodeShardAsync(parts, tick), seq: hd.seq, slot };
   } catch {
     return null;
   }
@@ -57,39 +64,72 @@ async function readSlot(env: StoreEnv, dir: string, slot: Slot, project: string,
 
 // HEAD is the fast path; when it is missing, torn or its slot is inconsistent, probe both slots
 // and take the valid one with the highest seq. null only when neither slot is valid.
-async function best(env: StoreEnv, dir: string, project: string): Promise<Found | null> {
+async function best(env: StoreEnv, dir: string, name: string, tick: Tick): Promise<Found | null> {
   const head = await readHead(env, dir);
   if (head) {
-    const f = await readSlot(env, dir, head.slot, project, head);
+    const f = await readSlot(env, dir, head.slot, name, tick, head);
     if (f) return f;
   }
-  const a = await readSlot(env, dir, "A", project);
-  const b = await readSlot(env, dir, "B", project);
+  const a = await readSlot(env, dir, "A", name, tick);
+  const b = await readSlot(env, dir, "B", name, tick);
   if (a && b) return a.seq >= b.seq ? a : b;
   return a ?? b;
 }
 
-export async function loadShard(env: StoreEnv, cfg: string, project: string): Promise<Shard | null> {
-  return (await best(env, dirOf(cfg, project), project))?.shard ?? null;
+export async function loadShard(env: StoreEnv, cfg: string, project: string, tick: Tick = noTick): Promise<Shard | null> {
+  return (await best(env, dirOf(cfg, project), project, tick))?.shard ?? null;
 }
 
-// $.fs has no delete, so two slots A/B alternate: write the slot that does not hold the best save
+/** Newest valid save under `dir`, stored under header name `name`. */
+export async function loadAt(env: StoreEnv, dir: string, name: string, tick: Tick = noTick): Promise<Shard | null> {
+  return (await best(env, dir, name, tick))?.shard ?? null;
+}
+
+/** The save with exactly this counter (either slot), or null when it is gone or damaged. */
+export async function loadAtSeq(env: StoreEnv, dir: string, name: string, seq: number, tick: Tick = noTick): Promise<Shard | null> {
+  const head = await readHead(env, dir);
+  if (head?.seq === seq) {
+    const f = await readSlot(env, dir, head.slot, name, tick, head);
+    if (f) return f.shard;
+  }
+  const other: Slot = head?.slot === "A" ? "B" : "A";
+  const slots: Slot[] = head ? [other] : ["A", "B"];
+  for (const slot of slots) {
+    const f = await readSlot(env, dir, slot, name, tick, undefined, seq);
+    if (f) return f.shard;
+  }
+  return null;
+}
+
+// $.fs has no delete, so two slots A/B alternate: write the slot that does not hold the newest save
 // (all parts first, then HEAD). Parts carry {seq, nonce, i, n}, so a reader rejects a slot mixed
 // from two concurrent saves; leftover extra parts are ignored because n says how many to read.
-// Returns the number of rows dropped for exceeding the part limit on their own.
-export async function saveShard(env: StoreEnv, cfg: string, shard: Shard): Promise<{ dropped: number }> {
-  const dir = dirOf(cfg, shard.project);
-  const cur = await best(env, dir, shard.project);
+// A valid HEAD names the newest save without reading it; otherwise both slots are probed.
+// Returns the new seq and the number of rows dropped for exceeding the part limit on their own.
+export async function saveAt(env: StoreEnv, dir: string, shard: Shard, tick: Tick = noTick): Promise<{ dropped: number; seq: number }> {
+  const head = await readHead(env, dir);
+  const cur = head ? { slot: head.slot, seq: head.seq } : await best(env, dir, shard.project, tick);
   const slot: Slot = cur?.slot === "A" ? "B" : "A";
   const seq = (cur?.seq ?? 0) + 1;
   const nonce = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-  const { parts, dropped } = encodeShardEx(shard, { seq, nonce });
-  for (let i = 0; i < parts.length; i++) await env.fs.write(joinPath(dir, `${slot}-${i}.json`), parts[i]);
+  const { parts, dropped } = await encodeShardAsync(shard, { seq, nonce }, tick);
+  for (let i = 0; i < parts.length; i++) {
+    await env.fs.write(joinPath(dir, `${slot}-${i}.json`), parts[i]);
+    await tick();
+  }
   await env.fs.write(joinPath(dir, "HEAD.json"), JSON.stringify({ seq, nonce, slot, parts: parts.length }));
+  return { dropped, seq };
+}
+
+export async function saveShard(env: StoreEnv, cfg: string, shard: Shard, tick: Tick = noTick): Promise<{ dropped: number }> {
+  const { dropped } = await saveAt(env, dirOf(cfg, shard.project), shard, tick);
   return { dropped };
 }
 
-// Save counter of a project's shard, from HEAD alone; 0 when there is none. Cheap change probe for readers.
+/** Folder of a project's index: manifest store at its top, bucket stores in sub-folders. */
+export const projectDir = dirOf;
+
+// Save counter of a project's newest manifest, from HEAD alone; 0 when there is none. Cheap change probe for readers.
 export async function shardSeq(env: StoreEnv, cfg: string, project: string): Promise<number> {
   return (await readHead(env, dirOf(cfg, project)))?.seq ?? 0;
 }

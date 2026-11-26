@@ -1,7 +1,7 @@
 import type { FsReadCall } from "claude-code";
 import { joinPath } from "../core/path.ts";
 import { WINDOW_MS } from "../core/plan-scan.ts";
-import { loadShard } from "./store-index.ts";
+import { loadProject } from "./project-store.ts";
 
 export type ScanProgress = {
   phase: "idle" | "listing" | "current" | "day" | "month" | "done";
@@ -47,7 +47,7 @@ export async function readProgress(env: ProgressEnv, cfg: string): Promise<(Scan
 export async function tokens30d(env: ProgressEnv, cfg: string, projects: string[], nowMs: number): Promise<number> {
   let total = 0;
   for (const project of projects) {
-    const shard = await loadShard(env, cfg, project);
+    const shard = await loadProject(env, cfg, project, nowMs);
     if (!shard) continue;
     for (const r of shard.usage) {
       if (r.synthetic || r.ts < nowMs - WINDOW_MS) continue;

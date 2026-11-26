@@ -57,6 +57,26 @@ describe("readIncrement", () => {
     expect(w.reads[w.reads.length - 1]!.offset).toBe(st.offset);
   });
 
+  test("the sink gets each line's byte offset; none after an invalid byte", async () => {
+    const w = worldOf();
+    const l1 = line(1, 0).replace("demo", "d\u00e9mo") + "\n";
+    const l2 = line(2) + "\n";
+    w.put(P, l1 + l2);
+    const at: (number | undefined)[] = [];
+    await readIncrement(w.$, P, undefined, { size: w.size(P)!, mtimeMs: w.mtime(P)! }, ctx, (_p, o) => at.push(o), slicer());
+    expect(at).toEqual([0, new TextEncoder().encode(l1).length]);
+    // an invalid byte in line 1 makes later offsets in the chunk unknown
+    const enc = new TextEncoder();
+    const [head, tail] = line(3).split("demo");
+    const bytes = new Uint8Array([...enc.encode(head + "de"), 0xff, ...enc.encode("mo" + tail + "\n" + line(4) + "\n")]);
+    w.putBytes(P, bytes);
+    const at2: (number | undefined)[] = [];
+    await readIncrement(w.$, P, undefined, { size: w.size(P)!, mtimeMs: w.mtime(P)! }, ctx, (_p, o) => at2.push(o), slicer());
+    expect(at2.length).toBe(2);
+    expect(at2[0]).toBe(0);
+    expect(at2[1]).toBeUndefined();
+  });
+
   test("a half line at the end waits for its newline", async () => {
     const w = worldOf();
     const $ = w.$;

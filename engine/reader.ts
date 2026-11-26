@@ -86,7 +86,7 @@ export async function readIncrement(
   prev: FileState | undefined,
   listed: { size: number; mtimeMs: number },
   ctx: FileCtx,
-  sink: (p: Parsed) => void,
+  sink: (p: Parsed, at?: number) => void,
   slicer: Slicer,
 ): Promise<FileState> {
   if (prev && prev.size === listed.size && prev.mtimeMs === listed.mtimeMs) return prev;
@@ -99,10 +99,14 @@ export async function readIncrement(
     const chunk = await $.fs.read(path, { offset, length });
     const taken = takeLines(chunk);
     if (taken.consumed > 0) {
+      // Byte offset of each line start; unknown after a U+FFFD, which may stand for 1-3 bytes.
+      let at: number | undefined = offset;
       for (const line of taken.lines) {
+        const lineAt = at;
+        if (at !== undefined) at = line.includes(FFFD) ? undefined : at + utf8Length(line) + 1;
         if (line === "") continue;
         const p = parseLine(line, ctx);
-        if (p) sink(p);
+        if (p) sink(p, lineAt);
         await slicer.check();
       }
       let consumed = taken.consumed;
