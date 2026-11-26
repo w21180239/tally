@@ -12,7 +12,10 @@ const LIMIT = 4_194_304;
 
 export type FakeEnv = {
   fs: {
-    read(path: string, o?: { as?: "text"; offset?: number; length?: number }): Promise<string>;
+    read: {
+      (path: string, o?: { as?: "text"; offset?: number; length?: number }): Promise<string>;
+      (path: string, o: { as: "bytes"; offset?: number; length?: number }): Promise<{ base64: string }>;
+    };
     write(path: string, text: string): Promise<void>;
     list(path: string): Promise<FsEntry[]>;
     exists(path: string): Promise<boolean>;
@@ -41,6 +44,8 @@ export type World = {
   stored: Map<string, unknown>;
   /** Create or replace a file; mtime bumps. */
   put(path: string, text: string): void;
+  /** Create or replace a file from raw bytes (invalid UTF-8 allowed). */
+  putBytes(path: string, bytes: Uint8Array): void;
   append(path: string, text: string): void;
   /** Cut a file to its first `bytes` bytes. */
   truncate(path: string, bytes: number): void;
@@ -54,6 +59,11 @@ export type World = {
 
 const enc = new TextEncoder();
 const dec = new TextDecoder("utf-8", { ignoreBOM: true });
+const b64 = (b: Uint8Array): string => {
+  let s = "";
+  for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode(...b.subarray(i, i + 8192));
+  return btoa(s);
+};
 const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 
 export function worldOf(storeEntries: Record<string, unknown> = {}): World {
@@ -79,6 +89,9 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
     stored,
     put(path, text) {
       files.set(norm(path), { bytes: enc.encode(text), mtimeMs: stamp() });
+    },
+    putBytes(path, bytes) {
+      files.set(norm(path), { bytes: bytes.slice(), mtimeMs: stamp() });
     },
     append(path, text) {
       const cur = files.get(norm(path))?.bytes ?? new Uint8Array(0);
@@ -136,7 +149,7 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
 
   world.$ = {
     fs: {
-      async read(path, o = {}) {
+      read: (async (path: string, o: { as?: "text" | "bytes"; offset?: number; length?: number } = {}) => {
         world.reads.push({ path, offset: o.offset ?? 0, length: o.length });
         const f = files.get(norm(path));
         if (!f) throw enoent(path);
@@ -144,8 +157,10 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
         const from = o.offset ?? 0;
         const to = o.length === undefined ? f.bytes.length : Math.min(f.bytes.length, from + o.length);
         // A cut character decodes to U+FFFD, as in the engine.
-        return dec.decode(f.bytes.subarray(from, to));
-      },
+        const slice = f.bytes.subarray(from, to);
+        if (o.as === "bytes") return { base64: b64(slice) };
+        return dec.decode(slice);
+      }) as FakeEnv["fs"]["read"],
       async write(path, text) {
         world.writeCount++;
         if (world.failWriteAt === world.writeCount) throw new Error(`EIO: write failed: ${path}`);
