@@ -1,0 +1,80 @@
+{
+  "name": "tally",
+  "description": "Shows Claude Code spend in API-equivalent dollars, what fills the context, and hints on how to spend less. Reads transcripts locally; no dependencies.",
+  "version": "0.1.0",
+  "author": { "name": "VI" },
+  "license": "MIT",
+  "keywords": ["usage", "tokens", "cost", "context"],
+  "userConfig": {
+    "priceUpdate": {
+      "type": "boolean",
+      "title": "Update prices online",
+      "description": "Fetch the current price table from the Anthropic pricing page. Off keeps the built-in prices.",
+      "default": true
+    },
+    "syncDir": {
+      "type": "string",
+      "title": "Sync folder",
+      "description": "A git-synced folder where tally shares its totals between machines. Empty turns sharing off.",
+      "default": ""
+    },
+    "machineName": {
+      "type": "string",
+      "title": "Machine name",
+      "description": "How this machine is labelled in shared totals. Empty uses the hostname.",
+      "default": ""
+    },
+    "shareDetail": {
+      "type": "string",
+      "title": "Sharing detail",
+      "description": "numbers shares totals only; repos adds repository names; full adds session detail.",
+      "default": "numbers",
+      "options": ["numbers", "repos", "full"]
+    },
+    "redactEvidence": {
+      "type": "boolean",
+      "title": "Redact evidence",
+      "description": "Hide prompt and file text in the evidence shown behind a hint.",
+      "default": false
+    },
+    "recheckDays": {
+      "type": "number",
+      "title": "Recheck days",
+      "description": "Days before a dismissed hint is checked again.",
+      "default": 14
+    },
+    "open": {
+      "type": "string",
+      "title": "When the window opens",
+      "description": "before-first-message opens at session start and folds on your first message; always keeps it open; never opens it only on /tally.",
+      "default": "before-first-message",
+      "options": ["before-first-message", "always", "never"]
+    },
+    "money": {
+      "type": "string",
+      "title": "Money shown as",
+      "description": "cents-and-dollars shows cents under $1 and dollars above; cents and dollars use one unit throughout.",
+      "default": "cents-and-dollars",
+      "options": ["cents-and-dollars", "cents", "dollars"]
+    },
+    "decimals": {
+      "type": "string",
+      "title": "Decimal places",
+      "description": "auto trims trailing zeros; a number fixes the decimals shown on every amount.",
+      "default": "auto",
+      "options": ["auto", "0", "1", "2", "3", "4"]
+    },
+    "desktopRow": {
+      "type": "boolean",
+      "title": "Info row above the prompt (desktop app)",
+      "description": "Show a quiet summary row above the prompt in the desktop app.",
+      "default": true
+    },
+    "herdrSidebar": {
+      "type": "boolean",
+      "title": "Show in a Herdr sidebar",
+      "description": "Also write the spend report to a Herdr sidebar mod.",
+      "default": false
+    }
+  }
+}

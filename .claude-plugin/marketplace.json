@@ -1,0 +1,11 @@
+{
+  "name": "tally",
+  "owner": { "name": "VI" },
+  "plugins": [
+    {
+      "name": "tally",
+      "source": "./",
+      "description": "Claude Code spend, context makeup and money-saving hints."
+    }
+  ]
+}
