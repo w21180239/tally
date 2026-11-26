@@ -1,7 +1,7 @@
 import { describe, test, expect, mock } from "claude-code/testing";
 import type { On } from "claude-code";
 import { createSlicer, makeSlicer } from "../engine/slicer.ts";
-import { worldOf } from "./world.ts";
+import type { Engine } from "claude-code/testing";
 
 // MockClock needs a hook registry (`on`); a no-op one is enough as the slicer only reads its time.
 const noOn = (() => {}) as unknown as On;
@@ -39,22 +39,43 @@ describe("slicer", () => {
     expect(s.slices).toBe(2);
   });
 
-  test("a backward clock step never forces a yield", async () => {
+  test("a backward clock step re-baselines, then yields resume after the budget", async () => {
     let t = 1000;
     let yields = 0;
-    const s = createSlicer(() => t, async () => { yields++; }, 0);
+    const s = createSlicer(() => t, async () => { yields++; }, 50);
     t = 500;
     await s.check();
     expect(yields).toBe(0);
+    t = 540;
+    await s.check();
+    expect(yields).toBe(0);
+    t = 551;
+    await s.check();
+    expect(yields).toBe(1);
   });
 
-  test("makeSlicer yields through $.clock.sleep(0)", async () => {
-    const w = worldOf();
+  test("makeSlicer measures with Date.now and yields through $.clock.sleep(0)", async () => {
     const sleeps: number[] = [];
-    const $ = { ...w.$, clock: { ...w.$.clock, sleep: async (ms: number) => void sleeps.push(ms) } };
-    const s = makeSlicer($ as never, -1);
-    await s.check();
-    expect(sleeps).toEqual([0]);
-    expect(s.slices).toBe(1);
+    const $ = { clock: { sleep: async (ms: number) => void sleeps.push(ms) } };
+    const RealDate = Date;
+    let t = 5000;
+    // Date.now is frozen; swap the global Date instead.
+    (globalThis as { Date: unknown }).Date = class extends RealDate {
+      static override now() {
+        return t;
+      }
+    };
+    try {
+      const s = makeSlicer($ as unknown as Engine, 50);
+      t += 50;
+      await s.check();
+      expect(sleeps).toEqual([]);
+      t += 1;
+      await s.check();
+      expect(sleeps).toEqual([0]);
+      expect(s.slices).toBe(1);
+    } finally {
+      (globalThis as { Date: unknown }).Date = RealDate;
+    }
   });
 });
