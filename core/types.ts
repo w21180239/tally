@@ -29,6 +29,7 @@ export type UserRow = {
   kind: "prompt" | "notice" | "compaction" | "toolResult";
   chars: number;
   toolUseId?: string;
+  results?: { toolUseId: string; chars: number }[];
   text?: string;
 };
 

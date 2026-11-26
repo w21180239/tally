@@ -98,6 +98,21 @@ describe("parseLine user", () => {
     expect(r.chars).toBe(5);
     expect(userRow(parseLine(toolResult("tu-2", [{ type: "text", text: "a" }]), ctx)).chars).toBe(JSON.stringify([{ type: "text", text: "a" }]).length);
   });
+  test("several tool results keep per-block sizes", () => {
+    const line = user([
+      { type: "tool_result", tool_use_id: "a", content: "1" },
+      { type: "tool_result", tool_use_id: "b", content: "22" },
+      { type: "tool_result", tool_use_id: "c", content: "333" },
+    ]);
+    const r = userRow(parseLine(line, ctx));
+    expect(r.results).toEqual([
+      { toolUseId: "a", chars: 1 },
+      { toolUseId: "b", chars: 2 },
+      { toolUseId: "c", chars: 3 },
+    ]);
+    expect(r.chars).toBe(6);
+    expect(r.toolUseId).toBe("a");
+  });
   test("empty user line is skipped", () => {
     expect(parseLine(user(""), ctx)).toBe(null);
   });

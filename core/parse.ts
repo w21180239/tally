@@ -105,10 +105,13 @@ function userRow(l: Rec, ctx: FileCtx): Parsed | null {
   const sessionId = sessionOf(l, ctx);
   const results = Array.isArray(content) ? content.filter((b) => isRec(b) && b.type === "tool_result") : [];
   if (results.length > 0) {
-    // One row per line: chars sum every result, toolUseId is the first one's.
+    // One row per line: chars sums all blocks, toolUseId is the first, results lists every block.
+    // Any text beside tool_result blocks is dropped on purpose.
     const row: UserRow = { sessionId, ts, kind: "toolResult", chars: results.reduce((n, b) => n + charsOf(b.content), 0) };
     const id = nonEmpty(results[0].tool_use_id);
     if (id) row.toolUseId = id;
+    const per = results.flatMap((b) => { const i = nonEmpty(b.tool_use_id); return i ? [{ toolUseId: i, chars: charsOf(b.content) }] : []; });
+    if (per.length > 0) row.results = per;
     return { t: "user", row };
   }
   const text = textOf(content);
