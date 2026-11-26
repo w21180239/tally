@@ -12,7 +12,7 @@ export function createSlicer(now: () => number, yieldFn: () => Promise<void>, bu
   const s: Slicer = {
     slices: 0,
     async check() {
-      if (now() - start <= budgetMs) return;
+      if (Math.max(0, now() - start) <= budgetMs) return;
       s.slices++;
       await yieldFn();
       start = now();
