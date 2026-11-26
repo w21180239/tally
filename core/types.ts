@@ -48,3 +48,5 @@ export type Parsed =
   | { t: "compact"; row: CompactRow };
 
 export type FileCtx = { path: string; isSub: boolean; agentType?: string; repo: string };
+
+export type FileState = { size: number; mtimeMs: number; offset: number };

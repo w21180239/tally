@@ -1,13 +1,13 @@
 import type { FsReadCall } from "claude-code";
 import { parseOversized, takeLines, utf8Length } from "../core/lines.ts";
 import { parseLine } from "../core/parse.ts";
-import type { FileCtx, Parsed } from "../core/types.ts";
+import type { FileCtx, FileState, Parsed } from "../core/types.ts";
 import type { Slicer } from "./slicer.ts";
 
 // The slice of `$` the reader uses; the real plugin `$` (FsReadCall overloads) and tests/world.ts both fit.
 export type ReaderEnv = { fs: { read: FsReadCall } };
 
-export type FileState = { size: number; mtimeMs: number; offset: number };
+export type { FileState };
 
 export const CHUNK = 4_194_304;
 const EDGE = 65_536;
