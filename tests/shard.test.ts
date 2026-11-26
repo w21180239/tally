@@ -1,8 +1,9 @@
 import { describe, test, expect } from "claude-code/testing";
-import { decodeShard, encodeShard, trimShard, PART_MAX } from "../core/shard.ts";
+import { decodeShard, encodeShard, encodeShardEx, trimShard, PART_MAX } from "../core/shard.ts";
 import type { Shard } from "../core/shard.ts";
 import { utf8Length } from "../core/lines.ts";
 import { loadShard, projectKey, saveShard } from "../engine/store-index.ts";
+import { joinPath } from "../core/path.ts";
 import type { UsageRow } from "../core/types.ts";
 import { worldOf } from "./world.ts";
 
@@ -74,7 +75,7 @@ describe("store index", () => {
     await saveShard(w.$, CFG, shard(5));
     await saveShard(w.$, CFG, shard(6));
     expect((await loadShard(w.$, CFG, "demo"))?.usage.length).toBe(6);
-    const heads = w.writes.filter((x) => x.path.endsWith("HEAD.json")).map((x) => JSON.parse(x.text).gen);
+    const heads = w.writes.filter((x) => x.path.endsWith("HEAD.json")).map((x) => JSON.parse(x.text).slot);
     expect(heads).toEqual(["A", "B"]);
   });
   test("a crash before HEAD keeps the previous generation", async () => {
@@ -94,14 +95,88 @@ describe("store index", () => {
     await expect(saveShard(w.$, CFG, next)).rejects.toThrow();
     expect((await loadShard(w.$, CFG, "demo"))?.usage.length).toBe(20_000);
   });
-  test("garbage HEAD or a missing part loads as null", async () => {
+  test("an empty store loads as null; a HEAD naming the wrong part count falls back to probing", async () => {
     const w = worldOf();
     expect(await loadShard(w.$, CFG, "demo")).toBeNull();
     await saveShard(w.$, CFG, shard(3));
     const head = w.writes[w.writes.length - 1].path;
-    w.put(head, "{{not json");
+    w.put(head, JSON.stringify({ seq: 1, nonce: "x", slot: "A", parts: 3 }));
+    expect((await loadShard(w.$, CFG, "demo"))?.usage.length).toBe(3);
+  });
+});
+
+const heavy = (n: number, ch: number): Shard => {
+  const s = shard(n);
+  for (const r of s.usage) r.tools = [{ name: "Read", target: "\u00e9".repeat(ch), inputChars: ch }];
+  return s;
+};
+const dirFor = (project: string) => joinPath(CFG, "tally", "index", projectKey(project));
+
+describe("shard fix round 1", () => {
+  test("heavy non-ASCII chunks are halved; an oversize row is dropped and counted", () => {
+    const s = heavy(800, 10_000);
+    s.usage[10].tools = [{ name: "Read", target: "\u00e9".repeat(2_500_000), inputChars: 1 }];
+    const { parts, dropped } = encodeShardEx(s);
+    expect(dropped).toBe(1);
+    for (const p of parts) expect(utf8Length(p)).toBeLessThanOrEqual(PART_MAX);
+    expect(decodeShard(parts).usage.length).toBe(799);
+  });
+  test("saveShard survives heavy rows and reports the drop", async () => {
+    const w = worldOf();
+    const s = heavy(600, 10_000);
+    s.usage[0].tools = [{ name: "Read", target: "x".repeat(4_000_000), inputChars: 1 }];
+    const r = await saveShard(w.$, CFG, s);
+    expect(r.dropped).toBe(1);
+    expect((await loadShard(w.$, CFG, "demo"))?.usage.length).toBe(599);
+  });
+  test("a torn or garbage HEAD still loads the newest valid slot", async () => {
+    const w = worldOf();
+    await saveShard(w.$, CFG, shard(5));
+    await saveShard(w.$, CFG, shard(6));
+    w.put(joinPath(dirFor("demo"), "HEAD.json"), '{"seq":2,"no');
+    expect((await loadShard(w.$, CFG, "demo"))?.usage.length).toBe(6);
+    await saveShard(w.$, CFG, shard(7));
+    expect((await loadShard(w.$, CFG, "demo"))?.usage.length).toBe(7);
+  });
+  test("interleaved parts from two saves reject that slot and fall back to the other", async () => {
+    const w = worldOf();
+    await saveShard(w.$, CFG, shard(5));
+    await saveShard(w.$, CFG, shard(6));
+    await saveShard(w.$, CFG, heavy(400, 10_000));
+    const other = encodeShard(heavy(400, 10_000), { seq: 3, nonce: "other" });
+    expect(other.length).toBeGreaterThan(1);
+    const dir = dirFor("demo");
+    const mine = JSON.parse(w.text(joinPath(dir, "HEAD.json"))!) as { slot: string };
+    w.put(joinPath(dir, `${mine.slot}-1.json`), other[1]);
+    expect((await loadShard(w.$, CFG, "demo"))?.usage.length).toBe(6);
+  });
+  test("both slots invalid loads as null", async () => {
+    const w = worldOf();
+    await saveShard(w.$, CFG, shard(5));
+    const dir = dirFor("demo");
+    w.put(joinPath(dir, "A-0.json"), "garbage");
+    w.put(joinPath(dir, "B-0.json"), "garbage");
     expect(await loadShard(w.$, CFG, "demo")).toBeNull();
-    w.put(head, JSON.stringify({ gen: "A", parts: 3 }));
-    expect(await loadShard(w.$, CFG, "demo")).toBeNull();
+  });
+  test("a shard stored under another project name is rejected", async () => {
+    const w = worldOf();
+    await saveShard(w.$, CFG, { ...shard(3), project: "one" });
+    const from = dirFor("one");
+    const to = dirFor("two");
+    for (const f of ["HEAD.json", "A-0.json"]) w.put(joinPath(to, f), w.text(joinPath(from, f))!);
+    expect(await loadShard(w.$, CFG, "two")).toBeNull();
+  });
+  test("trim keeps rows exactly at the cutoff and drops one ms older", () => {
+    const s = shard(0);
+    s.usage = [usage(1, 5000), usage(2, 4999)];
+    s.users = [{ sessionId: "s-0", ts: 5000, kind: "prompt", chars: 1 }, { sessionId: "s-0", ts: 4999, kind: "prompt", chars: 1 }];
+    s.compacts = [{ sessionId: "s-0", ts: 5000 }, { sessionId: "s-0", ts: 4999 }];
+    s.files["/p/a/s-0.jsonl"].mtimeMs = 5000;
+    s.files["/p/a/s-1.jsonl"].mtimeMs = 4999;
+    const t = trimShard(s, 5000);
+    expect(t.usage.map((r) => r.ts)).toEqual([5000]);
+    expect(t.users.map((r) => r.ts)).toEqual([5000]);
+    expect(t.compacts.map((r) => r.ts)).toEqual([5000]);
+    expect(Object.keys(t.files)).toEqual(["/p/a/s-0.jsonl"]);
   });
 });

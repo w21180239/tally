@@ -78,49 +78,84 @@ function usageRows(cols: unknown[][]): UsageRow[] {
 }
 
 type Item = [kind: string, value: unknown];
+export type PartHeader = { seq: number; nonce: string; i: number; n: number; project: string };
 
-function* items(s: Shard): Generator<Item> {
-  for (const [k, f] of Object.entries(s.files)) yield ["files", { [k]: f }];
-  for (let i = 0; i < s.usage.length; i += USAGE_CHUNK) yield ["usage", usageCols(s.usage.slice(i, i + USAGE_CHUNK))];
-  const lists: [string, unknown[]][] = [
-    ["users", s.users],
-    ["metas", s.metas],
-    ["compacts", s.compacts],
-    ["snapshots", s.snapshots],
-  ];
-  for (const [kind, list] of lists) for (let i = 0; i < list.length; i += ROW_CHUNK) yield [kind, list.slice(i, i + ROW_CHUNK)];
-}
-
-// Greedy pack into parts of at most PART_MAX UTF-8 bytes each.
-export function encodeShard(s: Shard): string[] {
-  const head = `{"v":1,"project":${JSON.stringify(s.project)},"items":[`;
-  const base = utf8Length(head) + 2;
-  const parts: string[] = [];
-  let cur: string[] = [];
-  let size = base;
-  const flush = () => {
-    parts.push(head + cur.join(",") + "]}");
-    cur = [];
-    size = base;
-  };
-  for (const it of items(s)) {
-    const j = JSON.stringify(it);
-    const n = utf8Length(j) + 1;
-    if (base + n > PART_MAX) throw new Error(`shard item over part limit: ${it[0]}`);
-    if (size + n > PART_MAX && cur.length) flush();
-    cur.push(j);
-    size += n;
+export function readHeader(part: string): PartHeader | null {
+  try {
+    const o = JSON.parse(part) as Partial<PartHeader> & { v?: number };
+    if (o.v !== 1 || typeof o.seq !== "number" || typeof o.nonce !== "string") return null;
+    if (!Number.isInteger(o.i) || !Number.isInteger(o.n) || typeof o.project !== "string") return null;
+    return { seq: o.seq, nonce: o.nonce, i: o.i as number, n: o.n as number, project: o.project };
+  } catch {
+    return null;
   }
-  if (cur.length || parts.length === 0) flush();
-  return parts;
 }
 
+// Packs items into parts of at most PART_MAX UTF-8 bytes. Oversize chunks are halved; a single
+// row that still does not fit is dropped and counted. Every part carries {seq, nonce, i, n, project}
+// so a reader can tell parts of one save from parts of another.
+export function encodeShardEx(s: Shard, h: { seq: number; nonce: string } = { seq: 0, nonce: "" }): { parts: string[]; dropped: number } {
+  const project = JSON.stringify(s.project);
+  const reserve = 120 + utf8Length(project) + utf8Length(h.nonce);
+  const budget = PART_MAX - reserve;
+  const groups: string[][] = [];
+  let cur: string[] = [];
+  let size = 0;
+  let dropped = 0;
+  const add = (it: string, n: number) => {
+    if (size + n > budget && cur.length) {
+      groups.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(it);
+    size += n;
+  };
+  const emit = <T,>(kind: string, list: T[], enc: (l: T[]) => unknown) => {
+    const it = JSON.stringify([kind, enc(list)]);
+    const n = utf8Length(it) + 1;
+    if (n <= budget) return add(it, n);
+    if (list.length === 1) {
+      dropped++;
+      return;
+    }
+    const mid = list.length >> 1;
+    emit(kind, list.slice(0, mid), enc);
+    emit(kind, list.slice(mid), enc);
+  };
+  const chunked = <T,>(kind: string, list: T[], step: number, enc: (l: T[]) => unknown) => {
+    for (let i = 0; i < list.length; i += step) emit(kind, list.slice(i, i + step), enc);
+  };
+  chunked("files", Object.entries(s.files), ROW_CHUNK, (l) => Object.fromEntries(l));
+  chunked("usage", s.usage, USAGE_CHUNK, usageCols);
+  chunked("users", s.users, ROW_CHUNK, (l) => l);
+  chunked("metas", s.metas, ROW_CHUNK, (l) => l);
+  chunked("compacts", s.compacts, ROW_CHUNK, (l) => l);
+  chunked("snapshots", s.snapshots, ROW_CHUNK, (l) => l);
+  if (cur.length || groups.length === 0) groups.push(cur);
+  const n = groups.length;
+  const parts = groups.map(
+    (g, i) => `{"v":1,"project":${project},"seq":${h.seq},"nonce":${JSON.stringify(h.nonce)},"i":${i},"n":${n},"items":[${g.join(",")}]}`,
+  );
+  return { parts, dropped };
+}
+
+export function encodeShard(s: Shard, h?: { seq: number; nonce: string }): string[] {
+  return encodeShardEx(s, h).parts;
+}
+
+// Throws unless the parts are one complete save: same seq/nonce/project, i in order, n matching.
 export function decodeShard(parts: string[]): Shard {
   const out: Shard = { v: 1, project: "", files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [] };
+  let first: PartHeader | null = null;
   parts.forEach((p, i) => {
-    const o = JSON.parse(p) as { v: number; project: string; items: Item[] };
-    if (o.v !== 1 || !Array.isArray(o.items)) throw new Error("bad shard part");
-    if (i === 0) out.project = o.project;
+    const hd = readHeader(p);
+    if (!hd) throw new Error("bad shard part");
+    first ??= hd;
+    if (hd.i !== i || hd.n !== parts.length || hd.seq !== first.seq || hd.nonce !== first.nonce || hd.project !== first.project) throw new Error("inconsistent shard parts");
+    const o = JSON.parse(p) as { items: Item[] };
+    if (!Array.isArray(o.items)) throw new Error("bad shard part");
+    if (i === 0) out.project = hd.project;
     for (const [kind, val] of o.items) {
       if (kind === "files") Object.assign(out.files, val);
       else if (kind === "usage") out.usage.push(...usageRows(val as unknown[][]));
