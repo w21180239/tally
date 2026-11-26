@@ -15,6 +15,9 @@ export type ScanProgress = {
   dropped?: number;
 };
 
+type Tick = () => Promise<void>;
+const noTick: Tick = async () => {};
+
 export type ProgressEnv = { fs: { read: FsReadCall; write(path: string, text: string): Promise<void> } };
 
 const pathOf = (cfg: string) => joinPath(cfg, "tally", "progress.json");
@@ -44,12 +47,15 @@ export async function readProgress(env: ProgressEnv, cfg: string): Promise<(Scan
 }
 
 /** Tokens of every priced-or-not row inside the 30-day window across the given projects. */
-export async function tokens30d(env: ProgressEnv, cfg: string, projects: string[], nowMs: number): Promise<number> {
+export async function tokens30d(env: ProgressEnv, cfg: string, projects: string[], nowMs: number, tick: Tick = noTick): Promise<number> {
   let total = 0;
   for (const project of projects) {
-    const shard = await loadProject(env, cfg, project, nowMs);
+    await tick();
+    const shard = await loadProject(env, cfg, project, nowMs, tick);
     if (!shard) continue;
-    for (const r of shard.usage) {
+    for (let i = 0; i < shard.usage.length; i++) {
+      const r = shard.usage[i];
+      if ((i & 4095) === 4095) await tick();
       if (r.synthetic || r.ts < nowMs - WINDOW_MS) continue;
       const t = r.tokens;
       total += t.input + t.output + t.cacheRead + t.cw5m + t.cw1h;
@@ -58,7 +64,7 @@ export async function tokens30d(env: ProgressEnv, cfg: string, projects: string[
   return total;
 }
 
-export async function debugText(env: ProgressEnv, cfg: string, projects: string[], p: ScanProgress, nowMs: number): Promise<string> {
-  const tokens = await tokens30d(env, cfg, projects, nowMs);
+export async function debugText(env: ProgressEnv, cfg: string, projects: string[], p: ScanProgress, nowMs: number, tick: Tick = noTick): Promise<string> {
+  const tokens = await tokens30d(env, cfg, projects, nowMs, tick);
   return `tally debug\nprogress: ${JSON.stringify(p)}\nprojects: ${projects.length}\ntokens30d: ${tokens}`;
 }

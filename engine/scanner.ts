@@ -1,6 +1,6 @@
 import { Ledger } from "../core/ledger.ts";
 import { isSubagentPath, joinPath, sessionOfPath } from "../core/path.ts";
-import { orderFiles, WINDOW_MS } from "../core/plan-scan.ts";
+import { DAY_MS, orderFiles, WINDOW_MS } from "../core/plan-scan.ts";
 import type { FileJob, Listing } from "../core/plan-scan.ts";
 import type { Shard, ShardFile } from "../core/shard.ts";
 import type { CompactRow, MetaRow, Parsed, UserRow } from "../core/types.ts";
@@ -62,6 +62,8 @@ type ProjState = {
   ledger: Ledger;
   fileDay: Map<string, number>;
   metaDay: Map<string, number>;
+  /** mtime of the file each meta value was read from (this process only; a loaded value counts from its day's start). */
+  metaAt: Map<string, number>;
   /** Day buckets with changes not yet saved. */
   dirty: Set<number>;
   /** Bucket seqs the last committed manifest holds. */
@@ -69,7 +71,7 @@ type ProjState = {
 };
 
 const anyDirty = (st: ProjState) => st.dirty.size > 0;
-const emptyState = (): ProjState => ({ days: new Map(), ledger: new Ledger(), fileDay: new Map(), metaDay: new Map(), dirty: new Set(), seqs: {} });
+const emptyState = (): ProjState => ({ days: new Map(), ledger: new Ledger(), fileDay: new Map(), metaDay: new Map(), metaAt: new Map(), dirty: new Set(), seqs: {} });
 
 function dayOf(st: ProjState, idx: number): Day {
   let d = st.days.get(idx);
@@ -85,8 +87,11 @@ function fileOf(st: ProjState, path: string): ShardFile | undefined {
   return i === undefined ? undefined : st.days.get(i)?.files[path];
 }
 
-function putMeta(st: ProjState, key: string, row: MetaRow, idx: number): void {
+function putMeta(st: ProjState, key: string, row: MetaRow, idx: number, at: number): void {
   const old = st.metaDay.get(key);
+  // Files are read newest first: an older file must not replace what a newer one set.
+  if (at < (st.metaAt.get(key) ?? (old === undefined ? -Infinity : old * DAY_MS))) return;
+  st.metaAt.set(key, at);
   const cur = old === undefined ? undefined : st.days.get(old)?.metas.get(key);
   if (old === idx && JSON.stringify(cur?.value) === JSON.stringify(row.value)) return;
   if (old !== undefined && old !== idx) {
@@ -125,6 +130,16 @@ export async function listProjects($: Pick<ScannerEnv, "fs">, roots: string[]): 
   return [...out];
 }
 
+// Rows at or after `cutoff`, handing control back every few thousand rows.
+async function since<T extends { ts: number }>(rows: T[], cutoff: number, tick: () => Promise<void>): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].ts >= cutoff) out.push(rows[i]);
+    if ((i & 2047) === 2047) await tick();
+  }
+  return out;
+}
+
 const keyOf = (j: { size: number; mtimeMs: number }) => `${j.size}:${j.mtimeMs}`;
 
 export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; rescan(): void } {
@@ -147,6 +162,8 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
   const seqs = new Map<string, number>();
   // Outlives the in-memory state, which is dropped once a project is clean.
   const lastSave = new Map<string, number>();
+  // Bumped whenever the lease is lost: work that started under an earlier tenure drops its results.
+  let epoch = 0;
 
   const clearTimers = () => {
     for (const t of timers) t.cancel();
@@ -207,28 +224,40 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
   async function stateOf(project: string, slicer: Slicer): Promise<ProjState> {
     const have = states.get(project);
     if (have) return have;
+    const ep = epoch;
     const st = emptyState();
     const l = await loadBuckets($, cfg, project, await $.clock.now(), () => slicer.check());
     if (l.kind === "ok") {
       for (const [idx, b] of l.days) {
         const d = dayOf(st, idx);
         Object.assign(d.files, b.files);
-        for (const path of Object.keys(b.files)) st.fileDay.set(path, idx);
-        for (const r of b.usage) st.ledger.offer(r, "", r.sidechain);
+        let n = 0;
+        for (const path of Object.keys(b.files)) {
+          st.fileDay.set(path, idx);
+          if ((++n & 255) === 0) await slicer.check();
+        }
+        for (let i = 0; i < b.usage.length; i++) {
+          st.ledger.offer(b.usage[i], "", b.usage[i].sidechain);
+          if ((i & 255) === 255) await slicer.check();
+        }
         d.users = b.users;
         d.compacts = b.compacts;
-        for (const m of b.metas) {
+        for (let i = 0; i < b.metas.length; i++) {
+          const m = b.metas[i];
           const key = `${m.sessionId}\0${m.key}`;
           d.metas.set(key, m);
           st.metaDay.set(key, idx);
+          if ((i & 255) === 255) await slicer.check();
         }
+        await slicer.check();
       }
       st.seqs = l.seqs;
     } else if ([...known.values()].some((k) => k.project === project)) {
       // The index is gone or damaged under files already marked read: read the project again.
       forget(project);
     }
-    states.set(project, st);
+    // A lease lost while the index loaded: the state is stale and must not be kept.
+    if (ep === epoch) states.set(project, st);
     return st;
   }
 
@@ -255,6 +284,7 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
   }
 
   async function readJob(job: FileJob, slicer: Slicer): Promise<void> {
+    const ep = epoch;
     let st = await stateOf(job.project, slicer);
     let prev = fileOf(st, job.path);
     if (prev && job.size < prev.size) {
@@ -263,9 +293,15 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     }
     const isSub = isSubagentPath(job.path);
     const agentType = isSub ? (prev?.agentType ?? (await agentTypeOf(job.path))) : undefined;
+    // Rows are held until the whole increment has been read: a read that fails on a later chunk must leave
+    // no rows behind, or the retry (from the old offset) would add them twice.
+    const got: { p: Parsed; at?: number }[] = [];
     let session: string | undefined;
     const sink = (p: Parsed, at?: number) => {
       session ??= p.row.sessionId;
+      got.push({ p, at });
+    };
+    const apply = (p: Parsed, at: number | undefined) => {
       if (p.t === "usage") {
         const old = st.ledger.get(p.row.requestId);
         const verdict = st.ledger.offer(p.row, job.path, isSub);
@@ -289,7 +325,7 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
       } else if (p.t === "meta") {
         // last-prompt is a label; the index keeps a preview.
         if (p.row.key === "last-prompt" && typeof p.row.value === "string") p.row.value = p.row.value.slice(0, PROMPT_PREVIEW);
-        putMeta(st, `${p.row.sessionId}\0${p.row.key}`, p.row, dayIdx(job.mtimeMs));
+        putMeta(st, `${p.row.sessionId}\0${p.row.key}`, p.row, dayIdx(job.mtimeMs), job.mtimeMs);
       } else {
         const idx = dayIdx(p.row.ts);
         dayOf(st, idx).compacts.push(p.row);
@@ -299,9 +335,18 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     // repo is not known before the first row; consumers derive it from each row's cwd.
     const ctx = { path: job.path, isSub, agentType, repo: "" };
     const next = await readIncrement($, job.path, prev, job, ctx, sink, slicer);
-    const file: ShardFile = { ...next, isSub, sessionId: session ?? prev?.sessionId ?? sessionOfPath(job.path) };
-    if (agentType !== undefined) file.agentType = agentType;
-    putFile(st, job.path, file);
+    if (ep !== epoch) return;
+    // An unchanged file (same object back) has nothing to apply and nothing to save.
+    if (next !== prev) {
+      for (let i = 0; i < got.length; i++) {
+        apply(got[i].p, got[i].at);
+        if ((i & 255) === 255) await slicer.check();
+      }
+      if (ep !== epoch) return;
+      const file: ShardFile = { ...next, isSub, sessionId: session ?? prev?.sessionId ?? sessionOfPath(job.path) };
+      if (agentType !== undefined) file.agentType = agentType;
+      putFile(st, job.path, file);
+    }
     known.set(job.path, { project: job.project, key: keyOf(job) });
   }
 
@@ -309,11 +354,15 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
   // project; the first save of a project (cold scan) goes straight out.
   async function save(project: string, slicer: Slicer): Promise<void> {
     const st = states.get(project);
-    if (!st || !anyDirty(st)) return;
+    if (!st || !anyDirty(st) || !live()) return;
     const nowMs = await $.clock.now();
     const prev = lastSave.get(project);
     if (prev !== undefined && nowMs - prev < SAVE_MS) return;
-    const tick = () => slicer.check();
+    // Fence: a session that lost the lease, or was stopped, must not write over the new owner's index.
+    const tick = async () => {
+      if (!live()) throw new Error("lease lost");
+      await slicer.check();
+    };
     const cutoff = nowMs - WINDOW_MS;
     const cutIdx = dayIdx(cutoff);
     for (const idx of [...st.days.keys()]) {
@@ -340,18 +389,23 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     for (const idx of st.dirty) {
       const d = st.days.get(idx);
       const files: Record<string, ShardFile> = {};
-      for (const [path, f] of Object.entries(d?.files ?? {})) if (f.mtimeMs >= cutoff) files[path] = f;
+      let n = 0;
+      for (const [path, f] of Object.entries(d?.files ?? {})) {
+        if (f.mtimeMs >= cutoff) files[path] = f;
+        if ((++n & 1023) === 0) await tick();
+      }
       plan.days.set(idx, {
         v: 1,
         project,
         files,
         usage: usage.get(idx) ?? [],
-        users: (d?.users ?? []).filter((r) => r.ts >= cutoff),
+        users: await since(d?.users ?? [], cutoff, tick),
         metas: d ? [...d.metas.values()] : [],
-        compacts: (d?.compacts ?? []).filter((r) => r.ts >= cutoff),
+        compacts: await since(d?.compacts ?? [], cutoff, tick),
         snapshots: [],
       });
     }
+    if (!live()) return;
     const r = await saveBuckets($, cfg, project, plan, st.seqs, nowMs, tick);
     st.seqs = r.seqs;
     dropped += r.dropped;
@@ -378,7 +432,10 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
   }
 
   async function sweep(slicer: Slicer): Promise<void> {
-    for (const project of [...states.keys()]) await saveAndRelease(project, slicer);
+    for (const project of [...states.keys()]) {
+      if (!live()) return;
+      await saveAndRelease(project, slicer);
+    }
   }
 
   async function pass(force: boolean): Promise<void> {
@@ -386,6 +443,7 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
       await emit(false);
       await yieldNow($);
     });
+    const ep = epoch;
     const startedAt = await $.clock.now();
     const before = progress;
     quiet = !force;
@@ -409,7 +467,7 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
       bytesTotal: jobs.reduce((n, j) => n + j.size, 0),
       filesTotal: jobs.length,
     };
-    for (let i = 0; i < jobs.length && live(); i++) {
+    for (let i = 0; i < jobs.length && live() && ep === epoch; i++) {
       const job = jobs[i];
       if (progress.phase !== job.tier) {
         progress = { ...progress, phase: job.tier };
@@ -426,7 +484,7 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
       }
       await slicer.check();
     }
-    if (!live()) return;
+    if (!live() || ep !== epoch) return;
     await sweep(slicer);
     progress = { ...progress, phase: "done" };
     await emit(true);
@@ -456,9 +514,11 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     following = true;
     try {
       if (await acquireLease($, cfg, sessionId, await $.clock.now())) {
-        beOwner();
+        if (stopped) await releaseLease($, cfg, sessionId).catch(() => {});
+        else beOwner();
         return;
       }
+      if (stopped) return;
       progress = { ...(await readProgress($, cfg)) ?? idleProgress(false), owner: false };
       await emit(false);
       for (const project of await listProjects($, opts.roots)) {
@@ -492,6 +552,13 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
 
   function beFollower(): void {
     owner = false;
+    // Everything held in memory was read under a lease that is gone; the next tenure starts from the index.
+    epoch++;
+    states.clear();
+    known.clear();
+    lastSave.clear();
+    seqs.clear();
+    again = false;
     clearTimers();
     timers.push($.clock.every(FOLLOW_MS, safe(follow)));
     void follow().catch(() => {});
@@ -499,10 +566,15 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
 
   void (async () => {
     try {
-      if (await acquireLease($, cfg, sessionId, await $.clock.now())) beOwner();
+      const got = await acquireLease($, cfg, sessionId, await $.clock.now());
+      if (stopped) {
+        if (got) await releaseLease($, cfg, sessionId).catch(() => {});
+        return;
+      }
+      if (got) beOwner();
       else beFollower();
     } catch {
-      beFollower();
+      if (!stopped) beFollower();
     }
   })();
 

@@ -134,16 +134,31 @@ describe("day buckets", () => {
     expect((await loadProject(w.$, CFG, P, T0))!.usage.map((u) => u.requestId)).toEqual(["req-1"]);
   });
 
-  test("when the committed generation of a bucket is gone the project reads as corrupt, never mixed", async () => {
+  test("failed saves never overwrite the generation the manifest names", async () => {
     const w = worldOf();
     const day = dayIdx(T0);
     const other = dayIdx(T0 - DAY);
     const r1 = await saveBuckets(w.$, CFG, P, { days: new Map([[day, bucket([usage(1, T0)])], [other, bucket([usage(7, T0 - DAY)])]]) }, {}, T0);
-    // two uncommitted saves of the same bucket overwrite both slots
+    // two saves of the same bucket die on their manifest write, then a third succeeds
     for (let i = 0; i < 2; i++) {
       w.failWriteAt = w.writeCount + 3;
-      await saveBuckets(w.$, CFG, P, { days: new Map([[day, bucket([usage(10 + i, T0)])]]) }, r1.seqs, T0).catch(() => {});
+      await expect(saveBuckets(w.$, CFG, P, { days: new Map([[day, bucket([usage(10 + i, T0)])]]) }, r1.seqs, T0)).rejects.toThrow();
+      expect((await loadBuckets(w.$, CFG, P, T0)).kind).toBe("ok");
+      expect((await loadProject(w.$, CFG, P, T0))!.usage.map((u) => u.requestId).sort()).toEqual(["req-1", "req-7"]);
     }
+    const r2 = await saveBuckets(w.$, CFG, P, { days: new Map([[day, bucket([usage(20, T0)])]]) }, r1.seqs, T0);
+    expect((await loadProject(w.$, CFG, P, T0))!.usage.map((u) => u.requestId).sort()).toEqual(["req-20", "req-7"]);
+    // the committed generation of the day is still the previous one until the next save lands on top of it
+    expect(r2.seqs[dayKey(day)]).toBeGreaterThan(r1.seqs[dayKey(day)]);
+  });
+
+  test("when both generations of a bucket are damaged the project reads as corrupt, never mixed", async () => {
+    const w = worldOf();
+    const day = dayIdx(T0);
+    await saveBuckets(w.$, CFG, P, { days: new Map([[day, bucket([usage(1, T0)])]]) }, {}, T0);
+    const dir = `${projectDir(CFG, P)}/d-${dayKey(day)}`;
+    w.put(`${dir}/A-0.json`, "garbage");
+    w.put(`${dir}/B-0.json`, "garbage");
     expect((await loadBuckets(w.$, CFG, P, T0)).kind).toBe("corrupt");
     expect(await loadProject(w.$, CFG, P, T0)).toBeNull();
   });

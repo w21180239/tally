@@ -69,7 +69,7 @@ export async function saveBuckets(
       delete next[key];
       return;
     }
-    const r = await saveAt(env, dirOfBucket(cfg, project, key), { ...shard, project: nameOf(project, key) }, tick);
+    const r = await saveAt(env, dirOfBucket(cfg, project, key), { ...shard, project: nameOf(project, key) }, tick, seqs[key] ?? 0);
     next[key] = r.seq;
     dropped += r.dropped;
   };

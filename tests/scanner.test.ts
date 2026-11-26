@@ -6,9 +6,9 @@ import { listProjects, startScanner } from "../engine/scanner.ts";
 import type { ScanOpts } from "../engine/scanner.ts";
 import { loadProject } from "../engine/project-store.ts";
 import { utf8Length } from "../core/lines.ts";
-import { dayIdx, dayKey } from "../engine/project-store.ts";
+import { dayIdx, dayKey, loadBuckets } from "../engine/project-store.ts";
 import { projectDir } from "../engine/store-index.ts";
-import { assistant, meta, user } from "./fixtures/lines.ts";
+import { assistant, compactBoundary, meta, user } from "./fixtures/lines.ts";
 import { worldOf } from "./world.ts";
 import type { World } from "./world.ts";
 
@@ -46,12 +46,24 @@ function seed(w: World): string[] {
   return all;
 }
 
-function boot(w: World, sessionId: string, extra: Partial<ScanOpts> = {}) {
+type Gate = (path: string, offset: number) => Promise<void> | undefined;
+
+// `gate` runs before every read of this session: return a promise to hold the read (a rejection fails it).
+function boot(w: World, sessionId: string, extra: Partial<ScanOpts> = {}, gate?: Gate) {
   const v = w.view();
+  let env = v.$;
+  if (gate) {
+    const inner = v.$.fs.read as (p: string, o?: unknown) => Promise<unknown>;
+    const read = ((p: string, o: { offset?: number } = {}) => {
+      const g = gate(p, o.offset ?? 0);
+      return g ? g.then(() => inner(p, o)) : inner(p, o);
+    }) as typeof v.$.fs.read;
+    env = { ...v.$, fs: { ...v.$.fs, read } };
+  }
   const phases: string[] = [];
   const seen: ScanProgress[] = [];
   const saved: string[] = [];
-  const s = startScanner(v.$, {
+  const s = startScanner(env, {
     sessionId,
     currentProject: "-cur",
     cfg: CFG,
@@ -371,6 +383,9 @@ describe("scanner", () => {
     expect(text).toContain('"phase":"done"');
     expect(text).toContain("projects: 3");
     expect(text).toContain("tokens30d: 8000"); // 80 rows x 100 tokens
+    let ticks = 0;
+    await debugText(w.$, CFG, projects, a.last(), w.time(), async () => void ticks++);
+    expect(ticks).toBeGreaterThan(0);
     a.s.stop();
   });
 });
@@ -518,5 +533,183 @@ describe("scanner index", () => {
     await flush(w, b);
     expect((await shardOf(w, "-cur"))!.usage.length).toBe(20);
     b.s.stop();
+  });
+  test("a warm start with unchanged transcripts writes no index file and reads no transcript", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    for (let k = 0; k < 5; k++) for (let n = 0; n < 3; n++) dayFile(w, `d${k}-${n}.jsonl`, k, [`w${k}${n}`]);
+    const a = boot(w, "a");
+    await pump(w, a.done);
+    a.s.stop();
+    await pump(w, () => (w.text(LEASE) ?? "").includes('"sessionId":""'));
+    const b = boot(w, "b");
+    await pump(w, b.done);
+    for (let i = 0; i < 40; i++) {
+      await w.advance(10_000);
+      await tick();
+      await tick();
+    }
+    expect(b.v.writes.filter((x) => x.path.includes("/tally/index/")).length).toBe(0);
+    expect(transcriptReads(b.v.reads).length).toBe(0);
+    expect((await shardOf(w, "-cur"))!.usage.length).toBe(15);
+    b.s.stop();
+  });
+
+  const indexWritesOf = (v: { writes: { path: string }[] }) => v.writes.filter((x) => x.path.includes("/tally/index/"));
+
+  test("an owner that lost the lease mid-pass does not save when its read returns", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    dayFile(w, "l1.jsonl", 0, ["l1"]);
+    dayFile(w, "l2.jsonl", 0, ["l2"]);
+    let release: () => void = () => {};
+    let held = false;
+    const hold = new Promise<void>((res) => (release = res));
+    const a = boot(w, "a", {}, (path) => {
+      if (!path.endsWith("l2.jsonl")) return undefined;
+      held = true;
+      return hold;
+    });
+    await pump(w, () => held);
+    // another session takes the lease; the next heartbeat notices
+    w.put(LEASE, JSON.stringify({ sessionId: "b", beatMs: w.time() }));
+    await pump(w, () => a.last()?.owner === false, 1000);
+    release();
+    for (let i = 0; i < 10; i++) {
+      await w.advance(10);
+      await tick();
+    }
+    expect(indexWritesOf(a.v).length).toBe(0);
+    expect(JSON.parse(w.text(LEASE)!).sessionId).toBe("b");
+    a.s.stop();
+  });
+
+  test("a stopped scanner does not save when its pending read returns", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    dayFile(w, "s1.jsonl", 0, ["s1"]);
+    let release: () => void = () => {};
+    let held = false;
+    const hold = new Promise<void>((res) => (release = res));
+    const a = boot(w, "a", {}, (path) => {
+      if (!path.endsWith("s1.jsonl")) return undefined;
+      held = true;
+      return hold;
+    });
+    await pump(w, () => held);
+    a.s.stop();
+    release();
+    for (let i = 0; i < 10; i++) {
+      await w.advance(10);
+      await tick();
+    }
+    expect(indexWritesOf(a.v).length).toBe(0);
+  });
+
+  test("a scanner stopped while it acquires the lease never starts and frees the lease", async () => {
+    const w = worldOf();
+    seed(w);
+    const a = boot(w, "a");
+    a.s.stop();
+    for (let i = 0; i < 80; i++) {
+      await w.advance(1000);
+      await tick();
+    }
+    expect(a.seen.length).toBe(0);
+    expect(JSON.parse(w.text(LEASE)!).sessionId).toBe("");
+  });
+
+  test("an owner that lost the lease and got it back reloads its state from the index", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    dayFile(w, "r1.jsonl", 0, ["r1"]);
+    const a = boot(w, "a");
+    await pump(w, a.done);
+    w.put(LEASE, JSON.stringify({ sessionId: "b", beatMs: w.time() }));
+    await pump(w, () => a.last().owner === false, 1000);
+    const reads = a.v.reads.length;
+    const writes = a.v.writes.length;
+    w.put(LEASE, JSON.stringify({ sessionId: "", beatMs: 0 }));
+    const n = a.seen.length;
+    await pump(w, () => a.seen.length > n && a.last().owner && a.done(), 1000);
+    const head = `${projectDir(CFG, "-cur")}/HEAD.json`;
+    expect(a.v.reads.slice(reads).some((r) => r.path === head)).toBe(true);
+    expect(indexWritesOf({ writes: a.v.writes.slice(writes) }).length).toBe(0);
+    a.s.stop();
+  });
+
+  test("a read that fails on a later chunk leaves no rows behind; the retry does not duplicate them", async () => {
+    const w = worldOf();
+    const p = `${ROOT}/-cur/big.jsonl`;
+    const prompts = Array.from({ length: 2100 }, (_, i) => user(`${i} ${"p".repeat(2000)}`, { sessionId: "s1" }));
+    w.put(p, [compactBoundary(), compactBoundary(), ...prompts, user("last", { sessionId: "s1" })].join("\n") + "\n");
+    expect(w.size(p)!).toBeGreaterThan(4_194_304);
+    w.setMtime(p, w.time() - HOURS);
+    let armed = true;
+    const a = boot(w, "a", {}, (path, offset) => {
+      if (!armed || path !== p || offset === 0) return undefined;
+      armed = false;
+      return Promise.reject(new Error("EIO"));
+    });
+    await pump(w, a.done);
+    expect(armed).toBe(false);
+    await flush(w, a);
+    const shard = (await shardOf(w, "-cur"))!;
+    expect(shard.users.length).toBe(2101);
+    expect(shard.compacts.length).toBe(2);
+    a.s.stop();
+  });
+
+  test("a file that grows past a UTC midnight moves its state to the new day's bucket", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    const p = dayFile(w, "g.jsonl", 1, ["g1"]);
+    const a = boot(w, "a");
+    await pump(w, a.done);
+    w.append(p, dated("g2", noon(w, 0)) + "\n");
+    w.setMtime(p, noon(w, 0));
+    await flush(w, a);
+    const l = await loadBuckets(w.$, CFG, "-cur", w.time());
+    if (l.kind !== "ok") throw new Error("index not ok");
+    expect(Object.keys(l.days.get(dayIdx(noon(w, 1)))!.files)).toEqual([]);
+    expect(Object.keys(l.days.get(dayIdx(noon(w, 0)))!.files)).toEqual([p]);
+    expect(l.days.get(dayIdx(noon(w, 1)))!.usage.map((r) => r.requestId)).toEqual(["g1"]);
+    expect(l.days.get(dayIdx(noon(w, 0)))!.usage.map((r) => r.requestId)).toEqual(["g2"]);
+    a.s.stop();
+  });
+
+  test("a requestId that returns with more output on another day in a later pass moves its row", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    dayFile(w, "q.jsonl", 2, ["x"]);
+    const a = boot(w, "a");
+    await pump(w, a.done);
+    const big = assistant({ requestId: "x", usage: { input_tokens: 10, output_tokens: 99, cache_read_input_tokens: 30, cache_creation_input_tokens: 40 }, extra: { sessionId: "s1", timestamp: new Date(noon(w, 0)).toISOString() } });
+    const later = `${ROOT}/-cur/later.jsonl`;
+    w.put(later, big + "\n");
+    w.setMtime(later, noon(w, 0));
+    await flush(w, a);
+    const l = await loadBuckets(w.$, CFG, "-cur", w.time());
+    if (l.kind !== "ok") throw new Error("index not ok");
+    // the first file keeps day 2 alive; its bucket must be rewritten without the superseded row
+    expect(Object.keys(l.days.get(dayIdx(noon(w, 2)))!.files).length).toBe(1);
+    expect(l.days.get(dayIdx(noon(w, 2)))!.usage).toEqual([]);
+    expect(l.days.get(dayIdx(noon(w, 0)))!.usage.map((r) => `${r.requestId}:${r.tokens.output}`)).toEqual(["x:99"]);
+    expect((await shardOf(w, "-cur"))!.usage.length).toBe(1);
+    a.s.stop();
+  });
+
+  test("an older transcript read after a newer one does not overwrite its meta values", async () => {
+    const w = worldOf();
+    const newer = `${ROOT}/-cur/new.jsonl`;
+    const older = `${ROOT}/-cur/old.jsonl`;
+    w.put(newer, meta("ai-title", { aiTitle: "new title" }) + "\n");
+    w.put(older, meta("ai-title", { aiTitle: "old title" }) + "\n");
+    w.setMtime(newer, w.time() - HOURS);
+    w.setMtime(older, w.time() - 2 * HOURS);
+    const a = boot(w, "a");
+    await pump(w, a.done);
+    expect((await shardOf(w, "-cur"))!.metas.map((m) => m.value)).toEqual(["new title"]);
+    a.s.stop();
   });
 });

@@ -105,12 +105,16 @@ export async function loadAtSeq(env: StoreEnv, dir: string, name: string, seq: n
 // (all parts first, then HEAD). Parts carry {seq, nonce, i, n}, so a reader rejects a slot mixed
 // from two concurrent saves; leftover extra parts are ignored because n says how many to read.
 // A valid HEAD names the newest save without reading it; otherwise both slots are probed.
+// `committed` is the seq a manifest names for this store (0 = none). A newer save than that is uncommitted:
+// its slot is overwritten, because the other slot holds the committed generation. Without `committed` the
+// newest save counts as committed.
 // Returns the new seq and the number of rows dropped for exceeding the part limit on their own.
-export async function saveAt(env: StoreEnv, dir: string, shard: Shard, tick: Tick = noTick): Promise<{ dropped: number; seq: number }> {
+export async function saveAt(env: StoreEnv, dir: string, shard: Shard, tick: Tick = noTick, committed?: number): Promise<{ dropped: number; seq: number }> {
   const head = await readHead(env, dir);
   const cur = head ? { slot: head.slot, seq: head.seq } : await best(env, dir, shard.project, tick);
-  const slot: Slot = cur?.slot === "A" ? "B" : "A";
-  const seq = (cur?.seq ?? 0) + 1;
+  const uncommitted = committed !== undefined && cur !== null && cur !== undefined && cur.seq > committed;
+  const slot: Slot = uncommitted ? cur.slot : cur?.slot === "A" ? "B" : "A";
+  const seq = Math.max(cur?.seq ?? 0, committed ?? 0) + 1;
   const nonce = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
   const { parts, dropped } = await encodeShardAsync(shard, { seq, nonce }, tick);
   for (let i = 0; i < parts.length; i++) {

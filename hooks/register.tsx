@@ -40,6 +40,8 @@ async function locate($: Parameters<typeof readEnv>[0] & Parameters<typeof platf
 export const register: Register = (on) => {
   let progress: ScanProgress = idleProgress(false);
   let stop: (() => void) | undefined;
+  // Bumped by every session.start and session.end: a start still waiting on its delay sees it was superseded.
+  let gen = 0;
   on("session.start", async ($, e, next) => {
     const started = await next(e);
     await $.command.register({
@@ -50,8 +52,10 @@ export const register: Register = (on) => {
     const sessionId = await $.session.id();
     const loc = await locate($);
     stop?.();
+    const mine = ++gen;
     // Start off the hook's path so the session is never held up by the first listing.
     $.clock.after(100, () => {
+      if (mine !== gen) return;
       stop = startScanner($, {
         sessionId,
         currentProject: projectNameOf(e.cwd),
@@ -67,6 +71,7 @@ export const register: Register = (on) => {
   });
 
   on("session.end", async (_$, e, next) => {
+    gen++;
     stop?.();
     stop = undefined;
     return next(e);
@@ -76,7 +81,7 @@ export const register: Register = (on) => {
     if (e.args.trim() === "debug") {
       const loc = await locate($);
       const projects = await listProjects($, loc.roots);
-      return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now()) };
+      return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now(), () => $.clock.sleep(0)) };
     }
     let version = "";
     try {
