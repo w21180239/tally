@@ -27,12 +27,7 @@ export class Ledger {
     return this.map.get(requestId)?.file;
   }
 
-  rows(): Iterable<UsageRow> {
-    const it = this.map.values();
-    return {
-      [Symbol.iterator]: function* () {
-        for (const e of it) yield e.row;
-      },
-    };
+  rows(): UsageRow[] {
+    return Array.from(this.map.values(), (e) => e.row);
   }
 }

@@ -54,4 +54,25 @@ describe("ledger", () => {
     expect([...l.rows()][0].synthetic).toBe(true);
     expect(l.owner("nope")).toBe(undefined);
   });
+  test("rows can be iterated twice", () => {
+    const l = new Ledger();
+    l.offer(row("r", 10), "a", false);
+    const rs = l.rows();
+    expect([...rs].length).toBe(1);
+    expect([...rs].length).toBe(1);
+  });
+  test("larger subagent output replaces the row and takes ownership", () => {
+    const l = new Ledger();
+    l.offer(row("r", 10), "main", false);
+    expect(l.offer(row("r", 40), "sub", true)).toBe("replace");
+    expect(l.owner("r")).toBe("sub");
+    expect([...l.rows()][0].tokens.output).toBe(40);
+  });
+  test("first subagent keeps ownership over a later subagent", () => {
+    const l = new Ledger();
+    l.offer(row("r", 10), "sub1", true);
+    expect(l.offer(row("r", 10), "sub2", true)).toBe("dup");
+    expect(l.offer(row("r", 30), "sub2", true)).toBe("replace");
+    expect(l.owner("r")).toBe("sub1");
+  });
 });
