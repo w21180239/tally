@@ -47,6 +47,20 @@ describe("fake world", () => {
     expect(log.filter((x) => x === "e").length).toBe(3);
   });
 
+  test("a view records its own reads and writes over the shared fs", async () => {
+    const w = worldOf();
+    const v1 = w.view();
+    const v2 = w.view();
+    await v1.$.fs.write("/v/a", "x");
+    await v2.$.fs.read("/v/a");
+    expect(v1.writes.length).toBe(1);
+    expect(v2.writes.length).toBe(0);
+    expect(v1.reads.length).toBe(0);
+    expect(v2.reads.length).toBe(1);
+    w.setMtime("/v/a", 5);
+    expect((await w.$.fs.stat("/v/a")).mtimeMs).toBe(5);
+  });
+
   test("store get/set/delete", async () => {
     const w = worldOf({ k: 1 });
     expect(await w.$.store.get("k")).toBe(1);

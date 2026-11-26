@@ -1,6 +1,4 @@
-import type { Engine } from "claude-code/testing";
-
 /** Hands control back to the engine between slices. */
-export function yieldNow($: Engine): Promise<void> {
+export function yieldNow($: { clock: { sleep(ms: number): Promise<void> } }): Promise<void> {
   return $.clock.sleep(0);
 }

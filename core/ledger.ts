@@ -27,6 +27,10 @@ export class Ledger {
     return this.map.get(requestId)?.file;
   }
 
+  get(requestId: string): UsageRow | undefined {
+    return this.map.get(requestId)?.row;
+  }
+
   rows(): UsageRow[] {
     return Array.from(this.map.values(), (e) => e.row);
   }

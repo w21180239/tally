@@ -88,3 +88,8 @@ export async function saveShard(env: StoreEnv, cfg: string, shard: Shard): Promi
   await env.fs.write(joinPath(dir, "HEAD.json"), JSON.stringify({ seq, nonce, slot, parts: parts.length }));
   return { dropped };
 }
+
+// Save counter of a project's shard, from HEAD alone; 0 when there is none. Cheap change probe for readers.
+export async function shardSeq(env: StoreEnv, cfg: string, project: string): Promise<number> {
+  return (await readHead(env, dirOf(cfg, project)))?.seq ?? 0;
+}

@@ -76,3 +76,13 @@ describe("ledger", () => {
     expect(l.owner("r")).toBe("sub1");
   });
 });
+
+describe("ledger get", () => {
+  test("returns the kept row or undefined", () => {
+    const l = new Ledger();
+    expect(l.get("r")).toBeUndefined();
+    const r = row("r", 10);
+    l.offer(r, "a", false);
+    expect(l.get("r")).toBe(r);
+  });
+});

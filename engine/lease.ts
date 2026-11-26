@@ -21,7 +21,9 @@ async function readLease(env: LeaseEnv, cfg: string): Promise<Lease | null> {
   }
 }
 
-const put = (env: LeaseEnv, cfg: string, l: Lease) => env.fs.write(pathOf(cfg), JSON.stringify(l));
+function put(env: LeaseEnv, cfg: string, l: Lease): Promise<void> {
+  return env.fs.write(pathOf(cfg), JSON.stringify(l));
+}
 
 // Write-then-verify: without atomic create, the last writer wins the read-back after the settle wait.
 export async function acquireLease(env: LeaseEnv, cfg: string, sessionId: string, nowMs: number): Promise<boolean> {

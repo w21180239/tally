@@ -49,12 +49,16 @@ export type World = {
   append(path: string, text: string): void;
   /** Cut a file to its first `bytes` bytes. */
   truncate(path: string, bytes: number): void;
+  /** Pin a file's mtime (listing and stat report it). */
+  setMtime(path: string, mtimeMs: number): void;
   text(path: string): string | undefined;
   size(path: string): number | undefined;
   mtime(path: string): number | undefined;
   /** Manual clock: moves time and fires due sleeps, after and every callbacks in order. */
   advance(ms: number): Promise<void>;
   time(): number;
+  /** Another `$` over the same fs and clock that records its own reads and writes: one session's view. */
+  view(): { $: FakeEnv; reads: ReadCall[]; writes: WriteCall[] };
 };
 
 const enc = new TextEncoder();
@@ -105,6 +109,10 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
       const cur = files.get(norm(path));
       if (cur) files.set(norm(path), { bytes: cur.bytes.slice(0, n), mtimeMs: stamp() });
     },
+    setMtime(path, mtimeMs) {
+      const cur = files.get(norm(path));
+      if (cur) files.set(norm(path), { bytes: cur.bytes, mtimeMs });
+    },
     text: (path) => {
       const f = files.get(norm(path));
       return f ? dec.decode(f.bytes) : undefined;
@@ -112,6 +120,20 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
     size: (path) => files.get(norm(path))?.bytes.length,
     mtime: (path) => files.get(norm(path))?.mtimeMs,
     time: () => clock,
+    view() {
+      const reads: ReadCall[] = [];
+      const writes: WriteCall[] = [];
+      const base = world.$;
+      const read = ((path: string, o: { as?: "text" | "bytes"; offset?: number; length?: number } = {}) => {
+        reads.push({ path, offset: o.offset ?? 0, length: o.length });
+        return (base.fs.read as (p: string, o: unknown) => Promise<unknown>)(path, o);
+      }) as FakeEnv["fs"]["read"];
+      const write = (path: string, text: string) => {
+        writes.push({ path, text });
+        return base.fs.write(path, text);
+      };
+      return { $: { ...base, fs: { ...base.fs, read, write } }, reads, writes };
+    },
     async advance(ms) {
       const target = clock + ms;
       for (;;) {
