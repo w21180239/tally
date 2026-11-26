@@ -1,4 +1,5 @@
 import type { RawUsage } from "./types.ts";
+import { tokensOf } from "./usage.ts";
 
 // UTF-8 byte length by code point; no TextEncoder.
 export function utf8Length(s: string): number {
@@ -72,20 +73,13 @@ export function parseOversized(head: string, tail: string): RawUsage | null {
   if (!u || !requestId || !sessionId || !timestamp || !model) return null;
   const ts = Date.parse(timestamp);
   if (Number.isNaN(ts)) return null;
-  const cc = u.cache_creation;
   const cwd = str(head, "cwd");
   return {
     requestId,
     sessionId,
     ts,
     model,
-    tokens: {
-      input: u.input_tokens ?? 0,
-      output: u.output_tokens ?? 0,
-      cacheRead: u.cache_read_input_tokens ?? 0,
-      cw5m: cc ? (cc.ephemeral_5m_input_tokens ?? 0) : (u.cache_creation_input_tokens ?? 0),
-      cw1h: cc ? (cc.ephemeral_1h_input_tokens ?? 0) : 0,
-    },
+    tokens: tokensOf(u),
     fast: str(tail, "speed") === "fast",
     sidechain: /"isSidechain":\s*true/.test(head),
     ...(cwd ? { cwd } : {}),

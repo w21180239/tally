@@ -1,0 +1,152 @@
+import type { FileCtx, MetaRow, Parsed, ToolUse, UsageRow, UserRow } from "./types.ts";
+import { tokensOf } from "./usage.ts";
+
+type Rec = Record<string, any>;
+
+const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
+const nonEmpty = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
+
+const NOTICE_PREFIXES = ["<task-notification", "<system-reminder", "<local-command-", "<command-", "<teammate-message", "<agent-message", "<channel"];
+const TEXT_CAP = 4000;
+const TARGET_FIELDS = ["file_path", "notebook_path", "path", "pattern", "url", "query"];
+
+const META: Record<string, (l: Rec) => unknown> = {
+  "custom-title": (l) => nonEmpty(l.customTitle),
+  "ai-title": (l) => nonEmpty(l.aiTitle),
+  "agent-name": (l) => nonEmpty(l.agentName),
+  "last-prompt": (l) => nonEmpty(l.lastPrompt),
+  "pr-link": (l) => nonEmpty(l.prUrl),
+  "cost-state": (l) => (typeof l.startTime === "number" ? { startTime: l.startTime, totalCostUSD: l.totalCostUSD, modelUsage: l.modelUsage } : undefined),
+};
+
+function sessionOf(l: Rec, ctx: FileCtx): string {
+  const s = nonEmpty(l.sessionId);
+  if (s) return s;
+  const base = ctx.path.split(/[\\/]/).pop() ?? "";
+  return base.replace(/\.jsonl$/, "") || "?";
+}
+
+function toolOf(block: Rec): ToolUse {
+  const name = nonEmpty(block.name) ?? "?";
+  const input = isRec(block.input) ? block.input : {};
+  const t: ToolUse = { name, inputChars: JSON.stringify(block.input ?? {}).length };
+  if (name.startsWith("mcp__")) {
+    const srv = name.split("__")[1];
+    if (srv) t.mcpServer = srv;
+  }
+  const target = TARGET_FIELDS.map((f) => nonEmpty(input[f])).find((v) => v !== undefined);
+  if (target) t.target = target;
+  const command = nonEmpty(input.command);
+  if (command) t.command = command;
+  return t;
+}
+
+function assistantRow(l: Rec, ctx: FileCtx): Parsed | null {
+  const msg = isRec(l.message) ? l.message : {};
+  const requestId = nonEmpty(l.requestId) ?? nonEmpty(msg.id);
+  const ts = Date.parse(nonEmpty(l.timestamp) ?? "");
+  if (!requestId || Number.isNaN(ts)) return null;
+  const usage = isRec(msg.usage) ? msg.usage : {};
+  const model = nonEmpty(msg.model) ?? "?";
+  let thinkingChars = 0;
+  let replyChars = 0;
+  const tools: ToolUse[] = [];
+  const seen = new Set<string>();
+  for (const b of Array.isArray(msg.content) ? msg.content : []) {
+    if (!isRec(b)) continue;
+    if (b.type === "thinking" && typeof b.thinking === "string") thinkingChars += b.thinking.length;
+    else if (b.type === "text" && typeof b.text === "string") replyChars += b.text.length;
+    else if (b.type === "tool_use") {
+      const id = nonEmpty(b.id);
+      if (id) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+      }
+      tools.push(toolOf(b));
+    }
+  }
+  const row: UsageRow = {
+    requestId,
+    sessionId: sessionOf(l, ctx),
+    ts,
+    model,
+    tokens: tokensOf(usage),
+    fast: usage.speed === "fast",
+    synthetic: model === "<synthetic>",
+    thinkingChars,
+    replyChars,
+    tools,
+    sidechain: l.isSidechain === true || ctx.isSub,
+  };
+  const skill = nonEmpty(l.attributionSkill);
+  const plugin = nonEmpty(l.attributionPlugin);
+  const effort = nonEmpty(l.perTurnEffort) ?? nonEmpty(l.effort);
+  const cwd = nonEmpty(l.cwd);
+  if (skill) row.skill = skill;
+  if (plugin) row.plugin = plugin;
+  if (effort) row.effort = effort;
+  if (cwd) row.cwd = cwd;
+  return { t: "usage", row };
+}
+
+const textOf = (content: unknown): string =>
+  typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((b) => (isRec(b) && b.type === "text" && typeof b.text === "string" ? b.text : "")).join("")
+      : "";
+
+const charsOf = (c: unknown): number => (c === undefined || c === null ? 0 : typeof c === "string" ? c.length : JSON.stringify(c).length);
+
+function userRow(l: Rec, ctx: FileCtx): Parsed | null {
+  const ts = Date.parse(nonEmpty(l.timestamp) ?? "");
+  if (Number.isNaN(ts)) return null;
+  const content = isRec(l.message) ? l.message.content : undefined;
+  const sessionId = sessionOf(l, ctx);
+  const results = Array.isArray(content) ? content.filter((b) => isRec(b) && b.type === "tool_result") : [];
+  if (results.length > 0) {
+    // One row per line: chars sum every result, toolUseId is the first one's.
+    const row: UserRow = { sessionId, ts, kind: "toolResult", chars: results.reduce((n, b) => n + charsOf(b.content), 0) };
+    const id = nonEmpty(results[0].tool_use_id);
+    if (id) row.toolUseId = id;
+    return { t: "user", row };
+  }
+  const text = textOf(content);
+  if (text === "") return null;
+  const start = text.trimStart();
+  const kind: UserRow["kind"] =
+    l.isCompactSummary === true ? "compaction" : l.isMeta === true || NOTICE_PREFIXES.some((p) => start.startsWith(p)) ? "notice" : "prompt";
+  const row: UserRow = { sessionId, ts, kind, chars: text.length };
+  if (kind === "prompt") row.text = text.slice(0, TEXT_CAP);
+  return { t: "user", row };
+}
+
+// Returns null for lines tally ignores and for corrupt JSON.
+export function parseLine(line: string, ctx: FileCtx): Parsed | null {
+  let l: unknown;
+  try {
+    l = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!isRec(l) || typeof l.type !== "string") return null;
+  switch (l.type) {
+    case "assistant":
+      return assistantRow(l, ctx);
+    case "user":
+      return userRow(l, ctx);
+    case "system": {
+      const ts = Date.parse(nonEmpty(l.timestamp) ?? "");
+      if (l.subtype !== "compact_boundary" || Number.isNaN(ts)) return null;
+      return { t: "compact", row: { sessionId: sessionOf(l, ctx), ts } };
+    }
+    default: {
+      const pick = META[l.type];
+      if (!pick || ctx.isSub) return null;
+      const value = pick(l);
+      if (value === undefined) return null;
+      const row: MetaRow = { sessionId: sessionOf(l, ctx), key: l.type as MetaRow["key"], value };
+      return { t: "meta", row };
+    }
+  }
+}
