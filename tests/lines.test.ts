@@ -52,3 +52,22 @@ describe("lines", () => {
     expect(parseOversized(head, "nothing here")).toBeNull();
   });
 });
+
+describe("lines real key order", () => {
+  test("parseOversized finds metadata that sits in the tail", () => {
+    const head = '{"parentUuid":"p","isSidechain":true,"message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"';
+    const tail =
+      '"}],"usage":{"input_tokens":2,"output_tokens":50}},"requestId":"req_y","type":"assistant","uuid":"u","timestamp":"2026-02-03T04:05:06.000Z","cwd":"/w/q","sessionId":"s2"}';
+    const r = parseOversized(head, tail);
+    expect(r).toEqual({
+      requestId: "req_y",
+      sessionId: "s2",
+      ts: Date.parse("2026-02-03T04:05:06.000Z"),
+      model: "claude-opus-5-5",
+      tokens: { input: 2, output: 50, cacheRead: 0, cw5m: 0, cw1h: 0 },
+      fast: false,
+      sidechain: true,
+      cwd: "/w/q",
+    });
+  });
+});

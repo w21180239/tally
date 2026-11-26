@@ -63,25 +63,26 @@ function lastUsage(s: string): Record<string, any> | null {
   return null;
 }
 
-// Single line over 4 MiB: pull usage fields from its first and last 64 KiB.
+// Single line over 4 MiB: pull each field from the first 64 KiB, then the last.
 export function parseOversized(head: string, tail: string): RawUsage | null {
-  const u = lastUsage(tail);
-  const requestId = str(tail, "requestId");
-  const sessionId = str(head, "sessionId");
-  const timestamp = str(head, "timestamp");
-  const model = str(head, "model");
+  const both = (k: string) => str(head, k) ?? str(tail, k);
+  const u = lastUsage(head) ?? lastUsage(tail);
+  const requestId = both("requestId");
+  const sessionId = both("sessionId");
+  const timestamp = both("timestamp");
+  const model = both("model");
   if (!u || !requestId || !sessionId || !timestamp || !model) return null;
   const ts = Date.parse(timestamp);
   if (Number.isNaN(ts)) return null;
-  const cwd = str(head, "cwd");
+  const cwd = both("cwd");
   return {
     requestId,
     sessionId,
     ts,
     model,
     tokens: tokensOf(u),
-    fast: str(tail, "speed") === "fast",
-    sidechain: /"isSidechain":\s*true/.test(head),
+    fast: both("speed") === "fast",
+    sidechain: (/"isSidechain":\s*(true|false)/.exec(head) ?? /"isSidechain":\s*(true|false)/.exec(tail))?.[1] === "true",
     ...(cwd ? { cwd } : {}),
   };
 }
