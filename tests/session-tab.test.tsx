@@ -366,7 +366,8 @@ describe("breakdown snapshots", () => {
     expect(await loadSnapshots(fake(r), CFG, PROJECT, NOW)).toEqual([]);
   });
 
-  test("a session start takes a snapshot, and one lately taken is not taken again on the next turn", async ($, on) => {
+  // Seven hours of mock time fire about 3800 scanner and timer ticks, each a hook round trip: the slowest test here (1.3 s on a laptop, over 5 s on a CI runner).
+  test("a session start takes a snapshot, and one lately taken is not taken again on the next turn", { timeoutMs: 60_000 }, async ($, on) => {
     const r = rig(on);
     r.breakdown = { summary: breakdownOf(90_000), full: breakdownOf(100_000) };
     await start($);

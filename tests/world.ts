@@ -68,7 +68,12 @@ const b64 = (b: Uint8Array): string => {
   for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode(...b.subarray(i, i + 8192));
   return btoa(s);
 };
-const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+// Files are keyed POSIX. On Windows the test host resolves a rooted path like "/home/u" against the
+// working drive before a hook sees it ("D:\home\u"), so the drive and the backslashes are dropped.
+const DRIVE = /^[A-Za-z]:(?=[\\/])/;
+const norm = (p: string) => p.replace(DRIVE, "").replace(/\\/g, "/").replace(/\/+$/, "");
+// A path as a test reads it back from `reads` and `writes`: host-resolved ones (drive and backslashes) read as the POSIX path the plugin passed.
+const seen = (p: string) => (DRIVE.test(p) && p.includes("\\") ? norm(p) : p);
 
 export function worldOf(storeEntries: Record<string, unknown> = {}): World {
   const files = new Map<string, Entry>();
@@ -125,11 +130,11 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
       const writes: WriteCall[] = [];
       const base = world.$;
       const read = ((path: string, o: { as?: "text" | "bytes"; offset?: number; length?: number } = {}) => {
-        reads.push({ path, offset: o.offset ?? 0, length: o.length });
+        reads.push({ path: seen(path), offset: o.offset ?? 0, length: o.length });
         return (base.fs.read as (p: string, o: unknown) => Promise<unknown>)(path, o);
       }) as FakeEnv["fs"]["read"];
       const write = (path: string, text: string) => {
-        writes.push({ path, text });
+        writes.push({ path: seen(path), text });
         return base.fs.write(path, text);
       };
       return { $: { ...base, fs: { ...base.fs, read, write } }, reads, writes };
@@ -172,7 +177,7 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
   world.$ = {
     fs: {
       read: (async (path: string, o: { as?: "text" | "bytes"; offset?: number; length?: number } = {}) => {
-        world.reads.push({ path, offset: o.offset ?? 0, length: o.length });
+        world.reads.push({ path: seen(path), offset: o.offset ?? 0, length: o.length });
         const f = files.get(norm(path));
         if (!f) throw enoent(path);
         if (o.length !== undefined && o.length > LIMIT) throw new Error(`read length over 4 MiB: ${o.length}`);
@@ -189,7 +194,7 @@ export function worldOf(storeEntries: Record<string, unknown> = {}): World {
         const bytes = enc.encode(text);
         if (bytes.length > LIMIT) throw new Error(`write over 4 MiB: ${path}`);
         files.set(norm(path), { bytes, mtimeMs: stamp() });
-        world.writes.push({ path, text });
+        world.writes.push({ path: seen(path), text });
       },
       async exists(path) {
         return files.has(norm(path)) || isDir(path);
