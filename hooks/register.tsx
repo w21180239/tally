@@ -8,9 +8,9 @@ import type { ScanProgress } from "../engine/progress.ts";
 import { listProjects, startScanner } from "../engine/scanner.ts";
 import { summaryJson } from "../engine/summary-json.ts";
 import { makeSlicer } from "../engine/slicer.ts";
-import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
+import { currentPrices } from "../engine/price-update.ts";
 import { locate } from "../engine/locate.ts";
-import { readLive, startLive, wireLive } from "../engine/live.ts";
+import { readLive, startLive, updatePrices, wireLive } from "../engine/live.ts";
 import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
 import { startSessionView } from "../engine/session-view.ts";
 import { startTimers } from "../engine/timers.ts";
@@ -48,6 +48,10 @@ export const register: Register = (on, options) => {
     } catch {
       /* the window is optional */
     }
+    // The price refresh waits for the clock like the scanner below: a slow page never holds the start up.
+    $.clock.after(0, () => {
+      void updatePrices($, settings);
+    });
     const sessionId = await $.session.id();
     const loc = await locate($);
     stop?.();
@@ -102,7 +106,7 @@ export const register: Register = (on, options) => {
         const now = await $.clock.now();
         const slicer = makeSlicer($);
         const tick = () => slicer.check();
-        return { text: await summaryJson($, loc.cfg, projects, now, -new Date(now).getTimezoneOffset(), BUILTIN_PRICES, progress, tick) };
+        return { text: await summaryJson($, loc.cfg, projects, now, -new Date(now).getTimezoneOffset(), await currentPrices($), progress, tick) };
       }
       return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now(), () => $.clock.sleep(0)) };
     }

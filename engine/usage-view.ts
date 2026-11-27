@@ -5,7 +5,6 @@ import type { EngineInterface } from "claude-code";
 import { nearestSnapshot } from "../core/breakdown.ts";
 import type { BreakdownSnapshot } from "../core/breakdown.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
-import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import type { Shard } from "../core/shard.ts";
 import { STEP_ROWS } from "../core/steps.ts";
 import { summarizeAsync } from "../core/summary.ts";
@@ -13,6 +12,7 @@ import type { Span } from "../core/summary.ts";
 import { agentLabel, usageAgents, usageDetail, usageTotals, USAGE_KINDS, writeParts } from "../core/usage-detail.ts";
 import type { Amount, DetailRow, UsageKind } from "../core/usage-detail.ts";
 import { locate } from "./locate.ts";
+import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
 import { listProjects } from "./scanner.ts";
 import { makeSlicer } from "./slicer.ts";
@@ -97,6 +97,7 @@ async function build($: EngineInterface, want: UsageWant, now: number): Promise<
   const loc = await locate($);
   const slicer = makeSlicer($);
   const tick = () => slicer.check();
+  const prices = await currentPrices($);
   const project = projectNameOf(await $.session.cwd());
   const tzOffsetMin = -new Date(now).getTimezoneOffset();
   const isSession = want.span === "session";
@@ -126,7 +127,7 @@ async function build($: EngineInterface, want: UsageWant, now: number): Promise<
       if (shard !== null) shards.push(shard);
     }
   }
-  const summary = await summarizeAsync(shards, BUILTIN_PRICES, { span: want.span, nowMs: now, tzOffsetMin, usage: true, ...(isSession && { sessionId: want.sessionId }) }, tick);
+  const summary = await summarizeAsync(shards, prices, { span: want.span, nowMs: now, tzOffsetMin, usage: true, ...(isSession && { sessionId: want.sessionId }) }, tick);
 
   const snaps = await loadSnapshots($, loc.cfg, project, now, tick);
   const mine = lastSnapshot();

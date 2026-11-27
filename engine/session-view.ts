@@ -7,11 +7,11 @@ import { mcpSchemaSteps, nearestSnapshot, residentTokens } from "../core/breakdo
 import type { McpCost } from "../core/breakdown.ts";
 import type { LiveState } from "../core/live-state.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
-import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { drainAsync } from "../core/steps.ts";
 import type { Shard } from "../core/shard.ts";
 import { summarizeAsync } from "../core/summary.ts";
 import { locate } from "./locate.ts";
+import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
 import { makeSlicer } from "./slicer.ts";
 import { lastSnapshot, loadSnapshots, maybeSnapshot } from "./snapshot.ts";
@@ -54,6 +54,7 @@ let running: Promise<void> | undefined;
 async function build($: EngineInterface, live: Pick<LiveState, "sessionId" | "startedAt">, now: number): Promise<void> {
   const id = live.sessionId;
   const loc = await locate($);
+  const prices = await currentPrices($);
   const project = projectNameOf(await $.session.cwd());
   const slicer = makeSlicer($);
   const tick = () => slicer.check();
@@ -75,10 +76,10 @@ async function build($: EngineInterface, live: Pick<LiveState, "sessionId" | "st
     snapshots: [],
   };
   const rows = own.usage;
-  const summary = await summarizeAsync([own], BUILTIN_PRICES, { span: "session", nowMs: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), sessionId: id }, tick);
+  const summary = await summarizeAsync([own], prices, { span: "session", nowMs: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), sessionId: id }, tick);
 
   const near = nearestSnapshot(snaps, rows.length > 0 ? summary.from : live.startedAt, id);
-  const schema = near === null ? {} : await drainAsync(mcpSchemaSteps(rows, near.snap, BUILTIN_PRICES), tick);
+  const schema = near === null ? {} : await drainAsync(mcpSchemaSteps(rows, near.snap, prices), tick);
   const results = summary.mcpReread;
   const servers = new Set([...Object.keys(schema), ...Object.keys(results), ...Object.keys(summary.byMcp)]);
   const mcp: McpCost[] = [];

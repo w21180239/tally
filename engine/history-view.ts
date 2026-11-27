@@ -11,12 +11,13 @@ import { EMPTY_HISTORY, historyKeyOf, historyOf, mcpCosts, scanOf } from "../cor
 import type { HistoryData, ScanState } from "../core/history.ts";
 import { repoOf } from "../core/path.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
-import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
+import type { PriceTable } from "../core/pricing.ts";
 import type { Shard } from "../core/shard.ts";
 import { drainAsync, STEP_ROWS } from "../core/steps.ts";
 import { repoFor, summarizeAsync, UNKNOWN_REPO } from "../core/summary.ts";
 import type { UsageRow } from "../core/types.ts";
 import { locate } from "./locate.ts";
+import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
 import { readProgress } from "./progress.ts";
 import { listProjects } from "./scanner.ts";
@@ -67,7 +68,7 @@ export function needsHistory(data: Pick<HistoryData, "key" | "at" | "partial" | 
 }
 
 // Schema cost over the main-thread rows of each session, within the span and for the repo.
-async function schemaCosts(shards: Shard[], snapsOf: (project: string) => BreakdownSnapshot[], from: number, to: number, repo: string, tick: Tick): Promise<{ usd: Record<string, number>; proxy: boolean; missing: number }> {
+async function schemaCosts(prices: PriceTable, shards: Shard[], snapsOf: (project: string) => BreakdownSnapshot[], from: number, to: number, repo: string, tick: Tick): Promise<{ usd: Record<string, number>; proxy: boolean; missing: number }> {
   const usd = dict<number>();
   let proxy = false;
   let missing = 0;
@@ -91,7 +92,7 @@ async function schemaCosts(shards: Shard[], snapsOf: (project: string) => Breakd
         continue;
       }
       if (near.proxy) proxy = true;
-      const part = await drainAsync(mcpSchemaSteps(rows, near.snap, BUILTIN_PRICES), tick);
+      const part = await drainAsync(mcpSchemaSteps(rows, near.snap, prices), tick);
       for (const [server, n] of Object.entries(part)) usd[server] = (usd[server] ?? 0) + n;
     }
   }
@@ -102,6 +103,7 @@ let running: Promise<void> | undefined;
 
 async function build($: EngineInterface, repoOnly: boolean, now: number, scanning: boolean): Promise<void> {
   const loc = await locate($);
+  const prices = await currentPrices($);
   const slicer = makeSlicer($);
   const tick = () => slicer.check();
   const tzOffsetMin = -new Date(now).getTimezoneOffset();
@@ -115,7 +117,7 @@ async function build($: EngineInterface, repoOnly: boolean, now: number, scannin
     if (shard === null) unread++;
     else shards.push(shard);
   }
-  const summary = await summarizeAsync(shards, BUILTIN_PRICES, { span: "30d", nowMs: now, tzOffsetMin, usage: true, ...(repoOnly && { repo }) }, tick);
+  const summary = await summarizeAsync(shards, prices, { span: "30d", nowMs: now, tzOffsetMin, usage: true, ...(repoOnly && { repo }) }, tick);
 
   const snaps = new Map<string, BreakdownSnapshot[]>();
   for (const shard of shards) {
@@ -127,7 +129,7 @@ async function build($: EngineInterface, repoOnly: boolean, now: number, scannin
     const own = snaps.get(projectNameOf(cwd));
     if (own !== undefined && !own.some((s) => s.sessionId === mine.sessionId && s.ts === mine.ts)) own.push(mine);
   }
-  const schema = await schemaCosts(shards, (p) => snaps.get(p) ?? [], summary.from, summary.to, repo, tick);
+  const schema = await schemaCosts(prices, shards, (p) => snaps.get(p) ?? [], summary.from, summary.to, repo, tick);
   const mcp = mcpCosts(schema.usd, summary.mcpReread, summary.byMcp);
 
   const data = historyOf(summary, { key: historyKeyOf(repoOnly), at: now, repo, tzOffsetMin, mcp, mcpProxy: schema.proxy, mcpMissing: schema.missing, unread, partial: scanning });

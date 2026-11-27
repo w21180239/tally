@@ -8,7 +8,9 @@ import { readAgentStates, readContext, wantContext } from "../engine/context-vie
 import { readSession } from "../engine/session-view.ts";
 import { loadTranscript, needsTranscript, readTranscripts } from "../engine/subagent-transcript.ts";
 import { readHistory, readScanView, wantHistory } from "../engine/history-view.ts";
+import { needsHelp, readHelp, refreshHelp } from "../engine/help-view.ts";
 import { needsHints, readHints, refreshHints } from "../engine/hints-view.ts";
+import { currentPrices, lastPriceError } from "../engine/price-update.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
 import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setCtxAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, setTranscript, showTab, toggleShown } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
@@ -21,6 +23,7 @@ import { layoutOf } from "./layout.ts";
 import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
 import type { KeyCtx } from "./keys.ts";
 import { drawContext } from "./tabs/context.tsx";
+import { drawHelp } from "./tabs/help.tsx";
 import { drawHistory } from "./tabs/history.tsx";
 import { drawHints } from "./tabs/hints.tsx";
 import { drawSession } from "./tabs/session.tsx";
@@ -36,11 +39,6 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
 }
 
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
-
-// Until each tab has its own body: one dim line saying what it will hold.
-const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage" | "context" | "history" | "hints">, string> = {
-  help: "Keys, prices and settings.",
-};
 
 /** The tab shown when the view holds a span the tab has no switch for (Hints has no session span). */
 export function spanFor(tab: TabId, span: Span): Span {
@@ -171,11 +169,12 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
 
   let tabRows: RenderElement[];
   if (tab === "session") {
-    const [live, data] = await Promise.all([readLive($), readSession($)]);
+    const [live, data, prices] = await Promise.all([readLive($), readSession($), currentPrices($)]);
     const drawn = drawSession(t, {
       d,
       live,
       data,
+      prices,
       cols,
       more: view.more,
       onMore: (more) => attempt($, () => setMore($, more)),
@@ -266,11 +265,12 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
   } else {
-    tabRows = [
-      <Text key="placeholder" dimColor wrap="truncate-end">
-        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage" | "context" | "history" | "hints">]}
-      </Text>,
-    ];
+    const [data, prices, priceError] = await Promise.all([readHelp($), currentPrices($), lastPriceError($)]);
+    // The version and the unpriced models are read off the draw; the tab shows what it has meanwhile.
+    if (needsHelp(data, d.now)) inBackground($, () => refreshHelp($));
+    const drawn = drawHelp(t, { settings, prices, ...(priceError !== undefined && { priceError }), data });
+    tabRows = drawn.rows;
+    Object.assign(ctx, drawn.ctx);
   }
   const body = (
     <Box key={`body-${tab}`} flexDirection="column">

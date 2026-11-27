@@ -2,8 +2,8 @@
 // and the index-backed figures (MCP servers, skills); `drawSession` returns the rows and the keys they add.
 import type { RenderElement } from "claude-code";
 import type { LiveState } from "../../core/live-state.ts";
-import { BUILTIN_PRICES } from "../../core/prices.builtin.ts";
 import { liveMcp } from "../../core/breakdown.ts";
+import type { PriceTable } from "../../core/pricing.ts";
 import { agentCaches, kindRows, modelSplit, perActiveHour, whereItWent } from "../../core/where.ts";
 import type { KindRow, WentRow } from "../../core/where.ts";
 import type { SessionData } from "../../engine/session-view.ts";
@@ -26,6 +26,8 @@ export type SessionInput = {
   d: WindowData;
   live: LiveState;
   data: SessionData;
+  /** The price table in effect, which prices the refill and schema figures that are not in the index. */
+  prices: PriceTable;
   cols: number;
   /** The cut lists are shown whole. */
   more: boolean;
@@ -144,7 +146,7 @@ function cacheRows(t: Table, i: SessionInput): RenderElement[] {
       }),
     );
   }
-  for (const a of agentCaches(live, d.now, BUILTIN_PRICES)) {
+  for (const a of agentCaches(live, d.now, i.prices)) {
     rows.push(amountRow(t, { key: `cache-${a.id}`, label: `${a.label} \u{b7} ${CACHE_MARK} ${leftText(a.leftMs)} left`, amount: a.refillUsd === null ? "" : moneyOf(d, a.refillUsd), quiet: true }));
   }
   return rows;
@@ -168,7 +170,7 @@ export function drawSession(t: Table, i: SessionInput): SessionDrawing {
   const ctx: KeyCtx = {};
   const out: RenderElement[] = [];
   const total = d.costUsd;
-  const kinds = kindRows(live, BUILTIN_PRICES);
+  const kinds = kindRows(live, i.prices);
   const tokens = kinds.filter((k) => k.kind === "input" || k.kind === "output" || k.kind === "cacheRead" || k.kind === "cacheWrite").reduce((a, k) => a + k.tokens, 0);
 
   out.push(
@@ -210,7 +212,7 @@ export function drawSession(t: Table, i: SessionInput): SessionDrawing {
   const mine = data.sessionId === live.sessionId && live.sessionId !== "";
   // Until the index holds a request of the session, the servers come from the live tally and carry `~`.
   const isGuess = mine && data.rows === 0;
-  const servers = !mine ? [] : isGuess ? liveMcp(live, data.resident, BUILTIN_PRICES) : data.mcp;
+  const servers = !mine ? [] : isGuess ? liveMcp(live, data.resident, i.prices) : data.mcp;
   if (servers.length > 0) {
     const star = data.snapshot?.proxy === true ? "*" : "";
     const guess = isGuess ? "~" : "";

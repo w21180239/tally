@@ -28,9 +28,18 @@ function asTable(v: unknown): PriceTable | undefined {
   return ok ? (t as PriceTable) : undefined;
 }
 
-/** The price table in effect: the stored fetched one, else the builtin. */
+// A page that drops a model must not leave old transcripts of it unpriced: the table in effect holds the builtin
+// models, then the stored ones, then the freshly fetched ones, the later winning. Its dates are the last one's.
+function mergeTables(...tables: PriceTable[]): PriceTable {
+  const models: PriceTable["models"] = {};
+  for (const t of tables) Object.assign(models, t.models);
+  return { ...tables[tables.length - 1]!, models };
+}
+
+/** The price table in effect: the builtin joined with the stored fetched one, else the builtin alone. */
 export async function currentPrices($: Pick<PriceEnv, "store">): Promise<PriceTable> {
-  return asTable(await $.store.get(PRICES_KEY).catch(() => undefined)) ?? BUILTIN_PRICES;
+  const stored = asTable(await $.store.get(PRICES_KEY).catch(() => undefined));
+  return stored === undefined ? BUILTIN_PRICES : mergeTables(BUILTIN_PRICES, stored);
 }
 
 /** The last update failure for the Help tab, if any. */
@@ -41,16 +50,16 @@ export async function lastPriceError($: Pick<PriceEnv, "store">): Promise<PriceE
 
 export async function maybeUpdatePrices($: PriceEnv, settings: { priceUpdate: boolean }): Promise<PriceTable> {
   const stored = asTable(await $.store.get(PRICES_KEY).catch(() => undefined));
-  const prev = stored ?? BUILTIN_PRICES;
-  if (!settings.priceUpdate) return prev;
+  const inEffect = stored === undefined ? BUILTIN_PRICES : mergeTables(BUILTIN_PRICES, stored);
+  if (!settings.priceUpdate) return inEffect;
   const now = await $.clock.now();
-  if (stored && now >= stored.updatedAt && now - stored.updatedAt < STALE_MS) return stored;
+  if (stored && now >= stored.updatedAt && now - stored.updatedAt < STALE_MS) return inEffect;
   const lastErr = await lastPriceError($);
-  if (lastErr && now >= lastErr.at && now - lastErr.at < RETRY_GAP_MS) return prev;
+  if (lastErr && now >= lastErr.at && now - lastErr.at < RETRY_GAP_MS) return inEffect;
 
   const fail = async (message: string): Promise<PriceTable> => {
     await $.store.set(PRICE_ERROR_KEY, { at: now, message: message.slice(0, 200) }).catch(() => undefined);
-    return prev;
+    return inEffect;
   };
   let res: { status: number; ok: boolean; text: string };
   try {
@@ -61,8 +70,10 @@ export async function maybeUpdatePrices($: PriceEnv, settings: { priceUpdate: bo
   if (!res.ok) return fail(`price page answered HTTP ${res.status}`);
   const next = parsePricing(res.text, now);
   if ("error" in next) return fail(`price page not understood: ${next.error}`);
-  if (!acceptable(next, prev)) return fail("price page failed the sanity check; kept the previous prices");
-  await $.store.set(PRICES_KEY, next);
+  // Judged against the shipped table, not the stored one: that holds every model the page ever listed.
+  if (!acceptable(next, BUILTIN_PRICES)) return fail("price page failed the sanity check; kept the previous prices");
+  const kept = mergeTables(BUILTIN_PRICES, ...(stored ? [stored] : []), next);
+  await $.store.set(PRICES_KEY, kept);
   await $.store.delete(PRICE_ERROR_KEY).catch(() => undefined);
-  return next;
+  return kept;
 }

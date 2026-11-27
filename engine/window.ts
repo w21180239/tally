@@ -4,7 +4,6 @@ import { atom, read, update } from "claude-code";
 import type { EngineInterface, SessionMeasureInput, SessionUsage } from "claude-code";
 import type { TabId } from "../core/args.ts";
 import { costOf } from "../core/pricing.ts";
-import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { stepRow } from "../core/live-state.ts";
 import { summarizeAsync } from "../core/summary.ts";
 import { HOUR_MS, hourStart } from "../core/time.ts";
@@ -17,6 +16,7 @@ import { TABS } from "../view/keys.ts";
 import { EMPTY_CHART, EMPTY_FOOT, limitName, untilText } from "../view/data.ts";
 import type { Chart, Foot, Limit } from "../view/data.ts";
 import { locate } from "./locate.ts";
+import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
 import { listProjects } from "./scanner.ts";
 import { makeSlicer } from "./slicer.ts";
@@ -279,7 +279,7 @@ async function refillOf($: EngineInterface, tokens: number | null, ttl: "5m" | "
   try {
     const model = await $.session.model();
     const row = stepRow("", 0, undefined, model, { input: 0, output: 0, cacheRead: 0, cw5m: ttl === "5m" ? tokens : 0, cw1h: ttl === "1h" ? tokens : 0 });
-    const c = costOf(row, BUILTIN_PRICES);
+    const c = costOf(row, await currentPrices($));
     return c.priced ? c.usd : null;
   } catch {
     return null;
@@ -342,7 +342,7 @@ export async function refreshChart($: EngineInterface, force = false): Promise<v
     const shard = await loadProject($, loc.cfg, project, now, tick, from);
     if (shard) shards.push(shard);
   }
-  const s = await summarizeAsync(shards, BUILTIN_PRICES, { span: "24h", nowMs: now, tzOffsetMin: -new Date(now).getTimezoneOffset() }, tick);
+  const s = await summarizeAsync(shards, await currentPrices($), { span: "24h", nowMs: now, tzOffsetMin: -new Date(now).getTimezoneOffset() }, tick);
   await setChart($, { values: s.timeline.points.slice(-8).map((p) => tokenSum(p.tokens)), bands: s.hourBands });
   redraw($);
 }

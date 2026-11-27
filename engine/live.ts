@@ -8,13 +8,14 @@ import { projectNameOf } from "../core/plan-scan.ts";
 import { costOf, memoResolver } from "../core/pricing.ts";
 import type { PriceTable } from "../core/pricing.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
+import { currentPrices, maybeUpdatePrices } from "./price-update.ts";
 import { drainAsync } from "../core/steps.ts";
 import { locate } from "./locate.ts";
 import { loadProject } from "./project-store.ts";
 import { refreshSession } from "./session-view.ts";
 import { makeSlicer } from "./slicer.ts";
 import { maybeSnapshot } from "./snapshot.ts";
-import { onMeasure, onPrompt, onTurnEnd, reseatView } from "./window.ts";
+import { invalidateWindow, onMeasure, onPrompt, onTurnEnd, reseatView } from "./window.ts";
 
 /** The atom the views read. */
 export const liveAtom = atom({ plugin: "tally", key: "live" } as const, emptyLive("", 0, 0), { shape: "live-3" });
@@ -37,8 +38,29 @@ export type LiveDeps = {
 // share is module state, set by `wireLive`.
 let prices: PriceTable = BUILTIN_PRICES;
 let resolve = memoResolver(prices);
+// False until the table in effect (builtin joined with the stored fetch) has been read once.
+let pricesRead = false;
 let pending: { id: string; done: Promise<void> } | undefined;
 let ledgerAt = 0;
+
+function takePrices(table: PriceTable): void {
+  prices = table;
+  resolve = memoResolver(table);
+  pricesRead = true;
+}
+
+/**
+ * The price refresh, run off the hook's path: fetches when one is due (`priceUpdate`), then prices every later
+ * step at the table in effect. Never rejects.
+ */
+export async function updatePrices($: EngineInterface, settings: { priceUpdate: boolean }): Promise<void> {
+  try {
+    takePrices(await maybeUpdatePrices($, settings));
+    invalidateWindow($);
+  } catch {
+    /* the table already in use stands */
+  }
+}
 
 // Fire-and-forget on the clock: the hook that raised it returns first, and a failure never reaches it.
 function inBackground($: EngineInterface, work: () => Promise<unknown>): void {
@@ -71,6 +93,7 @@ async function refresh($: EngineInterface, id: string): Promise<void> {
   const tick = () => slicer.check();
   const shard = await loadProject($, loc.cfg, projectNameOf(where), now, tick);
   if (!shard) return;
+  if (!pricesRead) takePrices(await currentPrices($));
   const earlier = await drainAsync(earlierSteps(shard, id, at, prices), tick);
   await update($, liveAtom, (s) => (s.sessionId === id ? applyEarlier(s, earlier) : s));
 }
@@ -128,6 +151,7 @@ export async function startLive($: EngineInterface, _e?: { cwd: string }): Promi
 export function wireLive(on: On, deps: LiveDeps = {}): void {
   prices = deps.prices ?? BUILTIN_PRICES;
   resolve = memoResolver(prices);
+  pricesRead = deps.prices !== undefined;
 
   // Accounting never holds up or fails the call it watches: each handler swallows its own errors.
   on("prompt.submit", async ($, e, next) => {
@@ -174,6 +198,8 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
     if (u !== null) {
       try {
         const live = await ensure($);
+        // A step before the session's refresh has run is priced at the stored table, not the builtin one.
+        if (!pricesRead) takePrices(await currentPrices($));
         const ts = await $.clock.now();
         const { tokens, seen } = stepTokens(u, lifeFor(live, e.agentId), ts);
         const usd = costOf(stepRow(live.sessionId, ts, e.agentId, u.model, tokens), prices, resolve).usd;

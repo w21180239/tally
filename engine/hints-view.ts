@@ -6,11 +6,11 @@ import type { EngineInterface } from "claude-code";
 import { HINT_RULES, runRules } from "../core/hint.ts";
 import type { Hint } from "../core/hint.ts";
 import { repoOf } from "../core/path.ts";
-import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import type { Shard } from "../core/shard.ts";
 import { summarizeAsync, UNKNOWN_REPO } from "../core/summary.ts";
 import type { Span } from "../core/summary.ts";
 import { locate } from "./locate.ts";
+import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
 import { listProjects } from "./scanner.ts";
 import { makeSlicer } from "./slicer.ts";
@@ -60,6 +60,7 @@ let running: Promise<void> | undefined;
 
 async function build($: EngineInterface, want: HintsWant, now: number): Promise<void> {
   const loc = await locate($);
+  const prices = await currentPrices($);
   const slicer = makeSlicer($);
   const tick = () => slicer.check();
   const tzOffsetMin = -new Date(now).getTimezoneOffset();
@@ -72,11 +73,11 @@ async function build($: EngineInterface, want: HintsWant, now: number): Promise<
     if (shard === null) unread++;
     else shards.push(shard);
   }
-  const spanSummary = await summarizeAsync(shards, BUILTIN_PRICES, { span: want.span, nowMs: now, tzOffsetMin, ...(want.repoOnly && { repo }) }, tick);
+  const spanSummary = await summarizeAsync(shards, prices, { span: want.span, nowMs: now, tzOffsetMin, ...(want.repoOnly && { repo }) }, tick);
   const session =
     want.sessionId === ""
       ? []
-      : await runRules(HINT_RULES, { scope: "session", nowMs: now, summary: await summarizeAsync(shards, BUILTIN_PRICES, { span: "session", sessionId: want.sessionId, nowMs: now, tzOffsetMin }, tick) }, tick);
+      : await runRules(HINT_RULES, { scope: "session", nowMs: now, summary: await summarizeAsync(shards, prices, { span: "session", sessionId: want.sessionId, nowMs: now, tzOffsetMin }, tick) }, tick);
   const data: HintsData = {
     key: hintsKeyOf(want),
     at: now,
