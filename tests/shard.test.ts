@@ -33,7 +33,7 @@ const shard = (n = 3): Shard => ({
   ],
   metas: [{ sessionId: "s-0", key: "ai-title", value: "T" }],
   compacts: [{ sessionId: "s-0", ts: 1_000_002 }],
-  snapshots: [{ ts: 1_000_003, a: [1, 2] }],
+  snapshots: [{ sessionId: "s-0", ts: 1_000_003, skills: { "demo-skill": 120 }, mcp: { demo: { tokens: 900, deferred: 100 } }, agents: { helper: 40 }, memory: { "/p/CLAUDE.md": 300 }, system: 3000, tools: 8000 }],
 });
 const CFG = "/cfg";
 

@@ -52,11 +52,13 @@ export type ViewState = {
   hasWarned: boolean;
   /** The inline fullscreen tip is shown until the person first acts on the window. */
   hasTipped: boolean;
+  /** A tab's cut lists are shown whole (`m`). */
+  more: boolean;
 };
 
-export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false };
+export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false, more: false };
 
-const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-1" });
+const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-2" });
 const footAtom = atom({ plugin: "tally", key: "foot" } as const, EMPTY_FOOT, { shape: "foot-1" });
 const chartAtom = atom({ plugin: "tally", key: "chart" } as const, EMPTY_CHART, { shape: "chart-1" });
 
@@ -194,7 +196,7 @@ export async function reseatView($: EngineInterface): Promise<void> {
 
 
 export async function showTab($: EngineInterface, tab: TabId): Promise<void> {
-  await changeView($, (v) => ({ ...v, tab, hasTipped: true }));
+  await changeView($, (v) => ({ ...v, tab, more: false, hasTipped: true }));
   await $.store.set(TAB_KEY, tab);
 }
 
@@ -205,6 +207,10 @@ export async function setSpan($: EngineInterface, span: Span): Promise<void> {
 
 export async function setRepoOnly($: EngineInterface, repoOnly: boolean): Promise<void> {
   await changeView($, (v) => ({ ...v, repoOnly }));
+}
+
+export async function setMore($: EngineInterface, more: boolean): Promise<void> {
+  await changeView($, (v) => ({ ...v, more }));
 }
 
 export async function setMachines($: EngineInterface, machines: "this" | "all"): Promise<void> {

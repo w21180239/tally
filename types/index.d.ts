@@ -1,5 +1,5 @@
 // The values tally keeps in `$.state`, as the engine's plugin contract.
-// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts; keep them in step.
+// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts, SessionData in engine/session-view.ts; keep them in step.
 
 export interface TallyTokens {
   input: number;
@@ -19,6 +19,7 @@ export interface TallyAgentLive {
   firstPrompt: string;
   tools: Record<string, number>;
   usd: number;
+  lastTs: number;
 }
 
 export interface TallyLive {
@@ -34,6 +35,11 @@ export interface TallyLive {
   lastWrite?: { ts: number; ttl: "5m" | "1h" };
   toolCalls: Record<string, number>;
   toolChars: Record<string, number>;
+  activeMs: number;
+  mainModels: Record<string, number>;
+  restored: Record<string, { usd: number; tokens: TallyTokens; requests: number }>;
+  restoredSub: Record<string, number>;
+  otherByModel: Record<string, number>;
 }
 
 export interface TallyView {
@@ -45,6 +51,7 @@ export interface TallyView {
   hasSent: boolean;
   hasWarned: boolean;
   hasTipped: boolean;
+  more: boolean;
 }
 
 export interface TallyFoot {
@@ -53,6 +60,14 @@ export interface TallyFoot {
   compactAt: number | null;
   limits: Array<{ kind: string; percentUsed: number; resetsAt?: string }>;
   refillUsd: number | null;
+}
+
+export interface TallySession {
+  sessionId: string;
+  at: number;
+  skills: Array<{ name: string; usd: number }>;
+  mcp: Array<{ server: string; usd: number; schemaUsd: number; resultUsd: number; calls: number }>;
+  snapshot: { ts: number; proxy: boolean } | null;
 }
 
 export interface TallyChart {
@@ -67,6 +82,7 @@ declare module "claude-code" {
       view: Shaped<TallyView>;
       foot: Shaped<TallyFoot>;
       chart: Shaped<TallyChart>;
+      session: Shaped<TallySession>;
     };
   }
 }

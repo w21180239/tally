@@ -2,7 +2,7 @@
 // keep one LiveState atom current for the views. Every handler is O(1) beside awaited, sliced index reads.
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, On } from "claude-code";
-import { addAgent, addTool, applyEarlier, applyStep, earlierSteps, emptyLive, lifeFor, resultChars, stepRow, stepTokens } from "../core/live-state.ts";
+import { addActive, addAgent, addTool, applyEarlier, applyStep, earlierSteps, emptyLive, lifeFor, resultChars, stepRow, stepTokens } from "../core/live-state.ts";
 import type { LiveState } from "../core/live-state.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
 import { costOf, memoResolver } from "../core/pricing.ts";
@@ -11,11 +11,13 @@ import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { drainAsync } from "../core/steps.ts";
 import { locate } from "./locate.ts";
 import { loadProject } from "./project-store.ts";
+import { refreshSession } from "./session-view.ts";
 import { makeSlicer } from "./slicer.ts";
+import { maybeSnapshot } from "./snapshot.ts";
 import { onMeasure, onPrompt, onTurnEnd, reseatView } from "./window.ts";
 
 /** The atom the views read. */
-export const liveAtom = atom({ plugin: "tally", key: "live" } as const, emptyLive("", 0, 0), { shape: "live-1" });
+export const liveAtom = atom({ plugin: "tally", key: "live" } as const, emptyLive("", 0, 0), { shape: "live-2" });
 
 /** The live state, read for a view. */
 export function readLive($: EngineInterface): Promise<LiveState> {
@@ -129,10 +131,14 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
 
   // Accounting never holds up or fails the call it watches: each handler swallows its own errors.
   on("prompt.submit", async ($, e, next) => {
-    const was = (await read($, liveAtom)).sessionId;
-    const now = await ensure($).catch(() => undefined);
-    // A /clear raises no session.start: the new id is the cue to seat the window's view again.
-    if (now !== undefined && now.sessionId !== was) await reseatView($).catch(() => undefined);
+    try {
+      const was = (await read($, liveAtom)).sessionId;
+      const now = await ensure($).catch(() => undefined);
+      // A /clear raises no session.start: the new id is the cue to seat the window's view again.
+      if (now !== undefined && now.sessionId !== was) await reseatView($).catch(() => undefined);
+    } catch {
+      /* the tally never fails the prompt */
+    }
     // The window's first-message fold never fails the prompt.
     await onPrompt($, e).catch(() => undefined);
     return next(e);
@@ -182,7 +188,13 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
   on("turn.complete", async ($, e, next) => {
     const done = await next(e);
     if (e.agentId === undefined) {
+      await update($, liveAtom, (s) => addActive(s, e.durationMs)).catch(() => undefined);
       inBackground($, () => noteLimits($));
+      // The breakdown snapshot (when one is due) and the Session tab's index-backed figures.
+      inBackground($, async () => {
+        await maybeSnapshot($);
+        await refreshSession($, await read($, liveAtom));
+      });
       inBackground($, async () => onTurnEnd($, await mainLife($)));
       const now = await $.clock.now();
       if (now - ledgerAt >= LEDGER_INTERVAL_MS) {

@@ -12,6 +12,7 @@ import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { locate } from "../engine/locate.ts";
 import { readLive, startLive, wireLive } from "../engine/live.ts";
 import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
+import { startSessionView } from "../engine/session-view.ts";
 import { startTimers } from "../engine/timers.ts";
 import { drawBand, drawPane } from "../view/app.tsx";
 
@@ -39,7 +40,9 @@ export const register: Register = (on, options) => {
     // Nor does the window: open or folded as the person left it, with the foot and chart filling in behind.
     try {
       await restoreWindow($, settings, e.isInteractive);
-      startFeeds($, (await readLive($)).lastWrite?.ttl ?? "1h");
+      const live = await readLive($);
+      startFeeds($, live.lastWrite?.ttl ?? "1h");
+      startSessionView($, live);
       for (const t of timers) t.cancel();
       timers = startTimers($);
     } catch {
@@ -67,11 +70,12 @@ export const register: Register = (on, options) => {
   });
 
   on("session.end", async (_$, e, next) => {
-    gen++;
-    stop?.();
-    stop = undefined;
-    // A /clear ends the session but the process goes on with no session.start: the redraw timers keep running.
+    // A /clear ends the session but the process goes on with no session.start: the scanner (and its lease
+    // heartbeat) and the redraw timers keep running, and a start still waiting on its delay stays valid.
     if (e.reason !== "clear") {
+      gen++;
+      stop?.();
+      stop = undefined;
       for (const t of timers) t.cancel();
       timers = [];
     }

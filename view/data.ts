@@ -1,6 +1,7 @@
 // What the window draws from, as plain data: built once per drawing from the live atom, the foot and the chart.
 import type { LiveState } from "../core/live-state.ts";
 import { formatMoney } from "../core/money.ts";
+import { totalUsd } from "../core/where.ts";
 import type { Settings } from "../core/settings.ts";
 import { CACHE_MARK, chartText, HINT_MARK, SEP } from "./theme.ts";
 
@@ -44,12 +45,7 @@ export const EMPTY_CHART: Chart = { values: [], bands: [] };
 
 const LIFE_MS = { "5m": 300_000, "1h": 3_600_000 } as const;
 
-/** Everything this session spent: before this launch, the tallied requests, and the ledger's remainder. */
-export function sessionUsd(live: LiveState): number {
-  let usd = live.restoredUsd + live.other.usd;
-  for (const m of Object.values(live.stepped)) usd += m.usd;
-  return usd;
-}
+export const sessionUsd = totalUsd;
 
 /** A model id's family: opus, sonnet, haiku, fable, mythos, else the id itself. */
 export const familyOf = (model: string): string => /(opus|sonnet|haiku|fable|mythos)/i.exec(model)?.[1]?.toLowerCase() ?? model;

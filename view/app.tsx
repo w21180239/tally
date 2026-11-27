@@ -4,7 +4,8 @@ import type { EngineInterface, RenderElement, RenderInput } from "claude-code";
 import type { TabId } from "../core/args.ts";
 import type { Settings } from "../core/settings.ts";
 import type { Span } from "../core/summary.ts";
-import { attempt, openWindow, readChart, readFoot, readView, setMachines, setRepoOnly, setSpan, showTab } from "../engine/window.ts";
+import { readSession } from "../engine/session-view.ts";
+import { attempt, openWindow, readChart, readFoot, readView, setMachines, setMore, setRepoOnly, setSpan, showTab } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
 import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
@@ -14,6 +15,7 @@ import type { WindowData } from "./data.ts";
 import { layoutOf } from "./layout.ts";
 import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
 import type { KeyCtx } from "./keys.ts";
+import { drawSession } from "./tabs/session.tsx";
 import { tableOf } from "./table.ts";
 import type { Table } from "./table.ts";
 import { SEP } from "./theme.ts";
@@ -27,8 +29,7 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
 
 // Until each tab has its own body: one dim line saying what it will hold.
-const PLACEHOLDER: Record<TabId, string> = {
-  session: "Where this session's money went.",
+const PLACEHOLDER: Record<Exclude<TabId, "session">, string> = {
   usage: "Tokens and cost by model, agent and tool.",
   context: "What fills the context window.",
   history: "Spend over the last 30 days.",
@@ -163,11 +164,35 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     );
   }
 
+  let tabRows: RenderElement[];
+  if (tab === "session") {
+    const [live, data] = await Promise.all([readLive($), readSession($)]);
+    const drawn = drawSession(t, {
+      d,
+      live,
+      data,
+      cols,
+      more: view.more,
+      onMore: (more) => attempt($, () => setMore($, more)),
+      // A token row drills to Usage, on this session.
+      onUsage: () =>
+        attempt($, async () => {
+          await setSpan($, "session");
+          await showTab($, "usage");
+        }),
+    });
+    tabRows = drawn.rows;
+    Object.assign(ctx, drawn.ctx);
+  } else {
+    tabRows = [
+      <Text key="placeholder" dimColor wrap="truncate-end">
+        {PLACEHOLDER[tab]}
+      </Text>,
+    ];
+  }
   const body = (
     <Box key={`body-${tab}`} flexDirection="column">
-      <Text dimColor wrap="truncate-end">
-        {PLACEHOLDER[tab]}
-      </Text>
+      {tabRows}
     </Box>
   );
   const keys = t.hasKeys ? (

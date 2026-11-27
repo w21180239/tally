@@ -1,8 +1,9 @@
+import type { BreakdownSnapshot } from "./breakdown.ts";
 import { utf8Length } from "./lines.ts";
 import { sessionOfPath } from "./path.ts";
 import type { CompactRow, FileState, MetaRow, ToolUse, UsageRow, UserRow } from "./types.ts";
 
-export type BreakdownSnapshot = unknown;
+export type { BreakdownSnapshot };
 export type ShardFile = FileState & { isSub: boolean; agentType?: string; sessionId: string };
 export type Shard = {
   v: 1;
@@ -345,7 +346,7 @@ function* decodeGen(parts: string[]): Generator<void, Shard, void> {
       else if (kind === "users") out.users.push(...userRows(val as Parameters<typeof userRows>[0]));
       else if (kind === "metas") out.metas.push(...metaRows(val as Parameters<typeof metaRows>[0]));
       else if (kind === "compacts") out.compacts.push(...(val as CompactRow[]));
-      else if (kind === "snapshots") out.snapshots.push(...(val as unknown[]));
+      else if (kind === "snapshots") out.snapshots.push(...(val as BreakdownSnapshot[]));
       else if (kind === "days") out.days = val as Record<string, number>;
       else if (kind === "fmt") out.fmt = val as number;
       else throw new Error(`unknown shard item: ${kind}`);
@@ -387,9 +388,7 @@ export function trimShard(s: Shard, cutoffMs: number): Shard {
   for (const r of users) live.add(r.sessionId);
   for (const r of compacts) live.add(r.sessionId);
   const metas = s.metas.filter((m) => live.has(m.sessionId));
-  const snapshots = s.snapshots.filter((x) => {
-    const ts = (x as { ts?: unknown } | null)?.ts;
-    return typeof ts !== "number" || ts >= cutoffMs;
-  });
+  // A snapshot with no usable time is kept: its age is unknown.
+  const snapshots = s.snapshots.filter((x) => typeof x.ts !== "number" || x.ts >= cutoffMs);
   return { ...s, files, usage, users, metas, compacts, snapshots };
 }
