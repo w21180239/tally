@@ -38,13 +38,13 @@ const exact = (s: string): RegExp => new RegExp(`^${s.replace(/[$.*+?^${}()|[\]\
 
 // What the host's git answers, by the subcommand after `-C <dir>`.
 type Git = Partial<Record<"pull" | "add" | "commit" | "push", { exitCode: number; stdout?: string; stderr?: string }>>;
-type Rig = { surface: string; world: World; clock: ReturnType<typeof mock.clock>; events: string[]; runs: string[][]; logs: string[]; toasts: string[]; git: Git };
+type Rig = { surface: string; world: World; clock: ReturnType<typeof mock.clock>; events: string[]; runs: string[][]; logs: string[]; toasts: string[]; git: Git; hidden: Set<string> };
 
 const usageOf = (): TurnUsage => ({ input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 100_000, cache_creation_input_tokens: 10_000, model: OPUS, ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 10_000 });
 
 function rig(on: On): Rig {
   const world = worldOf();
-  const r: Rig = { surface: "terminal", world, clock: mock.clock(on, { now: NOW }), events: [], runs: [], logs: [], toasts: [], git: {} };
+  const r: Rig = { surface: "terminal", world, clock: mock.clock(on, { now: NOW }), events: [], runs: [], logs: [], toasts: [], git: {}, hidden: new Set() };
   const stored = new Map<string, unknown>();
   mock.env(on, { HOME: "/home/u" });
   on("store.get", (_, e) => ({ value: stored.get(e.key) }));
@@ -80,7 +80,7 @@ function rig(on: On): Rig {
     return { value: await world.$.fs.write(e.path, e.text) };
   });
   on("fs.list", async (_, e) => ({ value: await world.$.fs.list(e.path) }));
-  on("fs.exists", async (_, e) => ({ value: await world.$.fs.exists(e.path) }));
+  on("fs.exists", async (_, e) => ({ value: !r.hidden.has(e.path) && (await world.$.fs.exists(e.path)) }));
   on("fs.stat", async (_, e) => ({ value: await world.$.fs.stat(e.path) }));
   on("process.run", (_, e) => {
     r.runs.push([...e.argv]);
@@ -225,7 +225,7 @@ describe("runSync", () => {
     expect(r.runs).toEqual([
       ["git", "-C", SYNC, "pull", "--rebase"],
       ["git", "-C", SYNC, "add", "tally"],
-      ["git", "-C", SYNC, "commit", "-m", "tally: box-a"],
+      ["git", "-C", SYNC, "commit", "-m", "tally: box-a", "--", "tally"],
       ["git", "-C", SYNC, "push"],
     ]);
     // Our files are written between the pull and the add.
@@ -286,17 +286,50 @@ describe("runSync", () => {
     expect(r.world.text(`${SYNC}/tally/box-a.json`)).toContain(REPO);
   });
 
-  test("git failures go to the debug log only: no toast, and the run goes on", { options: { ...OPTS } }, async ($, on) => {
+  test("a failed pull with no rebase or merge in progress (offline) still writes and commits, but does not push; debug log only", { options: { ...OPTS } }, async ($, on) => {
     const r = rig(on);
     asRepo(r.world);
-    r.git = { pull: { exitCode: 1, stderr: "fatal: no remote" }, push: { exitCode: 1, stderr: "fatal: unable to access" } };
+    r.git = { pull: { exitCode: 1, stderr: "fatal: no remote" } };
     await settled($, r);
     expect(r.toasts).toEqual([]);
-    expect(r.logs.filter((l) => /sync: git (pull|push) failed/.test(l)).length).toBe(2);
-    // The pull failed (offline) yet our file was written and committed.
+    expect(r.logs.filter((l) => /sync: git pull failed/.test(l)).length).toBe(1);
+    expect(r.logs.some((l) => /needs attention/.test(l))).toBe(false);
     expect(r.world.text(`${SYNC}/tally/box-a.json`)).toBeDefined();
+    expect(r.runs.map((a) => a[3])).toEqual(["pull", "add", "commit"]);
+  });
+
+  test("a failed push goes to the debug log only: no toast", { options: { ...OPTS } }, async ($, on) => {
+    const r = rig(on);
+    asRepo(r.world);
+    r.git = { push: { exitCode: 1, stderr: "fatal: unable to access" } };
+    await settled($, r);
+    expect(r.toasts).toEqual([]);
+    expect(r.logs.filter((l) => /sync: git push failed/.test(l)).length).toBe(1);
     expect(r.runs.map((a) => a[3])).toEqual(["pull", "add", "commit", "push"]);
   });
+
+  for (const marker of ["rebase-merge", "rebase-apply", "MERGE_HEAD"]) {
+    test(`a failed pull with .git/${marker} present writes the local file only: no add, commit or push, one log line over two cycles`, { options: { ...OPTS } }, async ($, on) => {
+      const r = rig(on);
+      asRepo(r.world);
+      r.world.put(`${SYNC}/.git/${marker}${marker === "MERGE_HEAD" ? "" : "/head-name"}`, "x\n");
+      r.git = { pull: { exitCode: 1, stderr: "error: could not apply abc123" } };
+      await settled($, r);
+      expect(r.runs.map((a) => a[3])).toEqual(["pull"]);
+      expect(r.world.text(`${SYNC}/tally/box-a.json`)).toBeDefined();
+      expect(r.logs.filter((l) => /needs attention/.test(l)).length).toBe(1);
+      // A second cycle after the gap: the repo is still stopped, so git is not touched and nothing is logged again.
+      r.world.put(`${CFG}/projects/-work-demo/s-1.jsonl`, "\n");
+      r.world.setMtime(`${CFG}/projects/-work-demo/s-1.jsonl`, NOW + 5000);
+      await r.clock.advance(70_000);
+      await r.clock.advance(SYNC_GAP_MS);
+      expect(r.events.filter((e) => e.startsWith(`write ${SYNC}/tally/box-a.json`)).length).toBe(2);
+      expect(r.runs.map((a) => a[3])).toEqual(["pull"]);
+      expect(r.logs.filter((l) => /needs attention|git (pull|add|commit|push) failed/.test(l)).length).toBe(2);
+      expect(r.logs.filter((l) => /needs attention/.test(l)).length).toBe(1);
+      expect(r.toasts).toEqual([]);
+    });
+  }
 
   test("a commit with nothing to commit is not an error", { options: { ...OPTS } }, async ($, on) => {
     const r = rig(on);
@@ -315,6 +348,22 @@ describe("runSync", () => {
     expect(r.logs.some((l) => /git commit failed/.test(l))).toBe(true);
     expect(r.runs.map((a) => a[3])).toEqual(["pull", "add", "commit"]);
     expect(r.toasts).toEqual([]);
+  });
+
+  test("once the rebase is resolved the next cycle pulls and syncs again", { options: { ...OPTS } }, async ($, on) => {
+    const r = rig(on);
+    asRepo(r.world);
+    r.world.put(`${SYNC}/.git/MERGE_HEAD`, "x\n");
+    r.git = { pull: { exitCode: 1, stderr: "error: you have not concluded your merge" } };
+    await settled($, r);
+    expect(r.runs.map((a) => a[3])).toEqual(["pull"]);
+    r.hidden.add(`${SYNC}/.git/MERGE_HEAD`);
+    r.git = {};
+    r.world.put(`${CFG}/projects/-work-demo/s-1.jsonl`, "\n");
+    r.world.setMtime(`${CFG}/projects/-work-demo/s-1.jsonl`, NOW + 5000);
+    await r.clock.advance(70_000);
+    await r.clock.advance(SYNC_GAP_MS);
+    expect(r.runs.map((a) => a[3])).toEqual(["pull", "pull", "add", "commit", "push"]);
   });
 
   test("scans that end within the gap sync once; the next sync waits for the gap", { options: { ...OPTS } }, async ($, on) => {

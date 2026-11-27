@@ -48,10 +48,13 @@ export const needsRemotes = (v: Pick<RemotesView, "at">, now: number): boolean =
 
 let lastAt = -Infinity;
 let gapTimer: { cancel(): void } | undefined;
+// The repo is mid-rebase or mid-merge and was already reported; cleared when it is healthy again.
+let needsAttention = false;
 
 /** A session starts or ends: the sync gap starts over. */
 export function resetSync(): void {
   lastAt = -Infinity;
+  needsAttention = false;
   gapTimer?.cancel();
   gapTimer = undefined;
 }
@@ -198,7 +201,7 @@ const NOTHING_TO_COMMIT = /nothing (added )?to commit|no changes added to commit
 
 /**
  * One sync: pull, write this machine's file, read the others, then add, commit and push. The git steps run only when
- * `<syncDir>/.git` exists and the surface is the CLI; their failures go to the debug log. Never rejects.
+ * `<syncDir>/.git` exists and the surface is the CLI; their failures go to the debug log. A repo stopped mid-rebase or mid-merge gets local writes only. Never rejects.
  */
 export async function runSync($: EngineInterface, settings: Settings, extraOf?: ExtraSource): Promise<SyncResult> {
   const dir = settings.syncDir;
@@ -228,7 +231,23 @@ export async function runSync($: EngineInterface, settings: Settings, extraOf?: 
       return r.ok || (tolerate?.test(r.text) ?? false);
     };
 
-    if (git) await step(["pull", "--rebase"]);
+    // A repo stopped mid-rebase or mid-merge is the user's to resolve: write local files only, never abort or commit.
+    const stopped = async (): Promise<boolean> => {
+      for (const marker of ["rebase-merge", "rebase-apply", "MERGE_HEAD"]) if (await $.fs.exists(joinPath(dir, ".git", marker))) return true;
+      return false;
+    };
+    let gitOk = git;
+    let pulled = true;
+    if (git && needsAttention && (await stopped())) gitOk = false;
+    else if (git) {
+      needsAttention = false;
+      pulled = await step(["pull", "--rebase"]);
+      if (!pulled && (await stopped())) {
+        gitOk = false;
+        needsAttention = true;
+        log("sync repo needs attention: a rebase or merge is unfinished, so git is skipped until it is resolved");
+      }
+    }
 
     const now = await $.clock.now();
     const salt = await saltOf($, dir, `${now}|${self}`);
@@ -255,8 +274,9 @@ export async function runSync($: EngineInterface, settings: Settings, extraOf?: 
     invalidateWindow($);
     const machines = [...new Set([self, ...remote.files.map((f) => f.machine)])].sort();
 
-    if (git && (await step(["add", SYNC_FOLDER]))) {
-      if (await step(["commit", "-m", `tally: ${self}`], NOTHING_TO_COMMIT)) await step(["push"]);
+    // Commit even after a failed pull (offline): the next good pull replays it. Push waits for a pull that worked.
+    if (gitOk && (await step(["add", SYNC_FOLDER]))) {
+      if (await step(["commit", "-m", `tally: ${self}`, "--", SYNC_FOLDER], NOTHING_TO_COMMIT) && pulled) await step(["push"]);
     }
     return { machines };
   } catch (err) {
