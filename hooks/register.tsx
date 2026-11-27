@@ -4,6 +4,8 @@ import { projectNameOf } from "../core/plan-scan.ts";
 import { debugText, idleProgress } from "../engine/progress.ts";
 import type { ScanProgress } from "../engine/progress.ts";
 import { listProjects, startScanner } from "../engine/scanner.ts";
+import { summaryJson } from "../engine/summary-json.ts";
+import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 
 type Platform = "darwin" | "win32" | "linux";
 type EnvMap = Record<string, string | undefined>;
@@ -78,9 +80,14 @@ export const register: Register = (on) => {
   });
 
   on("command.run", { command: "tally" }, async ($, e) => {
-    if (e.args.trim() === "debug") {
+    const args = e.args.trim().split(/\s+/);
+    if (args[0] === "debug") {
       const loc = await locate($);
       const projects = await listProjects($, loc.roots);
+      if (args[1] === "--json") {
+        const now = await $.clock.now();
+        return { text: await summaryJson($, loc.cfg, projects, now, -new Date(now).getTimezoneOffset(), BUILTIN_PRICES, () => $.clock.sleep(0)) };
+      }
       return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now(), () => $.clock.sleep(0)) };
     }
     let version = "";
