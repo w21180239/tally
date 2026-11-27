@@ -7,6 +7,8 @@ import type { PriceTable } from "./pricing.ts";
 import { findRebuildsSteps } from "./cache-life.ts";
 import type { Rebuild } from "./cache-life.ts";
 import { analyzeFlowSteps } from "./flow.ts";
+import { usageCollector } from "./usage-detail.ts";
+import type { UsageDetail } from "./usage-detail.ts";
 import type { FlowItem, Paste } from "./flow.ts";
 import type { Shard } from "./shard.ts";
 import type { Tokens, UsageRow } from "./types.ts";
@@ -46,6 +48,10 @@ export type Summary = {
    * conversation has its own fixed part, labelled "fixed part (<agent type>)".
    */
   flow: FlowItem[];
+  /** `flow` per agent: `main`, `sub:<type>`. */
+  flowByAgent: Record<string, FlowItem[]>;
+  /** Where each billed kind went, per agent; only when asked for with `usage`. */
+  usage?: UsageDetail;
   /** Prompts of 5000+ tokens by re-read cost, top 40; a sub-agent's task prompt counts too. */
   pastes: Paste[];
   /** File to its most whole reads within one conversation (the main thread or one sub-agent); files read whole at least twice, top 40. */
@@ -63,6 +69,8 @@ export type SummaryOpts = {
   tzOffsetMin: number;
   /** "session" span only: the session to summarize; default is the one with the latest request. */
   sessionId?: string;
+  /** Also split each billed kind by source (the Usage tab's figures); costs one more pass over the requests. */
+  usage?: boolean;
 };
 
 export const TOP_SESSIONS = 20;
@@ -195,6 +203,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     cacheRebuilds: [],
     peakContext: dict(),
     flow: [],
+    flowByAgent: dict(),
     pastes: [],
     wholeReads: dict(),
     compactions: dict(),
@@ -288,15 +297,19 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     return r.tokens.cw5m * u.cw5m + r.tokens.cw1h * u.cw1h;
   });
   yield;
+  const collector = opts.usage === true ? usageCollector(prices) : undefined;
   const flow = yield* analyzeFlowSteps({
     rows: everyRow,
     users,
     compacts,
     counted: (r) => counted.has(r),
     cacheReadUsd: (r) => cacheUnitPrices(r, prices, resolve).read,
+    ...(collector !== undefined && { onRequest: collector.add }),
   });
+  if (collector !== undefined) out.usage = collector.done();
   out.peakContext = flow.peakContext;
   out.flow = flow.flow;
+  out.flowByAgent = flow.byAgent;
   out.pastes = flow.pastes;
   out.wholeReads = flow.wholeReads;
   out.toolFill = flow.toolFill;

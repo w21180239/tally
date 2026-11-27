@@ -21,6 +21,8 @@ export type KeyCtx = {
   /** `v` puts the chosen agent's transcript in view; `b` goes back. */
   canView?: boolean;
   canGoBack?: boolean;
+  /** `v` shows the full text behind each row (Usage). */
+  canFull?: boolean;
   /** `m` opens the cut lists. */
   more?: boolean;
   /** Tab and Enter walk and open rows; evidence is the Hints tab's form. */
@@ -48,6 +50,7 @@ export function keyLine(tab: TabId, ctx: KeyCtx = {}): string[] {
   if (ctx.machines === true && (tab === "usage" || tab === "history" || tab === "hints")) keys.push("t machines");
   if (ctx.agents === true) keys.push("a agent list", "p/n prev/next");
   if (ctx.canView === true) keys.push("v open agent");
+  if (ctx.canFull === true) keys.push("v full text");
   if (ctx.canGoBack === true) keys.push("b return");
   if (ctx.more === true) keys.push("m full lists");
   if (ctx.rows === true) keys.push("tab/enter open rows");

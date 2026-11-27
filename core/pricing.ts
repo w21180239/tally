@@ -93,3 +93,16 @@ export function cacheUnitPrices(row: UsageRow, table: PriceTable, resolve: Resol
   const mul = (lc !== undefined && t.input + t.cacheRead + t.cw5m + t.cw1h > lc.threshold ? lc.inputMul : 1) * (row.fast ? table.fastMul : 1) / 1e6;
   return { read: p.cacheRead * mul, cw5m: p.cw5m * mul, cw1h: p.cw1h * mul };
 }
+
+/** USD per token of one request's four billed kinds, with the long-context and fast multipliers applied (zeros when unpriced). */
+export function unitPrices(row: UsageRow, table: PriceTable, resolve: Resolver = (m) => resolvePrice(m, table)): { input: number; output: number; read: number; cw5m: number; cw1h: number } {
+  const r = row.synthetic ? null : resolve(row.model);
+  if (!r) return { input: 0, output: 0, read: 0, cw5m: 0, cw1h: 0 };
+  const { price: p } = r;
+  const t = row.tokens;
+  const lc = p.longContext;
+  const over = lc !== undefined && t.input + t.cacheRead + t.cw5m + t.cw1h > lc.threshold;
+  const fast = (row.fast ? table.fastMul : 1) / 1e6;
+  const inMul = (over ? lc.inputMul : 1) * fast;
+  return { input: p.input * inMul, output: p.output * (over ? lc.outputMul : 1) * fast, read: p.cacheRead * inMul, cw5m: p.cw5m * inMul, cw1h: p.cw1h * inMul };
+}

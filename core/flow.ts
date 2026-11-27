@@ -2,15 +2,32 @@
 // A conversation is replayed in time order: a prompt, tool result or compaction summary stays in the
 // context until a compaction, and every counted request re-reads the cached share of it. A part's re-read
 // cost is its tokens times the cache-read spend of the requests made while it was there.
-import { dictOf } from "./dict.ts";
+import { dict, dictOf } from "./dict.ts";
 import { drain, STEP_ROWS } from "./steps.ts";
 import type { Steps } from "./steps.ts";
-import { streamOf } from "./stream.ts";
+import { agentKeyOf, streamOf } from "./stream.ts";
 import type { CompactRow, UsageRow, UserRow } from "./types.ts";
 
 export type FlowSource = "prompt" | "read" | "bash" | "mcp" | "tool" | "compaction" | "fixed";
-export type FlowItem = { label: string; source: FlowSource; tokens: number; rereadUsd: number };
+/** `rereadTokens`: the tokens of the part times the requests that re-read it (its cached share). */
+export type FlowItem = { label: string; source: FlowSource; tokens: number; rereadTokens: number; rereadUsd: number };
 export type Paste = { sessionId: string; tokens: number; rereadUsd: number };
+
+/** A chunk of text that entered the context, sized in chars until a request tells its token count. `text` is the full text where one is known. */
+export type Piece = { source: FlowSource; label: string; chars: number; paste: boolean; tool?: string; text?: string };
+
+/** What the replay shows an observer for each request, before the request's parts are admitted. */
+export type RequestSeen = {
+  row: UsageRow;
+  counted: boolean;
+  /** The parts that arrived since the previous request of the stream. */
+  pieces: Piece[];
+  /** The stream's first request, or the first after a compaction. */
+  opening: boolean;
+  afterCompact: boolean;
+  /** Time of the stream's previous request; null for the first. */
+  prevTs: number | null;
+};
 
 export type FlowInput = {
   /** Every non-synthetic request, any order. */
@@ -21,9 +38,13 @@ export type FlowInput = {
   counted: (r: UsageRow) => boolean;
   /** USD per token of the request's cache read. */
   cacheReadUsd: (r: UsageRow) => number;
+  /** Called once per request in replay order, counted or not. */
+  onRequest?: (seen: RequestSeen) => void;
 };
 export type FlowOut = {
   flow: FlowItem[];
+  /** The same parts per agent (`main`, `sub:<type>`), each list cut like `flow`. */
+  byAgent: Record<string, FlowItem[]>;
   /** Prompts of PASTE_MIN_TOKENS or more, in any conversation. */
   pastes: Paste[];
   /** File to the most whole reads of it within one conversation; only files read whole more than once. */
@@ -45,7 +66,9 @@ const PROMPT_LABEL = 60;
 const COMMAND_LABEL = 80;
 
 const FIXED = "fixed part";
-const CARRIED = "carried over";
+/** Labels of the flow parts that are not one prompt or result: harness notices, a resumed conversation, a compaction summary. */
+export const NOTICES = "notices";
+export const CARRIED = "carried over";
 const SUMMARY = "compaction";
 
 const promptOf = (t: UsageRow["tokens"]): number => t.input + t.cacheRead + t.cw5m + t.cw1h;
@@ -60,26 +83,24 @@ function clip(s: string, max: number): string {
 }
 
 type Tool = UsageRow["tools"][number];
-// A chunk of text that entered the context, sized in chars until a request tells its token count.
-type Piece = { source: FlowSource; label: string; chars: number; paste: boolean; tool?: string };
 
 function pieceOfResult(tool: Tool | undefined, chars: number): Piece {
   if (!tool) return { source: "tool", label: "tool result", chars, paste: false };
   const p = { chars, paste: false, tool: tool.name };
   if (tool.name === "Read") return { ...p, source: "read", label: tool.target ?? "Read" };
-  if (tool.name === "Bash") return { ...p, source: "bash", label: clip(tool.command ?? "", COMMAND_LABEL) || "Bash" };
+  if (tool.name === "Bash") return { ...p, source: "bash", label: clip(tool.command ?? "", COMMAND_LABEL) || "Bash", ...(tool.command !== undefined && { text: tool.command }) };
   return { ...p, source: tool.mcpServer ? "mcp" : "tool", label: tool.name };
 }
 
 function piecesOf(u: UserRow, tools: Map<string, Tool>): Piece[] {
-  if (u.kind === "prompt") return [{ source: "prompt", label: clip(u.text ?? "", PROMPT_LABEL) || "prompt", chars: u.chars, paste: true }];
-  if (u.kind === "notice") return [{ source: "prompt", label: "notices", chars: u.chars, paste: false }];
+  if (u.kind === "prompt") return [{ source: "prompt", label: clip(u.text ?? "", PROMPT_LABEL) || "prompt", chars: u.chars, paste: true, ...(u.text !== undefined && { text: u.text }) }];
+  if (u.kind === "notice") return [{ source: "prompt", label: NOTICES, chars: u.chars, paste: false }];
   if (u.kind === "compaction") return [{ source: "compaction", label: SUMMARY, chars: u.chars, paste: false }];
   const blocks = u.results ?? [{ toolUseId: u.toolUseId ?? "", chars: u.chars }];
   return blocks.map((b) => pieceOfResult(tools.get(b.toolUseId), b.chars));
 }
 
-type Conv = { sessionId: string; sub: boolean; fixedLabel: string; rows: UsageRow[]; users: UserRow[]; compacts: number[] };
+type Conv = { sessionId: string; sub: boolean; agent: string; fixedLabel: string; rows: UsageRow[]; users: UserRow[]; compacts: number[] };
 
 function median(xs: number[]): number {
   if (xs.length === 0) return 0;
@@ -112,7 +133,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     let c = convs.get(key);
     if (!c) {
       const sub = r.sidechain || r.agentId !== undefined;
-      c = { sessionId: r.sessionId, sub, fixedLabel: sub ? `${FIXED} (${r.agentType ?? "sub-agent"})` : FIXED, rows: [], users: [], compacts: [] };
+      c = { sessionId: r.sessionId, sub, agent: agentKeyOf(r), fixedLabel: sub ? `${FIXED} (${r.agentType ?? "sub-agent"})` : FIXED, rows: [], users: [], compacts: [] };
       convs.set(key, c);
     }
     c.rows.push(r);
@@ -140,11 +161,14 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     caps[sub ? "sub" : "main"] = median(rests) * FIXED_CAP_FACTOR;
   }
 
-  const items = new Map<string, FlowItem>();
-  const itemFor = (source: FlowSource, label: string): FlowItem => {
+  // Parts are kept per agent and summed at the end, so each agent's list and the whole list come from one replay.
+  const items = new Map<string, Map<string, FlowItem>>();
+  const itemFor = (agent: string, source: FlowSource, label: string): FlowItem => {
     const key = `${source}\u0000${label}`;
-    let it = items.get(key);
-    if (!it) items.set(key, (it = { label, source, tokens: 0, rereadUsd: 0 }));
+    let mine = items.get(agent);
+    if (!mine) items.set(agent, (mine = new Map()));
+    let it = mine.get(key);
+    if (!it) mine.set(key, (it = { label, source, tokens: 0, rereadTokens: 0, rereadUsd: 0 }));
     return it;
   };
   const pastes: Paste[] = [];
@@ -166,12 +190,13 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     let ownFixed: number | null = null;
     let prevPrompt = 0;
     let prevOutput = 0;
+    let prevTs: number | null = null;
     const wholes = new Map<string, number>();
 
     const admit = (source: FlowSource, label: string, tokens: number, counted: boolean, flags: { paste?: boolean; listed?: boolean } = {}): void => {
       if (tokens <= 0) return;
       const listed = flags.listed !== false;
-      const item = listed && counted ? itemFor(source, label) : null;
+      const item = listed && counted ? itemFor(c.agent, source, label) : null;
       if (item) item.tokens += tokens;
       stays.push({ source, label, tokens, counted, listed, paste: flags.paste === true, from: shares.length - 1, item });
       held += tokens;
@@ -181,7 +206,9 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       for (const s of stays) {
         if (!s.listed || (!s.counted && shares[end] === shares[s.from])) continue;
         const usd = s.tokens * (spend[end] - spend[s.from]);
-        (s.item ?? itemFor(s.source, s.label)).rereadUsd += usd;
+        const it = s.item ?? itemFor(c.agent, s.source, s.label);
+        it.rereadUsd += usd;
+        it.rereadTokens += s.tokens * (shares[end] - shares[s.from]);
         if (s.paste && s.counted && s.tokens >= PASTE_MIN_TOKENS) pastes.push({ sessionId: c.sessionId, tokens: s.tokens, rereadUsd: usd });
       }
       stays = [];
@@ -216,6 +243,8 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       const row = rows[ri++];
       const counted = input.counted(row);
       const prompt = promptOf(row.tokens);
+      input.onRequest?.({ row, counted, pieces: waiting, opening, afterCompact, prevTs });
+      prevTs = row.ts;
       if (counted) {
         const share = held <= 0 ? 1 : Math.min(1, row.tokens.cacheRead / held);
         shares.push(shares[shares.length - 1] + share);
@@ -265,10 +294,26 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
   }
 
   const repeated = [...wholeBest].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1] || text(a[0], b[0]));
-  const flow = [...items.values()]
-    .filter((f) => f.tokens > 0 || f.rereadUsd > 0)
-    .sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.source, b.source) || text(a.label, b.label))
-    .slice(0, FLOW_ITEMS);
+  const ranked = (list: Iterable<FlowItem>): FlowItem[] =>
+    [...list]
+      .filter((f) => f.tokens > 0 || f.rereadUsd > 0)
+      .sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.source, b.source) || text(a.label, b.label))
+      .slice(0, FLOW_ITEMS);
+  const whole = new Map<string, FlowItem>();
+  const byAgent = dict<FlowItem[]>();
+  for (const [agent, mine] of items) {
+    byAgent[agent] = ranked(mine.values());
+    for (const [key, it] of mine) {
+      const sum = whole.get(key);
+      if (!sum) whole.set(key, { ...it });
+      else {
+        sum.tokens += it.tokens;
+        sum.rereadTokens += it.rereadTokens;
+        sum.rereadUsd += it.rereadUsd;
+      }
+    }
+  }
+  const flow = ranked(whole.values());
   pastes.sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.sessionId, b.sessionId));
-  return { flow, pastes: pastes.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak) };
+  return { flow, byAgent, pastes: pastes.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak) };
 }

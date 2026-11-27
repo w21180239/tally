@@ -5,7 +5,8 @@ import type { TabId } from "../core/args.ts";
 import type { Settings } from "../core/settings.ts";
 import type { Span } from "../core/summary.ts";
 import { readSession } from "../engine/session-view.ts";
-import { attempt, openWindow, readChart, readFoot, readView, setMachines, setMore, setRepoOnly, setSpan, showTab } from "../engine/window.ts";
+import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
+import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, showTab, toggleShown } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
 import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
@@ -16,6 +17,7 @@ import { layoutOf } from "./layout.ts";
 import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
 import type { KeyCtx } from "./keys.ts";
 import { drawSession } from "./tabs/session.tsx";
+import { drawUsage } from "./tabs/usage.tsx";
 import { tableOf } from "./table.ts";
 import type { Table } from "./table.ts";
 import { SEP } from "./theme.ts";
@@ -29,8 +31,7 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
 
 // Until each tab has its own body: one dim line saying what it will hold.
-const PLACEHOLDER: Record<Exclude<TabId, "session">, string> = {
-  usage: "Tokens and cost by model, agent and tool.",
+const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage">, string> = {
   context: "What fills the context window.",
   history: "Spend over the last 30 days.",
   hints: "Ways to spend less.",
@@ -183,10 +184,35 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     });
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
+  } else if (tab === "usage") {
+    const [live, data] = await Promise.all([readLive($), readUsage($)]);
+    const want = { span, sessionId: live.sessionId };
+    // Figures of another span, or old ones, are rebuilt off the draw; the tab shows what it has meanwhile.
+    if (needsUsage(data, want, d.now)) inBackground($, () => refreshUsage($, { ...want, startedAt: live.startedAt }));
+    const drawn = drawUsage(t, {
+      d,
+      data,
+      span,
+      sessionId: live.sessionId,
+      view: { agent: view.agent, listing: view.listing, full: view.full, shown: view.shown, more: view.more },
+      cols,
+      onAgent: (key) => attempt($, () => setAgent($, key)),
+      onListing: (listing) => attempt($, () => setListing($, listing)),
+      onFull: (full) => attempt($, () => setFull($, full)),
+      onShown: (key) => attempt($, () => toggleShown($, key)),
+      onMore: (more) => attempt($, () => setMore($, more)),
+      onCopy: (text) =>
+        attempt($, async () => {
+          const done = await $.ui.copy({ text, surface: e.surface });
+          if (!done.isCopied) $.ui.toast("tally: could not copy to the clipboard.");
+        }),
+    });
+    tabRows = drawn.rows;
+    Object.assign(ctx, drawn.ctx);
   } else {
     tabRows = [
       <Text key="placeholder" dimColor wrap="truncate-end">
-        {PLACEHOLDER[tab]}
+        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage">]}
       </Text>,
     ];
   }

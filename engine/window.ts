@@ -54,11 +54,18 @@ export type ViewState = {
   hasTipped: boolean;
   /** A tab's cut lists are shown whole (`m`). */
   more: boolean;
+  /** Usage: the agent whose figures show (`main`, `sub:<type>`); empty for all of them. */
+  agent: string;
+  /** Usage: the agent list is open (`a`). */
+  listing: boolean;
+  /** Usage: every row's full text is shown (`v`), and the rows whose own text was opened. */
+  full: boolean;
+  shown: string[];
 };
 
-export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false, more: false };
+export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false, more: false, agent: "", listing: false, full: false, shown: [] };
 
-const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-2" });
+const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-3" });
 const footAtom = atom({ plugin: "tally", key: "foot" } as const, EMPTY_FOOT, { shape: "foot-1" });
 const chartAtom = atom({ plugin: "tally", key: "chart" } as const, EMPTY_CHART, { shape: "chart-1" });
 
@@ -196,7 +203,7 @@ export async function reseatView($: EngineInterface): Promise<void> {
 
 
 export async function showTab($: EngineInterface, tab: TabId): Promise<void> {
-  await changeView($, (v) => ({ ...v, tab, more: false, hasTipped: true }));
+  await changeView($, (v) => ({ ...v, tab, more: false, listing: false, shown: [], hasTipped: true }));
   await $.store.set(TAB_KEY, tab);
 }
 
@@ -211,6 +218,23 @@ export async function setRepoOnly($: EngineInterface, repoOnly: boolean): Promis
 
 export async function setMore($: EngineInterface, more: boolean): Promise<void> {
   await changeView($, (v) => ({ ...v, more }));
+}
+
+export async function setAgent($: EngineInterface, agent: string): Promise<void> {
+  await changeView($, (v) => ({ ...v, agent, listing: false, shown: [] }));
+}
+
+export async function setListing($: EngineInterface, listing: boolean): Promise<void> {
+  await changeView($, (v) => ({ ...v, listing }));
+}
+
+export async function setFull($: EngineInterface, full: boolean): Promise<void> {
+  await changeView($, (v) => ({ ...v, full }));
+}
+
+/** Opens or closes one row's full text. */
+export async function toggleShown($: EngineInterface, key: string): Promise<void> {
+  await changeView($, (v) => ({ ...v, shown: v.shown.includes(key) ? v.shown.filter((k) => k !== key) : [...v.shown, key] }));
 }
 
 export async function setMachines($: EngineInterface, machines: "this" | "all"): Promise<void> {
