@@ -130,6 +130,8 @@ function userRow(l: Rec, ctx: FileCtx): Parsed | null {
     if (id) row.toolUseId = id;
     const per = results.flatMap((b) => { const i = nonEmpty(b.tool_use_id); return i ? [{ toolUseId: i, chars: charsOf(b.content) }] : []; });
     if (per.length > 0) row.results = per;
+    const errors = results.filter((b) => b.is_error === true).length;
+    if (errors > 0) row.errors = errors;
     return { t: "user", row };
   }
   const text = textOf(content);

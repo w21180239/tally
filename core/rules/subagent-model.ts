@@ -1,15 +1,45 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { resolvePrice } from "../pricing.ts";
 import type { ModelPrice } from "../pricing.ts";
+import type { Summary } from "../summary.ts";
 import type { Tokens } from "../types.ts";
 import { LISTED, usdText } from "./shared.ts";
 
 const LOOKING: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch", "bash"]);
+// Tools that cannot change anything; a shell can, so a type that runs one fires but is not high confidence.
+const READ_ONLY: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch"]);
 const HANDBACK: ReadonlySet<string> = new Set(["subagenthandback", "structuredoutput"]);
 const BIG = /(opus|fable)/i;
 
+// A type is high confidence when all of these hold, so a cheaper model can be expected to cope with its work.
+const MAX_AVG_OUTPUT = 2000;
+const MAX_ERROR_SHARE = 0.05;
+const MAX_AVG_TURNS = 10;
+
+const LOW_ACTION = "Try sonnet for one week";
+
 const priced = (t: Tokens, p: ModelPrice): number => (t.input * p.input + t.output * p.output + t.cacheRead * p.cacheRead + t.cw5m * p.cw5m + t.cw1h * p.cw1h) / 1e6;
 const shortModel = (model: string): string => model.replace(/^claude-/, "");
+
+type Slice = Summary["bySubType"][string];
+
+// Figures over all of a type's models. A turn is one request; a task is one sub-agent conversation, and
+// without a task count (shards from before agent ids) turns per task cannot be shown.
+function steady(s: Summary, type: string, byModel: Slice): boolean {
+  let requests = 0;
+  let output = 0;
+  for (const m of Object.values(byModel)) {
+    requests += m.requests;
+    output += m.tokens.output;
+    for (const name of Object.keys(m.tools)) {
+      const n = name.toLowerCase();
+      if (!HANDBACK.has(n) && !READ_ONLY.has(n)) return false;
+    }
+  }
+  const st = s.subStats?.[type];
+  if (st === undefined || st.tasks <= 0) return false;
+  return output < MAX_AVG_OUTPUT * requests && (st.results === 0 || st.errors / st.results < MAX_ERROR_SHARE) && requests <= MAX_AVG_TURNS * st.tasks;
+}
 
 export const subagentModel: HintRule = {
   id: "subagent-model",
@@ -18,6 +48,7 @@ export const subagentModel: HintRule = {
     const haiku = resolvePrice("claude-haiku", prices)?.price;
     if (sonnet === undefined) return [];
     const found: Array<{ type: string; model: string; usd: number; onSonnet: number; onHaiku: number | null }> = [];
+    const types = new Set<string>();
     for (const [type, byModel] of Object.entries(summary.bySubType)) {
       if (type === "unknown") continue;
       for (const [model, m] of Object.entries(byModel)) {
@@ -28,11 +59,13 @@ export const subagentModel: HintRule = {
         const onSonnet = m.usd - priced(m.tokens, sonnet);
         if (onSonnet <= 0) continue;
         found.push({ type, model, usd: m.usd, onSonnet, onHaiku: haiku === undefined ? null : m.usd - priced(m.tokens, haiku) });
+        types.add(type);
       }
     }
     if (found.length === 0) return [];
     found.sort((a, b) => b.onSonnet - a.onSonnet || (a.type < b.type ? -1 : 1));
     const usd = found.reduce((n, f) => n + f.onSonnet, 0);
+    const high = [...types].every((t) => steady(summary, t, summary.bySubType[t]!));
     const evidence: Evidence[] = found.slice(0, LISTED).map((f) => ({
       label: f.type,
       detail: `${usdText(f.usd)} on ${shortModel(f.model)}; priced on sonnet ${usdText(f.usd - f.onSonnet)}${f.onHaiku === null ? "" : `, on haiku ${usdText(f.usd - f.onHaiku)}`}`,
@@ -44,8 +77,9 @@ export const subagentModel: HintRule = {
         title: "Flagship models on lookup-only sub-agents",
         usd,
         projected: true,
-        summary: `${found.length} sub-agent ${found.length === 1 ? "type" : "types"} used only read and search tools (or none) but ran on a top-tier model. The same token usage at Sonnet prices would be ${usdText(usd)} cheaper.`,
-        action: "Add a `model:` line (sonnet or haiku) to those agent definitions, or set CLAUDE_CODE_SUBAGENT_MODEL to move every sub-agent at once.",
+        confidence: high ? "high" : "low",
+        summary: `${found.length} sub-agent ${found.length === 1 ? "type" : "types"} used only read and search tools (or none) but ran on a top-tier model. The same token usage at Sonnet prices would be ${usdText(usd)} cheaper.${high ? "" : " Shell calls, long replies, failed tool calls or many turns per task show up in some of them, so the saving is an estimate until tried."}`,
+        action: high ? "Add a `model:` line (sonnet or haiku) to those agent definitions, or set CLAUDE_CODE_SUBAGENT_MODEL to move every sub-agent at once." : LOW_ACTION,
         evidence,
         short: `${found.length} lookup-only ${found.length === 1 ? "agent" : "agents"} on a flagship model`,
       },

@@ -17,6 +17,8 @@ import type { Steps } from "./steps.ts";
 
 export type Span = "session" | "24h" | "30d";
 export type Money = { usd: number; tokens: Tokens; requests: number };
+/** One sub-agent type: conversations (tasks) it ran, tool results they received, and how many of those failed. */
+export type SubStats = { tasks: number; results: number; errors: number };
 export type TopSession = { sessionId: string; repo: string; title?: string; pr?: string; started: number; usd: number; resume: string };
 export type Summary = {
   span: Span;
@@ -29,6 +31,8 @@ export type Summary = {
   byModel: Record<string, Money>;
   byRepo: Record<string, Money>;
   bySubType: Record<string, Record<string, Money & { tools: Record<string, number> }>>;
+  /** `bySubType`'s types, over their conversations that have a counted request. Tasks need agent ids, so shards from before them count none. */
+  subStats: Record<string, SubStats>;
   bySkill: Record<string, Money>;
   byPlugin: Record<string, Money>;
   /** Spend of the requests that called the server, so entries overlap when one request calls several. */
@@ -195,6 +199,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     byModel: dict(),
     byRepo: dict(),
     bySubType: dict(),
+    subStats: dict(),
     bySkill: dict(),
     byPlugin: dict(),
     byMcp: dict(),
@@ -287,11 +292,23 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
 
   // Deep dimensions: a request is counted when it is one of the summarized rows.
   const counted = new Set<UsageRow>();
+  const agentType = new Map<string, string>();
   for (const { r } of rows) {
     if (++n % STEP_ROWS === 0) yield;
     counted.add(r);
+    if (r.sidechain && r.agentId !== undefined) agentType.set(`${r.sessionId}\u0000${r.agentId}`, r.agentType ?? UNKNOWN_SUB);
   }
   const users = shards.flatMap((s) => s.users);
+  for (const type of agentType.values()) slot(out.subStats, type, () => ({ tasks: 0, results: 0, errors: 0 })).tasks++;
+  for (const u of users) {
+    if (++n % STEP_ROWS === 0) yield;
+    if (u.kind !== "toolResult" || u.agentId === undefined) continue;
+    const type = agentType.get(`${u.sessionId}\u0000${u.agentId}`);
+    if (type === undefined) continue;
+    const st = out.subStats[type]!;
+    st.results += u.results?.length ?? 1;
+    st.errors += u.errors ?? 0;
+  }
   const compacts = shards.flatMap((s) => s.compacts);
   const inWindow = (ts: number) => span === "session" || (ts >= from && ts <= to);
   yield;

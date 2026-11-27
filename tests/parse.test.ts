@@ -158,6 +158,16 @@ describe("parseLine user", () => {
     expect(r.chars).toBe(6);
     expect(r.toolUseId).toBe("a");
   });
+  test("tool results flagged is_error are counted; clean lines carry no count", () => {
+    const line = user([
+      { type: "tool_result", tool_use_id: "a", content: "1", is_error: true },
+      { type: "tool_result", tool_use_id: "b", content: "2" },
+      { type: "tool_result", tool_use_id: "c", content: "3", is_error: true },
+      { type: "tool_result", tool_use_id: "d", content: "4", is_error: "yes" },
+    ]);
+    expect(userRow(parseLine(line, ctx)).errors).toBe(2);
+    expect(userRow(parseLine(toolResult("tu-1", "ok"), ctx)).errors).toBeUndefined();
+  });
   test("empty user line is skipped", () => {
     expect(parseLine(user(""), ctx)).toBe(null);
   });

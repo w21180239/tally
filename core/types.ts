@@ -46,6 +46,8 @@ export type UserRow = {
   chars: number;
   toolUseId?: string;
   results?: { toolUseId: string; chars: number }[];
+  /** tool_result blocks on the line flagged is_error. Absent when none, and in shards written before it existed. */
+  errors?: number;
   /** The line came from a sub-agent transcript. */
   sidechain?: boolean;
   /** Id of that sub-agent transcript. */

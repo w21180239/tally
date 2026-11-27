@@ -24,8 +24,9 @@ export type Shard = {
  * Version of what a bucket's rows hold. Raise it whenever the parser starts recording a row field that
  * unchanged transcripts would lack: an index stamped with another value is dropped and read again.
  * 2: agentType, tool ids and whole reads, user-row sidechain, agentId.
+ * 3: failed tool results counted on user rows.
  */
-export const INDEX_FORMAT = 2;
+export const INDEX_FORMAT = 3;
 
 export const PART_MAX = 3.5 * 1024 * 1024;
 const USAGE_CHUNK = 500;
@@ -160,7 +161,7 @@ function userCols(rows: UserRow[]): unknown {
       const b = r.fileKey.slice(cut);
       base = b === `${r.sessionId}.jsonl` ? 0 : b;
     }
-    const row: unknown[] = [si, r.ts, USER_KINDS.indexOf(r.kind), r.chars, r.toolUseId ?? null, res, r.text ?? null, di, base, r.offset ?? null, r.sidechain ? 1 : null, r.agentId ?? null];
+    const row: unknown[] = [si, r.ts, USER_KINDS.indexOf(r.kind), r.chars, r.toolUseId ?? null, res, r.text ?? null, di, base, r.offset ?? null, r.sidechain ? 1 : null, r.agentId ?? null, r.errors ?? null];
     while (row.length && row[row.length - 1] === null) row.pop();
     return row;
   });
@@ -178,6 +179,7 @@ function userRows(o: { s: string[]; d: string[]; c: unknown[][] }): UserRow[] {
     if (a[9] != null) r.offset = a[9] as number;
     if (a[10] === 1) r.sidechain = true;
     if (a[11] != null) r.agentId = a[11] as string;
+    if (a[12] != null) r.errors = a[12] as number;
     return r;
   });
 }

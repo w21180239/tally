@@ -248,6 +248,27 @@ describe("shard agentId", () => {
   });
 });
 
+describe("shard tool-result errors", () => {
+  test("the error count round-trips; a row without one stays without", () => {
+    const s = shard(2);
+    s.users.push({ sessionId: "s-0", ts: 1_000_004, kind: "toolResult", chars: 5, toolUseId: "t2", results: [{ toolUseId: "t2", chars: 5 }], sidechain: true, agentId: "a1", errors: 2 });
+    const d = decodeShard(encodeShard(s));
+    expect(d).toEqual(s);
+    expect(d.users.map((r) => r.errors)).toEqual([undefined, undefined, 2]);
+    expect("errors" in d.users[1]).toBe(false);
+  });
+  test("a row stored before the column existed decodes without errors", () => {
+    const s = shard(2);
+    s.users.push({ sessionId: "s-0", ts: 1_000_004, kind: "toolResult", chars: 5, toolUseId: "t2", sidechain: true, agentId: "a1", errors: 2 });
+    const old = encodeShard(s).map((p) => {
+      const o = JSON.parse(p) as { items: [string, any][] };
+      for (const it of o.items) if (it[0] === "users") for (const row of it[1].c) row.length = Math.min(row.length, 12);
+      return JSON.stringify(o);
+    });
+    expect(decodeShard(old).users.map((r) => r.errors)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
 describe("shard format stamp", () => {
   test("a stamped shard round-trips its format; an unstamped one decodes without it", () => {
     const s: Shard = { ...shard(1), days: { "2026-11-20": 3 }, fmt: INDEX_FORMAT };

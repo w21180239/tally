@@ -5,6 +5,7 @@ import { activeHours, localDay, localDayStart, utcHour } from "../core/time.ts";
 import { month, usage, NOW, OPUS, PRICES, SONNET, TZ } from "./fixtures/month.ts";
 import type { Shard } from "../core/shard.ts";
 import { read, req } from "./fixtures/rows.ts";
+import type { UserRow } from "../core/types.ts";
 
 const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 const usd = (m: { usd: number }) => Math.round(m.usd * 1e6) / 1e6;
@@ -282,6 +283,33 @@ describe("summarize internals", () => {
     expect(Object.keys(s.byRepo)).toEqual(["constructor"]);
     expect(Object.keys(s.byModel).sort()).toEqual(["constructor", "toString"]);
     expect(s.bySubType.constructor.toString.tools.constructor).toBe(2);
+  });
+});
+
+describe("subStats", () => {
+  const shard = (usage: Shard["usage"], extra: Partial<Shard> = {}): Shard => ({ v: 1, project: "p", files: {}, usage, users: [], metas: [], compacts: [], snapshots: [], ...extra });
+  const base = Date.UTC(2026, 10, 27, 10);
+  const at = (n: number) => base + n * 1000;
+  const sub = (id: string, n: number, agentType: string, agentId: string, session = "s") => ({ ...req({ id, at: 0, session, sidechain: true, agentType, agentId, cwd: "/w/r", tokens: { output: 10 } }), ts: at(n) });
+  const res = (n: number, agentId: string, count: number, errors: number, session = "s"): UserRow => ({ sessionId: session, ts: at(n), kind: "toolResult", chars: 3, toolUseId: `u${n}`, results: Array.from({ length: count }, (_, i) => ({ toolUseId: `u${n}-${i}`, chars: 1 })), sidechain: true, agentId, ...(errors > 0 ? { errors } : {}) });
+  const opts = { span: "24h" as const, nowMs: base + 3_600_000, tzOffsetMin: 0 };
+
+  test("tasks are distinct sub-agent conversations; results and errors sum over their tool-result rows", () => {
+    const rows = [sub("a", 1, "Explore", "e1"), sub("b", 2, "Explore", "e1"), sub("c", 3, "Explore", "e2"), sub("d", 4, "Plan", "p1"), sub("e", 5, "Plan", "p1", "other")];
+    const users = [res(2, "e1", 2, 1), res(3, "e2", 1, 0), res(4, "p1", 3, 0), res(5, "p1", 1, 1, "other")];
+    const s = summarize([shard(rows, { users })], PRICES, opts);
+    expect({ ...s.subStats }).toEqual({ Explore: { tasks: 2, results: 3, errors: 1 }, Plan: { tasks: 2, results: 4, errors: 1 } });
+  });
+  test("a conversation outside the window or filtered repo does not count; main-thread rows never do", () => {
+    const old = { ...sub("x", 0, "Explore", "e9"), ts: base - 3 * 86_400_000 };
+    const main = { ...req({ id: "m", at: 0, cwd: "/w/r" }), ts: at(1) };
+    const users: UserRow[] = [{ ...res(2, "e9", 4, 4), ts: base - 3 * 86_400_000 }, { sessionId: "s", ts: at(3), kind: "toolResult", chars: 1, results: [{ toolUseId: "z", chars: 1 }], errors: 1 }];
+    const s = summarize([shard([old, main], { users })], PRICES, opts);
+    expect({ ...s.subStats }).toEqual({});
+  });
+  test("rows without an agentId (shards from before it existed) yield no tasks", () => {
+    const row = { ...req({ id: "a", at: 0, sidechain: true, agentType: "Explore", cwd: "/w/r" }), ts: at(1) };
+    expect({ ...summarize([shard([row])], PRICES, opts).subStats }).toEqual({});
   });
 });
 
