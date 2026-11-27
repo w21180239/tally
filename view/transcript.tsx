@@ -98,7 +98,7 @@ export function drawTranscript(t: Table, i: TranscriptInput): TranscriptDrawing 
   out.push(blank(t, "transcript-calls"));
   out.push(
     <Text key="transcript-answer-head" dimColor>
-      Final reply
+      Latest reply
     </Text>,
   );
   out.push(v.answer === "" ? <Text key="transcript-answer-none" dimColor>{"  (nothing said yet)"}</Text> : textLines(t, "transcript-answer", v.answer, ANSWER_LINES));

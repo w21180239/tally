@@ -4,7 +4,7 @@ import type { EngineInterface, RenderElement, RenderInput } from "claude-code";
 import type { TabId } from "../core/args.ts";
 import type { Settings } from "../core/settings.ts";
 import type { Span } from "../core/summary.ts";
-import { isActive, readAgentStates, readContext, wantContext } from "../engine/context-view.ts";
+import { readAgentStates, readContext, wantContext } from "../engine/context-view.ts";
 import { readSession } from "../engine/session-view.ts";
 import { loadTranscript, needsTranscript, readTranscripts } from "../engine/subagent-transcript.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
@@ -216,7 +216,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     // A stale reading, or an agent's transcript in view that is not read yet, is fetched off the draw.
     wantContext($, data, states, live, d.now);
     const chosen = live.agents[view.ctxAgent];
-    if (chosen !== undefined && view.transcript && needsTranscript(transcripts.byAgent[chosen.id], isActive(states.byId[chosen.id]?.status), d.now)) {
+    if (chosen !== undefined && view.transcript && needsTranscript(transcripts.byAgent[chosen.id], d.now)) {
       inBackground($, () => loadTranscript($, live.sessionId, chosen.id, chosen.type));
     }
     const drawn = drawContext(t, {

@@ -52,14 +52,16 @@ export const isActive = (status: string | undefined): boolean => status !== unde
 
 type Tick = () => Promise<void>;
 
-// The skills, MCP servers and agent types the project's rows show in use, in slices.
-async function usedFromIndex($: EngineInterface, now: number, tick: Tick): Promise<UsedNames> {
+// The skills, MCP servers and agent types the project's rows show in use, in slices; null when there is no usable
+// index to ask (first run, another format, or still being built), which says nothing about what is unused.
+async function usedFromIndex($: EngineInterface, now: number, tick: Tick): Promise<UsedNames | null> {
   const loc = await locate($);
   const shard = await loadProject($, loc.cfg, projectNameOf(await $.session.cwd()), now, tick, now - USED_WINDOW_MS);
+  if (shard === null) return null;
   const skills = new Set<string>();
   const mcp = new Set<string>();
   const agents = new Set<string>();
-  const rows = shard === null ? [] : shard.usage;
+  const rows = shard.usage;
   for (let i = 0; i < rows.length; i++) {
     if (i % STEP_ROWS === STEP_ROWS - 1) await tick();
     const r = rows[i]!;
@@ -99,14 +101,17 @@ async function build($: EngineInterface, id: string, live: Pick<LiveState, "tool
 
   const slicer = makeSlicer($);
   try {
-    const used = mergeUsed(await usedFromIndex($, now, () => slicer.check()), live);
-    await update($, contextAtom, (d) => (d.sessionId === id ? { ...d, used } : d));
-    invalidateWindow($);
+    const indexed = await usedFromIndex($, now, () => slicer.check());
+    if (indexed !== null) {
+      const used = mergeUsed(indexed, live);
+      await update($, contextAtom, (d) => (d.sessionId === id ? { ...d, used } : d));
+      invalidateWindow($);
+    }
   } catch {
     // The names stay as they were: nothing is marked unused on a guess.
   }
 
-  // The counted figures cost a token-count request per tool and file: seconds, so they come last.
+  // Exact counts are fetched last: each tool and file is counted by a separate call, and the lot takes seconds.
   try {
     const full = (await $.session.usage({ breakdown: "full" })).context.breakdown;
     if (full !== undefined) {

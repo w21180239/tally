@@ -133,7 +133,7 @@ function drawMain(t: Table, i: ContextInput, ctx: KeyCtx): RenderElement[] {
   out.push(blank(t, "foot"));
   out.push(
     <Text key="context-note" dimColor wrap="truncate-end">
-      {data.used === null ? "unused: marked once the index has been read" : "unused: no call in this project in the past 30 days"}
+      {data.used === null ? "unused: shown after the project index loads" : "unused: no call in this project in the past 30 days"}
     </Text>,
   );
   return out;
@@ -221,7 +221,7 @@ function drawAgent(t: Table, i: ContextInput, a: AgentLive, ctx: KeyCtx): Render
   );
   out.push(
     <Text key="agent-note" dimColor wrap="truncate-end">
-      Skills, MCP servers and memory files are listed for the main conversation only.
+      The Skills, MCP and Memory lists cover the main thread, not its sub-agents.
     </Text>,
   );
   return out;

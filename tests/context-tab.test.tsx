@@ -7,12 +7,13 @@ import { contextOf, unusedIn } from "../core/context.ts";
 import type { ContextInput } from "../core/context.ts";
 import { liveMcp } from "../core/breakdown.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
-import { lastAnswer, transcriptBuilder } from "../core/subagent-view.ts";
+import { lastAnswer, oneLine, transcriptBuilder } from "../core/subagent-view.ts";
 import type { Shard } from "../core/shard.ts";
 import { summarize } from "../core/summary.ts";
 import type { UsageRow } from "../core/types.ts";
 import { needsAgentStates, needsContext, isActive, mergeUsed } from "../engine/context-view.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
+import { saveShard } from "../engine/store-index.ts";
 import { needsTranscript } from "../engine/subagent-transcript.ts";
 import { keyLine } from "../view/keys.ts";
 import { agentOrderOf } from "../view/tabs/context.tsx";
@@ -160,6 +161,13 @@ async function seedIndex(w: World): Promise<void> {
   await saveBuckets(w.$, CFG, PROJECT, { days: byDay }, {}, NOW);
 }
 
+// Draws the open window, lets the loads that draw asked for finish, and draws again to show them.
+async function redraw(ui: Awaited<ReturnType<Engine["ui"]["mount"]>>, r: Rig) {
+  await ui.redraw();
+  await r.clock.settle();
+  await ui.redraw();
+}
+
 async function openContext($: Engine, r: Rig) {
   await start($);
   await r.clock.settle();
@@ -234,9 +242,33 @@ describe("context tab: what every request carries", () => {
     await ui.unmount();
   });
 
-  test("a live call to a server marks it used even when the index has none", async ($, on) => {
+  test("negative: with no index nothing is marked unused, and the caption says the index is not read", async ($, on) => {
     const r = rig(on);
     r.breakdown = { summary: bd(), full: bd() };
+    const ui = await openContext($, r);
+    expect(await ui.find(TEXT(/^lint/))).toBeDefined();
+    expect(await ui.find(TEXT(/unused$/u))).toBeUndefined();
+    expect(await ui.find(TEXT(/unused: marked once the index has been read/))).toBeUndefined();
+    expect(await ui.find(TEXT(/unused: shown after the project index loads/))).toBeDefined();
+    expect(await ui.find(TEXT(/no call in this project in the past 30 days/))).toBeUndefined();
+    await ui.unmount();
+  });
+
+  test("a stale index (written by another format) marks nothing either", async ($, on) => {
+    const r = rig(on);
+    r.breakdown = { summary: bd(), full: bd() };
+    // A manifest stamped with another index format is ignored like a missing one.
+    await saveShard(r.world.$, CFG, { v: 1, project: PROJECT, files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [], days: {}, fmt: 0 });
+    const ui = await openContext($, r);
+    expect(await ui.find(TEXT(/^lint/))).toBeDefined();
+    expect(await ui.find(TEXT(/unused$/u))).toBeUndefined();
+    await ui.unmount();
+  });
+
+  test("a live call to a server marks it used even when the index lists none of its calls", async ($, on) => {
+    const r = rig(on);
+    r.breakdown = { summary: bd(), full: bd() };
+    await seedIndex(r.world);
     await start($);
     await r.clock.settle();
     await $.tool.call({ tool: "mcp__idle__ping", input: {} } as never);
@@ -368,18 +400,31 @@ function transcript(pairs: number): string {
     );
     out.push(JSON.stringify({ type: "user", timestamp: ts(2 * i + 2), sessionId: "s-1", isSidechain: true, message: { role: "user", content: [{ type: "tool_result", tool_use_id: `tu${i}`, content: "x".repeat(2400) }] } }));
   }
-  out.push(
-    JSON.stringify({ type: "assistant", timestamp: ts(2 * pairs + 1), requestId: "rq-last", sessionId: "s-1", isSidechain: true, message: { id: "m-last", model: SONNET, usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: "text", text: "All done: the bug is in the lexer." }] } }),
-  );
+  out.push(closingLine(pairs, "All done: the bug is in the lexer."));
+  return `${out.join("\n")}\n`;
+}
+
+const closingLine = (pairs: number, text: string): string =>
+  JSON.stringify({ type: "assistant", timestamp: new Date(NOW - 3_000_000 + (2 * pairs + 1) * 1000).toISOString(), requestId: `rq-last${pairs}`, sessionId: "s-1", isSidechain: true, message: { id: `m-last${pairs}`, model: SONNET, usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: "text", text }] } });
+
+// Lines to append to `transcript(from)`: calls from..to-1, then a new closing text.
+function transcriptMore(from: number, to: number, answer: string): string {
+  const ts = (i: number) => new Date(NOW - 3_000_000 + i * 1000).toISOString();
+  const out: string[] = [];
+  for (let i = from; i < to; i++) {
+    out.push(JSON.stringify({ type: "assistant", timestamp: ts(2 * i + 3), requestId: `rq${i}`, sessionId: "s-1", isSidechain: true, message: { id: `m${i}`, model: SONNET, usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [{ type: "tool_use", id: `tu${i}`, name: "Bash", input: { command: `echo step-${i}` } }] } }));
+    out.push(JSON.stringify({ type: "user", timestamp: ts(2 * i + 4), sessionId: "s-1", isSidechain: true, message: { role: "user", content: [{ type: "tool_result", tool_use_id: `tu${i}`, content: "x".repeat(2400) }] } }));
+  }
+  out.push(closingLine(to + 1, answer));
   return `${out.join("\n")}\n`;
 }
 
 describe("context tab: transcript view", () => {
   const FILE = (id: string) => `${CFG}/projects/${PROJECT}/s-1/subagents/agent-${id}.jsonl`;
 
-  async function openTranscript($: Engine, r: Rig, id: string) {
+  async function openTranscript($: Engine, r: Rig, id: string, state: AgentInfo["status"] = "completed") {
     r.breakdown = { summary: bd(), full: bd() };
-    r.agents.v = [status(id, "completed")];
+    r.agents.v = [status(id, state)];
     await start($);
     await r.clock.settle();
     await spawn(r, $, id, "Explore", "find the bug", "find the bug in the parser");
@@ -432,10 +477,59 @@ describe("context tab: transcript view", () => {
     await ui.unmount();
   });
 
+  test("an agent read while it ran shows its last calls and reply once it has finished", async ($, on) => {
+    const r = rig(on);
+    r.world.put(FILE("grow1"), transcript(3));
+    const ui = await openTranscript($, r, "grow1", "running");
+    expect(await ui.find(TEXT(/^3 calls$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^All done: the bug is in the lexer\.$/))).toBeDefined();
+    const sizeBefore = r.world.size(FILE("grow1"))!;
+    r.world.append(FILE("grow1"), transcriptMore(3, 5, "Fixed it in lexer.ts."));
+    r.agents.v = [status("grow1", "completed")];
+    await r.clock.advance(16_000);
+    await redraw(ui, r);
+    console.log("DBG " + JSON.stringify([r.world.reads.filter((x) => x.path === FILE("grow1")), r.world.size(FILE("grow1")), r.clock.now(), await ui.find(TEXT(/ calls$/))]));
+    expect(await ui.find(TEXT(/^5 calls$/))).toBeDefined();
+    expect(await ui.find({ key: "call-4" })).toBeDefined();
+    expect(await ui.find(TEXT(/^Fixed it in lexer\.ts\.$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^All done: the bug is in the lexer\.$/))).toBeUndefined();
+    // The second read continues from the end of the first, so no call is listed twice.
+    const reads = r.world.reads.filter((x) => x.path === FILE("grow1"));
+    expect(reads.some((x) => x.offset === sizeBefore)).toBe(true);
+    await ui.unmount();
+  });
+
+  test("negative: a file that has not grown is not read again, finished agent or not", async ($, on) => {
+    const r = rig(on);
+    r.world.put(FILE("still1"), transcript(3));
+    const ui = await openTranscript($, r, "still1");
+    expect(await ui.find(TEXT(/^3 calls$/))).toBeDefined();
+    const before = r.world.reads.filter((x) => x.path === FILE("still1")).length;
+    await r.clock.advance(60_000);
+    await redraw(ui, r);
+    expect(r.world.reads.some((x) => x.path === FILE("still1") && x.offset > 0)).toBe(false);
+    expect(await ui.find(TEXT(/^3 calls$/))).toBeDefined();
+    expect(r.world.reads.filter((x) => x.path === FILE("still1")).length).toBe(before);
+    await ui.unmount();
+  });
+
+  test("a finished agent's transcript grows after the list of agents failed to read", async ($, on) => {
+    const r = rig(on);
+    r.world.put(FILE("lost1"), transcript(2));
+    const ui = await openTranscript($, r, "lost1", "running");
+    r.agents.v = "fail";
+    expect(await ui.find(TEXT(/^2 calls$/))).toBeDefined();
+    r.world.append(FILE("lost1"), transcriptMore(2, 4, "Done."));
+    await r.clock.advance(16_000);
+    await redraw(ui, r);
+    expect(await ui.find(TEXT(/^4 calls$/))).toBeDefined();
+    await ui.unmount();
+  });
+
   test("a transcript not on disk says so instead of failing", async ($, on) => {
     const r = rig(on);
     const ui = await openTranscript($, r, "gone1");
-    expect(await ui.find(TEXT(/^its transcript is not on disk yet$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^no transcript file for this agent yet$/))).toBeDefined();
     await ui.unmount();
   });
 });
@@ -475,12 +569,12 @@ describe("context pieces", () => {
     expect(needsContext({ sessionId: "", at: 0 }, "", 1)).toBe(false);
     expect(needsAgentStates({ at: 0 }, 9999)).toBe(false);
     expect(needsAgentStates({ at: 0 }, 10_000)).toBe(true);
-    expect(needsTranscript(undefined, false, 0)).toBe(true);
-    expect(needsTranscript({ status: "loading", at: 0 }, true, 99_999)).toBe(false);
-    expect(needsTranscript({ status: "ready", at: 0 }, false, 99_999)).toBe(false);
-    expect(needsTranscript({ status: "ready", at: 0 }, true, 14_999)).toBe(false);
-    expect(needsTranscript({ status: "ready", at: 0 }, true, 15_000)).toBe(true);
-    expect(needsTranscript({ status: "failed", at: 0 }, false, 15_000)).toBe(true);
+    expect(needsTranscript(undefined, 0)).toBe(true);
+    expect(needsTranscript({ status: "loading", at: 0 }, 99_999)).toBe(false);
+    // A finished agent's file is checked again too: it can have grown since the last read.
+    expect(needsTranscript({ status: "ready", at: 0 }, 14_999)).toBe(false);
+    expect(needsTranscript({ status: "ready", at: 0 }, 15_000)).toBe(true);
+    expect(needsTranscript({ status: "failed", at: 0 }, 15_000)).toBe(true);
     expect(["running", "waiting", "idle", "pending"].map(isActive)).toEqual([true, true, true, true]);
     expect(["completed", "failed", "killed", undefined].map(isActive)).toEqual([false, false, false, false]);
   });
@@ -514,6 +608,24 @@ describe("context pieces", () => {
     expect(v.total).toBe(5);
     expect(v.calls.map((c) => [c.item, c.resultChars])).toEqual([["cmd c", null], ["cmd d", null], ["cmd e", 80]]);
     expect(v.answer).toBe("fin");
+  });
+
+  test("oneLine joins whitespace runs, trims, and ends a long text with an ellipsis at the cap", () => {
+    expect(oneLine("  a \n\t b   c  ", 80)).toBe("a b c");
+    expect(oneLine("abcdef", 6)).toBe("abcdef");
+    expect(oneLine("abcdefg", 6)).toBe("abcde\u{2026}");
+    expect(oneLine("ab cd ef", 5)).toBe("ab c\u{2026}");
+    expect(oneLine("", 5)).toBe("");
+    expect(oneLine(" ".repeat(100_000), 5)).toBe("");
+    expect(oneLine(`word ${"x ".repeat(100_000)}`, 10).length).toBe(10);
+  });
+
+  test("the transcript builder takes the first user prompt only", () => {
+    const b = transcriptBuilder();
+    const user = (text: string) => ({ t: "user", row: { kind: "prompt", text } }) as never;
+    b.add(user("first"));
+    b.add(user("second"));
+    expect(b.view("").prompt).toBe("first");
   });
 
   test("lastAnswer reads the last assistant text and skips a cut first line and tool-only messages", () => {

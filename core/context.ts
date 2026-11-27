@@ -61,7 +61,7 @@ const categoryTokens = (b: ContextInput, name: RegExp): number => {
 export function contextOf(sessionId: string, at: number, precision: ContextData["precision"], b: ContextInput): ContextData {
   const skills = dict<ContextRow>();
   for (const s of b.skills?.skillFrontmatter ?? []) {
-    // A plugin's skill reads `plugin:name` wherever the engine gave only the bare name.
+    // Qualify a skill the engine named without its plugin.
     const name = s.pluginName !== undefined && !s.name.includes(":") ? `${s.pluginName}:${s.name}` : s.name;
     const cur = (skills[name] ??= { name, tokens: 0, deferred: 0 });
     cur.tokens += count(s.tokens);
@@ -106,10 +106,10 @@ export function contextOf(sessionId: string, at: number, precision: ContextData[
   };
 }
 
-/** A skill's or agent's name without its plugin prefix. */
+/** The part of a `plugin:name` after the colon. */
 export const bareName = (name: string): string => name.split(":").pop() ?? name;
 
-/** True when `name` was called: whole or by its bare name, since a plugin's entry is listed under either. */
+/** True when `name` is among the called names, either in full or without its plugin prefix. */
 function isCalled(names: ReadonlySet<string>, name: string): boolean {
   return names.has(name) || names.has(bareName(name));
 }

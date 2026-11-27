@@ -1,19 +1,18 @@
-// A sub-agent's transcript boiled down for a window: the task it was given, each tool call with what it was called
-// on and how much came back, and its last words. Built row by row from the parser's output so a transcript of any
-// size can be taken in chunks. Pure.
+// Condenses a sub-agent's transcript for the window: its opening prompt, one line per tool call (target and result
+// size) and what it wrote last. Fed one parsed row at a time, so a file of any size goes through in chunks. Pure.
 import type { Parsed } from "./types.ts";
 
-/** One tool call: the tool, what it was called on in one line, and the characters of its result (null until one is seen). */
+/** A tool call as listed: tool name, a one-line target, and result size in characters (null while no result has arrived). */
 export type TranscriptCall = { tool: string; item: string; resultChars: number | null };
 
 export type TranscriptView = {
-  /** The first message the agent was given. */
+  /** The agent's opening prompt. */
   prompt: string;
-  /** The latest calls, oldest first; the ones before them are only counted. */
+  /** The newest calls, oldest first; earlier ones are only counted. */
   calls: TranscriptCall[];
-  /** Calls in the whole transcript. */
+  /** Number of calls in the whole transcript. */
   total: number;
-  /** The agent's last text; empty while it has said none. */
+  /** What the agent last wrote as prose; empty if it has written none. */
   answer: string;
 };
 
@@ -24,10 +23,23 @@ export const ITEM_CHARS = 80;
 /** The end of a transcript read for the agent's last words. */
 export const TAIL_BYTES = 262_144;
 
-/** `s` as one line of at most `max` characters. */
+/** Characters of a string looked at when making it one line. */
+const SCAN_CHARS = 2048;
+
+/** `s` on one line: runs of whitespace become one space, the ends are trimmed, and anything past `max` is replaced by an ellipsis. */
 export function oneLine(s: string, max: number): string {
-  const flat = s.slice(0, max * 4 + 64).replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, Math.max(0, max - 1))}\u{2026}` : flat;
+  let out = "";
+  let gap = false;
+  for (const ch of s.slice(0, SCAN_CHARS)) {
+    if (ch.trim() === "") {
+      gap = out !== "";
+      continue;
+    }
+    out += gap ? ` ${ch}` : ch;
+    gap = false;
+    if (out.length > max) return `${out.slice(0, Math.max(0, max - 1))}\u{2026}`;
+  }
+  return out;
 }
 
 export type TranscriptBuilder = {
@@ -39,6 +51,7 @@ export type TranscriptBuilder = {
 /** Collects a transcript's rows (any order within one agent's file is the file's own order). */
 export function transcriptBuilder(keep = KEEP_CALLS): TranscriptBuilder {
   let prompt = "";
+  let promptTaken = false;
   let total = 0;
   const calls: TranscriptCall[] = [];
   const byId = new Map<string, TranscriptCall>();
@@ -48,7 +61,10 @@ export function transcriptBuilder(keep = KEEP_CALLS): TranscriptBuilder {
     add(p) {
       if (p.t === "user") {
         const u = p.row;
-        if (u.kind === "prompt" && prompt === "" && total === 0) prompt = u.text ?? "";
+        if (u.kind === "prompt" && !promptTaken) {
+          promptTaken = true;
+          prompt = u.text ?? "";
+        }
         for (const r of u.results ?? []) {
           const call = byId.get(r.toolUseId);
           if (call !== undefined) call.resultChars = r.chars;
