@@ -17,11 +17,14 @@ export const FLAGSHIP = /(opus|fable|mythos)/i;
 export const usdText = (usd: number): string => `$${usd.toFixed(2)}`;
 export const percentText = (share: number): string => `${Math.round(share * 100)}%`;
 
-/** 700000 -> 700k, 1000000 -> 1M, 1250000 -> 1.25M. */
+/** 700000 -> 700k, 1000000 -> 1M, 1250000 -> 1.25M, 3016010000 -> 3.02B. A unit that rounds to 1000 steps up. */
 export function tokensText(n: number): string {
   if (n < 1000) return String(Math.round(n));
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
-  return `${Number((n / 1_000_000).toFixed(2))}M`;
+  const k = Math.round(n / 1000);
+  if (k < 1000) return `${k}k`;
+  const m = Number((n / 1_000_000).toFixed(2));
+  if (m < 1000) return `${m}M`;
+  return `${Number((n / 1_000_000_000).toFixed(2))}B`;
 }
 
 const HOUR = 3_600_000;

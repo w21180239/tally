@@ -214,6 +214,12 @@ describe("window data and glance", () => {
     expect(tokensText(236_000)).toBe("236k");
     expect(tokensText(1_000_000)).toBe("1M");
     expect(tokensText(1_250_000)).toBe("1.25M");
+    // Past a billion the unit steps up, so a 30-day total fits the 9-cell amount column.
+    expect(tokensText(999_994_000)).toBe("999.99M");
+    expect(tokensText(999_996_000)).toBe("1B");
+    expect(tokensText(999_600)).toBe("1M");
+    expect(tokensText(3_016_010_000)).toBe("3.02B");
+    expect(tokensText(1_000_000_000)).toBe("1B");
     expect(untilText(new Date(NOW + 3 * 3_600_000 + 5 * 60_000).toISOString(), NOW)).toBe("3h 05m");
     expect(untilText(new Date(NOW + 3 * 86_400_000 + 5 * 3_600_000).toISOString(), NOW)).toBe("3d 5h");
     expect(untilText(new Date(NOW - 1000).toISOString(), NOW)).toBe("now");

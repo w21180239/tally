@@ -2,6 +2,7 @@
 import type { Hint } from "../core/hint.ts";
 import type { LiveState } from "../core/live-state.ts";
 import { formatMoney } from "../core/money.ts";
+import { tokensText } from "../core/rules/shared.ts";
 import { totalUsd } from "../core/where.ts";
 import type { Settings } from "../core/settings.ts";
 import { CACHE_MARK, chartText, HINT_MARK, SEP } from "./theme.ts";
@@ -94,12 +95,7 @@ export function windowData(i: DataIn): WindowData {
 
 export const moneyOf = (d: Pick<WindowData, "money" | "decimals">, usd: number): string => formatMoney(usd, d.money, d.decimals);
 
-/** 236000 -> 236k, 1000000 -> 1M, 1250000 -> 1.25M. */
-export function tokensText(n: number): string {
-  if (n < 1000) return String(Math.round(n));
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
-  return `${String(Number((n / 1_000_000).toFixed(2)))}M`;
-}
+export { tokensText };
 
 export const percentText = (share: number): string => `${Math.round(share * 100)}%`;
 
