@@ -16,7 +16,7 @@ import { drawHelp } from "../view/tabs/help.tsx";
 import { formatMoney } from "../core/money.ts";
 import { prompt, req } from "./fixtures/rows.ts";
 import { PRICING_MD } from "./fixtures/pricing-sample.ts";
-import { worldOf } from "./world.ts";
+import { posixPath, worldOf } from "./world.ts";
 import type { World } from "./world.ts";
 
 const PLUGIN = "tally";
@@ -65,7 +65,7 @@ function rig(on: On, o: { stored?: Record<string, unknown>; version?: string | n
   on("session.usage", () => ({ value: { startedAt: NOW, context: { tokens: 236_000, window: 1_000_000, percent: 24 }, rateLimits: [], cost: { usd: 0 } } as never }));
   // $.plugin.root is the real checkout, absent from the in-memory fs, so the manifest is served from here.
   on("fs.read", async (_, e) =>
-    e.path.endsWith("/.claude-plugin/plugin.json") && o.version !== null
+    posixPath(e.path).endsWith("/.claude-plugin/plugin.json") && o.version !== null
       ? { value: JSON.stringify({ name: "tally", version: o.version ?? "9.8.7" }) }
       : { value: await world.$.fs.read(e.path, { as: e.as, offset: e.offset, length: e.length } as never) },
   );

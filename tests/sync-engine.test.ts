@@ -12,7 +12,7 @@ import type { UsageRow } from "../core/types.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { SYNC_GAP_MS, machineNameOf, newSalt, safeMachineName } from "../engine/sync.ts";
 import { req } from "./fixtures/rows.ts";
-import { worldOf } from "./world.ts";
+import { posixPath, worldOf } from "./world.ts";
 import type { World } from "./world.ts";
 
 const PLUGIN = "tally";
@@ -76,11 +76,11 @@ function rig(on: On): Rig {
   on("session.usage", () => ({ value: { startedAt: NOW, context: { tokens: 236_000, window: 1_000_000, percent: 24 }, rateLimits: [], cost: { usd: 0 } } as never }));
   on("fs.read", async (_, e) => ({ value: await world.$.fs.read(e.path, { as: e.as, offset: e.offset, length: e.length } as never) }));
   on("fs.write", async (_, e) => {
-    if (e.path.startsWith(`${SYNC}/`)) r.events.push(`write ${e.path}`);
+    if (posixPath(e.path).startsWith(`${SYNC}/`)) r.events.push(`write ${posixPath(e.path)}`);
     return { value: await world.$.fs.write(e.path, e.text) };
   });
   on("fs.list", async (_, e) => ({ value: await world.$.fs.list(e.path) }));
-  on("fs.exists", async (_, e) => ({ value: !r.hidden.has(e.path) && (await world.$.fs.exists(e.path)) }));
+  on("fs.exists", async (_, e) => ({ value: !r.hidden.has(posixPath(e.path)) && (await world.$.fs.exists(e.path)) }));
   on("fs.stat", async (_, e) => ({ value: await world.$.fs.stat(e.path) }));
   on("process.run", (_, e) => {
     r.runs.push([...e.argv]);

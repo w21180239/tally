@@ -3,7 +3,7 @@ import type { Engine } from "claude-code/testing";
 import { describe, expect, mock, test } from "claude-code/testing";
 import { herdrModsDir, herdrRootDir } from "../core/herdr.ts";
 import { MARKER, STUB_MAIN, syncHerdr } from "../engine/herdr.ts";
-import { worldOf } from "./world.ts";
+import { posixPath, worldOf } from "./world.ts";
 import type { World } from "./world.ts";
 
 const ON = { herdrSidebar: true };
@@ -241,7 +241,7 @@ describe("session.start wiring", () => {
     on("session.info", () => ({ value: { platform: "linux" } }));
     // $.plugin.root is the real checkout, absent from the in-memory fs: the template is served from here.
     on("fs.read", async (_, e) =>
-      e.path.endsWith("/herdr/main.js") ? { value: MAIN_SRC } : e.path.endsWith("/herdr/mod.json") ? { value: MOD_SRC } : { value: await w.$.fs.read(e.path, { as: e.as, offset: e.offset, length: e.length } as never) },
+      posixPath(e.path).endsWith("/herdr/main.js") ? { value: MAIN_SRC } : posixPath(e.path).endsWith("/herdr/mod.json") ? { value: MOD_SRC } : { value: await w.$.fs.read(e.path, { as: e.as, offset: e.offset, length: e.length } as never) },
     );
     on("fs.write", async (_, e) => ({ value: await w.$.fs.write(e.path, e.text) }));
     on("fs.list", async (_, e) => ({ value: await w.$.fs.list(e.path) }));

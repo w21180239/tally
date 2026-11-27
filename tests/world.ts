@@ -74,6 +74,8 @@ const DRIVE = /^[A-Za-z]:(?=[\\/])/;
 const norm = (p: string) => p.replace(DRIVE, "").replace(/\\/g, "/").replace(/\/+$/, "");
 // A path as a test reads it back from `reads` and `writes`: host-resolved ones (drive and backslashes) read as the POSIX path the plugin passed.
 const seen = (p: string) => (DRIVE.test(p) && p.includes("\\") ? norm(p) : p);
+/** For a hook that matches on the path it is handed: the POSIX path the plugin passed, on every OS. */
+export const posixPath = seen;
 
 export function worldOf(storeEntries: Record<string, unknown> = {}): World {
   const files = new Map<string, Entry>();
