@@ -5,6 +5,7 @@
   "author": { "name": "VI" },
   "license": "MIT",
   "keywords": ["usage", "tokens", "cost", "context"],
+  "types": "./types/index.d.ts",
   "userConfig": {
     "priceUpdate": {
       "type": "boolean",
