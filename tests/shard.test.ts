@@ -1,5 +1,5 @@
 import { describe, test, expect } from "claude-code/testing";
-import { decodeShard, encodeShard, encodeShardEx, trimShard, PART_MAX } from "../core/shard.ts";
+import { decodeShard, encodeShard, encodeShardEx, trimShard, INDEX_FORMAT, PART_MAX } from "../core/shard.ts";
 import type { Shard } from "../core/shard.ts";
 import { utf8Length } from "../core/lines.ts";
 import { loadShard, projectKey, saveShard } from "../engine/store-index.ts";
@@ -208,5 +208,50 @@ describe("shard agentType", () => {
     });
     expect(JSON.parse(old[0]).items.find((i: [string]) => i[0] === "usage")[1].length).toBe(20);
     expect(decodeShard(old)).toEqual(s);
+  });
+});
+
+describe("shard agentId", () => {
+  const withIds = (): Shard => {
+    const s = shard(4);
+    s.usage[1].agentId = "agent-a1";
+    s.usage[2].agentId = "agent-b2";
+    s.usage[3].agentId = "agent-a1";
+    s.users.push({ sessionId: "s-1", ts: 1_000_004, kind: "prompt", chars: 5, text: "task", sidechain: true, agentId: "agent-a1" });
+    s.compacts.push({ sessionId: "s-1", ts: 1_000_005, agentId: "agent-b2" });
+    return s;
+  };
+  test("round-trips on usage, user and compact rows; rows without an id stay without", () => {
+    const s = withIds();
+    const d = decodeShard(encodeShard(s));
+    expect(d).toEqual(s);
+    expect(d.usage.map((r) => r.agentId)).toEqual([undefined, "agent-a1", "agent-b2", "agent-a1"]);
+    expect("agentId" in d.usage[0]).toBe(false);
+    expect("agentId" in d.users[0]).toBe(false);
+  });
+  test("a shard written before the columns existed still decodes, agentId absent", () => {
+    const s = shard(4);
+    s.users.push({ sessionId: "s-1", ts: 1_000_004, kind: "prompt", chars: 5, text: "task", sidechain: true });
+    const old = encodeShard(withIds()).map((p) => {
+      const o = JSON.parse(p) as { items: [string, any][] };
+      for (const it of o.items) {
+        if (it[0] === "usage") it[1].length = 22;
+        if (it[0] === "users") for (const row of it[1].c) row.length = Math.min(row.length, 11);
+        if (it[0] === "compacts") for (const c of it[1]) delete c.agentId;
+      }
+      return JSON.stringify(o);
+    });
+    const d = decodeShard(old);
+    expect(d.usage.map((r) => r.agentId)).toEqual([undefined, undefined, undefined, undefined]);
+    expect(d.users.map((r) => r.agentId)).toEqual([undefined, undefined, undefined]);
+    expect(d.users[2].sidechain).toBe(true);
+  });
+});
+
+describe("shard format stamp", () => {
+  test("a stamped shard round-trips its format; an unstamped one decodes without it", () => {
+    const s: Shard = { ...shard(1), days: { "2026-11-20": 3 }, fmt: INDEX_FORMAT };
+    expect(decodeShard(encodeShard(s)).fmt).toBe(INDEX_FORMAT);
+    expect("fmt" in decodeShard(encodeShard(shard(1)))).toBe(false);
   });
 });

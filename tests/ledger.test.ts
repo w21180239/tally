@@ -48,14 +48,15 @@ describe("ledger", () => {
     expect(l.offer(row("r", 10), "main", false)).toBe("dup");
     expect(l.owner("r")).toBe("sub");
   });
-  test("a larger main row replacing a subagent-owned row keeps sidechain and agentType", () => {
+  test("a larger main row replacing a subagent-owned row keeps sidechain, agentType and agentId", () => {
     const l = new Ledger();
-    l.offer({ ...row("r", 10), sidechain: true, agentType: "Explore" }, "sub", true);
+    l.offer({ ...row("r", 10), sidechain: true, agentType: "Explore", agentId: "agent-a1" }, "sub", true);
     expect(l.offer(row("r", 50), "main", false)).toBe("replace");
     const kept = l.get("r")!;
     expect(kept.tokens.output).toBe(50);
     expect(kept.sidechain).toBe(true);
     expect(kept.agentType).toBe("Explore");
+    expect(kept.agentId).toBe("agent-a1");
     expect(l.owner("r")).toBe("sub");
   });
   test("a larger main row over a main-owned row stays main", () => {

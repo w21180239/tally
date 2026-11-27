@@ -1,5 +1,5 @@
 import { describe, test, expect } from "claude-code/testing";
-import { baseName, configDir, homeDir, isSubagentPath, joinPath, repoOf, scanRoots, sepOf, splitPath } from "../core/path.ts";
+import { agentIdOfPath, baseName, configDir, homeDir, isSubagentPath, joinPath, repoOf, scanRoots, sepOf, splitPath } from "../core/path.ts";
 
 const env = (m: Record<string, string>) => (k: string) => m[k];
 
@@ -39,6 +39,11 @@ describe("path", () => {
     expect(isSubagentPath("C:\\x\\proj\\s1\\subagents\\agent-1.jsonl")).toBe(true);
     expect(isSubagentPath("/x/proj/s1/subagents/agent-1.jsonl")).toBe(true);
     expect(isSubagentPath("/x/proj/s1.jsonl")).toBe(false);
+  });
+  test("agentIdOfPath names a sub-agent transcript and is undefined for a main one", () => {
+    expect(agentIdOfPath("/x/proj/s1/subagents/agent-a1.jsonl")).toBe("agent-a1");
+    expect(agentIdOfPath("C:\\x\\proj\\s1\\subagents\\agent-b2.jsonl")).toBe("agent-b2");
+    expect(agentIdOfPath("/x/proj/s1.jsonl")).toBeUndefined();
   });
   test("repoOf folds worktrees into the host repo", () => {
     expect(repoOf("C:\\code\\shop\\.claude\\worktrees\\fix-1")).toBe("shop");

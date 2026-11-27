@@ -15,7 +15,16 @@ export type Shard = {
   snapshots: BreakdownSnapshot[];
   /** Manifest only: save counter of every bucket this snapshot expects, keyed by bucket name. */
   days?: Record<string, number>;
+  /** Manifest only: the INDEX_FORMAT the buckets were written with; absent on manifests from before stamping. */
+  fmt?: number;
 };
+
+/**
+ * Version of what a bucket's rows hold. Raise it whenever the parser starts recording a row field that
+ * unchanged transcripts would lack: an index stamped with another value is dropped and read again.
+ * 2: agentType, tool ids and whole reads, user-row sidechain, agentId.
+ */
+export const INDEX_FORMAT = 2;
 
 export const PART_MAX = 3.5 * 1024 * 1024;
 const USAGE_CHUNK = 500;
@@ -42,7 +51,7 @@ function table(): { at(v: string): number; list: string[] } {
 // UsageRow as parallel columns: field names are written once per chunk, not once per row.
 // flags: bit0 fast, bit1 sidechain, bit2 synthetic. Optional strings use null for "absent".
 // sessionId, model and cwd are column indexes into tables appended after the 17 columns; agentType
-// (column 20, table 21) follows them so shards written before it existed still decode.
+// (column 20, table 21) and agentId (22, table 23) follow them so shards written before them still decode.
 function usageCols(rows: UsageRow[]): unknown[] {
   const c = (f: (r: UsageRow) => unknown) => rows.map(f);
   const opt = (f: (r: UsageRow) => string | undefined) => rows.map((r) => f(r) ?? null);
@@ -50,6 +59,7 @@ function usageCols(rows: UsageRow[]): unknown[] {
   const model = table();
   const cwd = table();
   const agent = table();
+  const id = table();
   return [
     c((r) => r.requestId),
     c((r) => sess.at(r.sessionId)),
@@ -73,6 +83,8 @@ function usageCols(rows: UsageRow[]): unknown[] {
     cwd.list,
     c((r) => (r.agentType === undefined ? null : agent.at(r.agentType))),
     agent.list,
+    c((r) => (r.agentId === undefined ? null : id.at(r.agentId))),
+    id.list,
   ];
 }
 
@@ -104,8 +116,9 @@ function usageRows(cols: unknown[][]): UsageRow[] {
     if (cols[14][i] !== null) row.skill = cols[14][i] as string;
     if (cols[15][i] !== null) row.plugin = cols[15][i] as string;
     if (cols[16][i] !== null) row.effort = cols[16][i] as string;
-    // Columns 20-21 were added later: shards written without them decode with agentType absent.
+    // Columns 20-23 were added later: shards written without them decode with both absent.
     if (cols[20] && cols[20][i] != null) row.agentType = (cols[21] as unknown as string[])[cols[20][i] as number];
+    if (cols[22] && cols[22][i] != null) row.agentId = (cols[23] as unknown as string[])[cols[22][i] as number];
     out.push(row);
   }
   return out;
@@ -146,7 +159,7 @@ function userCols(rows: UserRow[]): unknown {
       const b = r.fileKey.slice(cut);
       base = b === `${r.sessionId}.jsonl` ? 0 : b;
     }
-    const row: unknown[] = [si, r.ts, USER_KINDS.indexOf(r.kind), r.chars, r.toolUseId ?? null, res, r.text ?? null, di, base, r.offset ?? null, r.sidechain ? 1 : null];
+    const row: unknown[] = [si, r.ts, USER_KINDS.indexOf(r.kind), r.chars, r.toolUseId ?? null, res, r.text ?? null, di, base, r.offset ?? null, r.sidechain ? 1 : null, r.agentId ?? null];
     while (row.length && row[row.length - 1] === null) row.pop();
     return row;
   });
@@ -163,6 +176,7 @@ function userRows(o: { s: string[]; d: string[]; c: unknown[][] }): UserRow[] {
     if (a[7] != null) r.fileKey = o.d[a[7] as number] + (a[8] === 0 ? `${r.sessionId}.jsonl` : (a[8] as string));
     if (a[9] != null) r.offset = a[9] as number;
     if (a[10] === 1) r.sidechain = true;
+    if (a[11] != null) r.agentId = a[11] as string;
     return r;
   });
 }
@@ -278,6 +292,7 @@ function* encodeGen(s: Shard, h: { seq: number; nonce: string }): Generator<void
   yield* chunked("compacts", s.compacts, ROW_CHUNK, (l) => l);
   yield* chunked("snapshots", s.snapshots, ROW_CHUNK, (l) => l);
   if (s.days) yield* emit("days", [s.days], (l) => l[0]);
+  if (s.fmt !== undefined) yield* emit("fmt", [s.fmt], (l) => l[0]);
   if (cur.length || groups.length === 0) groups.push(cur);
   const n = groups.length;
   const parts: string[] = [];
@@ -332,6 +347,7 @@ function* decodeGen(parts: string[]): Generator<void, Shard, void> {
       else if (kind === "compacts") out.compacts.push(...(val as CompactRow[]));
       else if (kind === "snapshots") out.snapshots.push(...(val as unknown[]));
       else if (kind === "days") out.days = val as Record<string, number>;
+      else if (kind === "fmt") out.fmt = val as number;
       else throw new Error(`unknown shard item: ${kind}`);
     }
     yield;

@@ -20,6 +20,7 @@ export class Ledger {
       if (cur.isSub && !isSub) {
         row.sidechain = true;
         if (cur.row.agentType !== undefined) row.agentType = cur.row.agentType;
+        if (cur.row.agentId !== undefined) row.agentId = cur.row.agentId;
       }
       cur.row = row;
     }

@@ -1,4 +1,5 @@
-import type { FileCtx, MetaRow, Parsed, ToolUse, UsageRow, UserRow } from "./types.ts";
+import { agentIdOfPath } from "./path.ts";
+import type { CompactRow, FileCtx, MetaRow, Parsed, ToolUse, UsageRow, UserRow } from "./types.ts";
 import { tokensOf } from "./usage.ts";
 
 type Rec = Record<string, any>;
@@ -25,6 +26,8 @@ function sessionOf(l: Rec, ctx: FileCtx): string {
   const base = ctx.path.split(/[\\/]/).pop() ?? "";
   return base.replace(/\.jsonl$/, "") || "?";
 }
+
+const agentOf = (ctx: FileCtx): string | undefined => (ctx.isSub ? agentIdOfPath(ctx.path) : undefined);
 
 function toolOf(block: Rec): ToolUse {
   const name = nonEmpty(block.name) ?? "?";
@@ -90,6 +93,8 @@ function assistantRow(l: Rec, ctx: FileCtx): Parsed | null {
   if (effort) row.effort = effort;
   if (cwd) row.cwd = cwd;
   if (ctx.isSub && ctx.agentType) row.agentType = ctx.agentType;
+  const agentId = agentOf(ctx);
+  if (agentId) row.agentId = agentId;
   return { t: "usage", row };
 }
 
@@ -114,6 +119,8 @@ function userRow(l: Rec, ctx: FileCtx): Parsed | null {
     // Any text beside tool_result blocks is dropped on purpose.
     const row: UserRow = { sessionId, ts, kind: "toolResult", chars: results.reduce((n, b) => n + charsOf(b.content), 0) };
     if (sidechain) row.sidechain = true;
+    const agentId = agentOf(ctx);
+    if (agentId) row.agentId = agentId;
     const id = nonEmpty(results[0].tool_use_id);
     if (id) row.toolUseId = id;
     const per = results.flatMap((b) => { const i = nonEmpty(b.tool_use_id); return i ? [{ toolUseId: i, chars: charsOf(b.content) }] : []; });
@@ -127,6 +134,8 @@ function userRow(l: Rec, ctx: FileCtx): Parsed | null {
     l.isCompactSummary === true ? "compaction" : l.isMeta === true || NOTICE_PREFIXES.some((p) => start.startsWith(p)) ? "notice" : "prompt";
   const row: UserRow = { sessionId, ts, kind, chars: text.length };
   if (sidechain) row.sidechain = true;
+  const agentId = agentOf(ctx);
+  if (agentId) row.agentId = agentId;
   if (kind === "prompt") row.text = text.slice(0, TEXT_CAP);
   return { t: "user", row };
 }
@@ -148,7 +157,10 @@ export function parseLine(line: string, ctx: FileCtx): Parsed | null {
     case "system": {
       const ts = Date.parse(nonEmpty(l.timestamp) ?? "");
       if (l.subtype !== "compact_boundary" || Number.isNaN(ts)) return null;
-      return { t: "compact", row: { sessionId: sessionOf(l, ctx), ts } };
+      const row: CompactRow = { sessionId: sessionOf(l, ctx), ts };
+      const agentId = agentOf(ctx);
+      if (agentId) row.agentId = agentId;
+      return { t: "compact", row };
     }
     default: {
       const pick = META[l.type];

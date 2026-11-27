@@ -1,5 +1,5 @@
 import { Ledger } from "../core/ledger.ts";
-import { isSubagentPath, joinPath, sessionOfPath } from "../core/path.ts";
+import { agentIdOfPath, isSubagentPath, joinPath, sessionOfPath } from "../core/path.ts";
 import { DAY_MS, orderFiles, WINDOW_MS } from "../core/plan-scan.ts";
 import type { FileJob, Listing } from "../core/plan-scan.ts";
 import type { Shard, ShardFile } from "../core/shard.ts";
@@ -313,6 +313,8 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
         if (kept) {
           kept.sidechain = true;
           if (agentType) kept.agentType = agentType;
+          const agentId = agentIdOfPath(job.path);
+          if (agentId) kept.agentId = agentId;
         }
       } else if (p.t === "user") {
         // The index keeps a prompt's first TEXT_KEEP chars and where its line starts; the rest is fetched on demand.

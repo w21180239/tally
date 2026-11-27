@@ -33,6 +33,8 @@ export type UsageRow = RawUsage & {
   effort?: string;
   /** Sub-agent type of the transcript the request came from; absent for main-session rows. */
   agentType?: string;
+  /** Id of that sub-agent transcript; with the session it names the conversation. Absent for main-session rows and for shards written before it existed. */
+  agentId?: string;
 };
 
 export type UserRow = {
@@ -44,6 +46,8 @@ export type UserRow = {
   results?: { toolUseId: string; chars: number }[];
   /** The line came from a sub-agent transcript. */
   sidechain?: boolean;
+  /** Id of that sub-agent transcript. */
+  agentId?: string;
   text?: string;
   /** Where a prompt line starts: transcript path and byte offset, so the full text can be fetched on demand. */
   fileKey?: string;
@@ -56,7 +60,7 @@ export type MetaRow = {
   value: unknown;
 };
 
-export type CompactRow = { sessionId: string; ts: number };
+export type CompactRow = { sessionId: string; ts: number; /** Sub-agent transcript the boundary was written in; absent for the main thread. */ agentId?: string };
 
 export type Parsed =
   | { t: "usage"; row: UsageRow }

@@ -1,3 +1,4 @@
+import { INDEX_FORMAT } from "../core/shard.ts";
 import type { Shard } from "../core/shard.ts";
 import { joinPath } from "../core/path.ts";
 import { DAY_MS, WINDOW_MS } from "../core/plan-scan.ts";
@@ -12,6 +13,7 @@ import type { StoreEnv } from "./store-index.ts";
 // either gets the exact set of generations the manifest names or finds one missing. A missing or
 // damaged bucket makes the whole project "corrupt": callers re-read it from the transcripts. A
 // bucket from a newer, uncommitted save is never read, so data from two saves is never mixed.
+// A manifest stamped with another INDEX_FORMAT reads as "stale" and is treated like a missing index.
 
 type Tick = () => Promise<void>;
 const noTick: Tick = async () => {};
@@ -26,12 +28,15 @@ const dirOfBucket = (cfg: string, project: string, key: string) => joinPath(proj
 export type Loaded =
   | { kind: "empty" }
   | { kind: "corrupt" }
+  /** Written with another INDEX_FORMAT: its rows lack fields the parser records now, so it is ignored. */
+  | { kind: "stale" }
   | { kind: "ok"; days: Map<number, Shard>; seqs: Record<string, number> };
 
 /** Manifest plus every bucket inside the 30-day window; older days are skipped. */
 export async function loadBuckets(env: StoreEnv, cfg: string, project: string, nowMs: number, tick: Tick = noTick): Promise<Loaded> {
   const manifest = await loadAt(env, projectDir(cfg, project), project, tick);
   if (!manifest) return { kind: "empty" };
+  if (manifest.fmt !== INDEX_FORMAT) return { kind: "stale" };
   const cut = dayIdx(nowMs - WINDOW_MS);
   const days = new Map<number, Shard>();
   const seqs: Record<string, number> = {};
@@ -74,7 +79,7 @@ export async function saveBuckets(
     dropped += r.dropped;
   };
   for (const idx of [...plan.days.keys()].sort((a, b) => a - b)) await put(dayKey(idx), plan.days.get(idx)!);
-  const manifest: Shard = { v: 1, project, files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [], days: next };
+  const manifest: Shard = { v: 1, project, files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [], days: next, fmt: INDEX_FORMAT };
   const r = await saveAt(env, projectDir(cfg, project), manifest, tick);
   dropped += r.dropped;
   return { seqs: next, dropped };

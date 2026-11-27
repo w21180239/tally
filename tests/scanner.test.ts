@@ -7,7 +7,8 @@ import type { ScanOpts } from "../engine/scanner.ts";
 import { loadProject } from "../engine/project-store.ts";
 import { utf8Length } from "../core/lines.ts";
 import { dayIdx, dayKey, loadBuckets } from "../engine/project-store.ts";
-import { projectDir } from "../engine/store-index.ts";
+import { INDEX_FORMAT } from "../core/shard.ts";
+import { loadAt, projectDir, saveAt } from "../engine/store-index.ts";
 import { assistant, compactBoundary, meta, user } from "./fixtures/lines.ts";
 import { worldOf } from "./world.ts";
 import type { World } from "./world.ts";
@@ -359,6 +360,10 @@ describe("scanner", () => {
     expect(shard.usage.find((r) => r.requestId === "dup-1")!.agentType).toBe("Explore");
     expect(shard.usage.find((r) => r.requestId === "orphan")!.agentType).toBe("unknown");
     expect(shard.usage.find((r) => r.requestId === "solo")!.agentType).toBeUndefined();
+    // The transcript's id rides on the row, also when the sub-agent file took a request over from the main file.
+    expect(shard.usage.find((r) => r.requestId === "dup-1")!.agentId).toBe("agent-a1");
+    expect(shard.usage.find((r) => r.requestId === "orphan")!.agentId).toBe("agent-a2");
+    expect(shard.usage.find((r) => r.requestId === "solo")!.agentId).toBeUndefined();
     expect(Object.keys(shard.files).some((k) => k.endsWith(".meta.json"))).toBe(false);
     a.s.stop();
   });
@@ -555,6 +560,28 @@ describe("scanner index", () => {
     expect(b.v.writes.filter((x) => x.path.includes("/tally/index/")).length).toBe(0);
     expect(transcriptReads(b.v.reads).length).toBe(0);
     expect((await shardOf(w, "-cur"))!.usage.length).toBe(15);
+    b.s.stop();
+  });
+
+  test("an index stamped with an older format is ignored and rebuilt from the transcripts", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    for (let k = 0; k < 3; k++) for (let n = 0; n < 2; n++) dayFile(w, `d${k}-${n}.jsonl`, k, [`v${k}${n}`]);
+    const a = boot(w, "a");
+    await pump(w, a.done);
+    a.s.stop();
+    await pump(w, () => (w.text(LEASE) ?? "").includes('"sessionId":""'));
+    const dir = projectDir(CFG, "-cur");
+    expect((await loadAt(w.$, dir, "-cur"))!.fmt).toBe(INDEX_FORMAT);
+    // Stamp the manifest as an older plugin version wrote it.
+    await saveAt(w.$, dir, { ...(await loadAt(w.$, dir, "-cur"))!, fmt: INDEX_FORMAT - 1 });
+    expect(await shardOf(w, "-cur")).toBeNull();
+    const b = boot(w, "b");
+    await pump(w, b.done);
+    expect(transcriptReads(b.v.reads).length).toBeGreaterThan(0);
+    await flush(w, b);
+    expect((await loadAt(w.$, dir, "-cur"))!.fmt).toBe(INDEX_FORMAT);
+    expect((await shardOf(w, "-cur"))!.usage.length).toBe(6);
     b.s.stop();
   });
 

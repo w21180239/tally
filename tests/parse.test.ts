@@ -182,3 +182,15 @@ describe("parseLine agentType", () => {
     expect("agentType" in usage(parseLine(assistant(), { ...sub, agentType: undefined }))).toBe(false);
   });
 });
+
+describe("parseLine agentId", () => {
+  test("rows from a sub-agent transcript carry the transcript's id; main-file rows have none", () => {
+    expect(usage(parseLine(assistant(), sub)).agentId).toBe("agent-a");
+    expect(userRow(parseLine(user("hi"), sub)).agentId).toBe("agent-a");
+    const c = parseLine(compactBoundary(), sub);
+    expect(c && c.t === "compact" ? c.row.agentId : "?").toBe("agent-a");
+    expect("agentId" in usage(parseLine(assistant(), ctx))).toBe(false);
+    expect("agentId" in userRow(parseLine(user("hi"), ctx))).toBe(false);
+    expect("agentId" in usage(parseLine(assistant({ extra: { isSidechain: true } }), ctx))).toBe(false);
+  });
+});

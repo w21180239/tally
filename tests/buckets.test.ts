@@ -1,9 +1,9 @@
 import { describe, expect, test } from "claude-code/testing";
-import { decodeShard, decodeShardAsync, encodeShardAsync, encodeShardEx } from "../core/shard.ts";
+import { decodeShard, decodeShardAsync, encodeShardAsync, encodeShardEx, INDEX_FORMAT } from "../core/shard.ts";
 import type { Shard } from "../core/shard.ts";
 import { createSlicer } from "../engine/slicer.ts";
 import { dayIdx, dayKey, loadBuckets, loadProject, saveBuckets } from "../engine/project-store.ts";
-import { projectDir } from "../engine/store-index.ts";
+import { loadAt, projectDir, saveAt } from "../engine/store-index.ts";
 import type { UsageRow, UserRow } from "../core/types.ts";
 import { worldOf } from "./world.ts";
 
@@ -161,6 +161,22 @@ describe("day buckets", () => {
     w.put(`${dir}/B-0.json`, "garbage");
     expect((await loadBuckets(w.$, CFG, P, T0)).kind).toBe("corrupt");
     expect(await loadProject(w.$, CFG, P, T0)).toBeNull();
+  });
+
+  test("a manifest stamped with an older index format reads as stale, with no rows served", async () => {
+    const w = worldOf();
+    const day = dayIdx(T0);
+    const r = await saveBuckets(w.$, CFG, P, { days: new Map([[day, bucket([usage(1, T0)])]]) }, {}, T0);
+    const m = (await loadAt(w.$, projectDir(CFG, P), P))!;
+    expect(m.fmt).toBe(INDEX_FORMAT);
+    expect((await loadBuckets(w.$, CFG, P, T0)).kind).toBe("ok");
+    // Older stamp, then no stamp at all (a manifest written before stamping existed).
+    await saveAt(w.$, projectDir(CFG, P), { ...m, fmt: INDEX_FORMAT - 1 });
+    expect((await loadBuckets(w.$, CFG, P, T0)).kind).toBe("stale");
+    expect(await loadProject(w.$, CFG, P, T0)).toBeNull();
+    await saveAt(w.$, projectDir(CFG, P), { ...m, fmt: undefined });
+    expect((await loadBuckets(w.$, CFG, P, T0)).kind).toBe("stale");
+    expect(r.seqs[dayKey(day)]).toBeGreaterThan(0);
   });
 
   test("no manifest reads as empty", async () => {

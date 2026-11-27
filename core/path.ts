@@ -71,6 +71,11 @@ export function repoOf(cwd: string): string {
   return parts.length ? parts[parts.length - 1] : "";
 }
 
+// Id of a sub-agent transcript (its file name without `.jsonl`); undefined for a main-session transcript.
+export function agentIdOfPath(path: string): string | undefined {
+  return isSubagentPath(path) ? baseName(path).replace(/\.jsonl$/, "") || undefined : undefined;
+}
+
 // Session id implied by a transcript path: `<id>.jsonl`, or the folder above `subagents`.
 export function sessionOfPath(path: string): string {
   const parts = splitPath(path);
