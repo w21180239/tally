@@ -1,76 +1,88 @@
 ---
 name: spend-optimize
-description: Use when the user wants to cut Claude Code spend, find where the API-equivalent dollars go, act on tally's saving hints, or produce an API spend report file.
+description: Use when the user wants to cut Claude Code spend, see what it costs at API rates and where that goes, act on tally's saving hints, or produce an API spend report file.
 ---
 
 # Spend optimize
 
-Turn tally's own numbers into a short report, a few agreed changes, and a baseline to measure them against later.
+A guided pass over tally's numbers: read the spend, agree a few changes with the user, make them, and store a reference point so the effect can be seen later.
 
-Work only with the `mcp__tally__tally_report` tool, WebFetch, AskUserQuestion, Read, Edit, Write and plain reasoning. Run no scripts and no bun, node or other programs: every figure comes from the tool.
+## Ground rules
 
-The tool needs the tally plugin loaded. If it is missing from the tool list, say so and stop.
+- Tools allowed: `mcp__tally__tally_report`, WebFetch, AskUserQuestion, Read, Edit, Write. No scripts, no bun or node, no other programs. The dollar amounts you quote are the ones the report prints.
+- Any of those tools may be deferred and absent from your tool list. Load the missing ones in one ToolSearch call, for example query `select:mcp__tally__tally_report,WebFetch,AskUserQuestion`. If ToolSearch cannot find `tally_report`, tally is not loaded: tell the user and stop. If WebFetch cannot be loaded, skip the price comparison, say that in the file and in your reading, and move on. Do not hand the fetch to another agent.
 
-## Steps
+## 1. Pull the 30-day report
 
-### 1. Fetch the 30-day report
+Call `mcp__tally__tally_report` with `{ "days": 30 }`. The answer is markdown: Summary, Tables, Drivers (the ranked hints), Baseline comparison, Confidence.
 
-Call `mcp__tally__tally_report` with `{ "days": 30 }`. The answer is markdown with five sections: Summary, Tables, Drivers (the ranked hints), Baseline comparison, Confidence.
+Each hint under Drivers has a `Rule:` line holding its rule id. Note the ids for step 8.
 
-Each hint in Drivers carries a `Rule:` line with its rule id. Keep these ids; step 8 needs them.
+Read Confidence before anything else. A line about projects that are not indexed yet, or about a model that was priced at $0, means the totals undercount. Tell the user, and ask whether to wait for the scan and rerun or to carry on. Remember the answer: it decides step 8.
 
-If Confidence says projects are not indexed yet, or a model has no price, tell the user the figures are low and offer to rerun once the scan finishes. Continue only if they agree.
+## 2. Compare prices with the official page
 
-### 2. Check the price table
+Confidence ends with a `Price table:` line: `built-in (<date>)`, or `fetched <date> from <page>`. That is the same source and date the Help tab shows under Prices.
 
-The Confidence section has a `Price table:` line, either `built-in (<date>)` or `fetched <date> from <page>`. It states the same source and date as the Prices line on tally's Help tab.
+Open `https://platform.claude.com/docs/en/about-claude/pricing.md` through WebFetch. Look at the models that carry most of the spend in the By model table:
 
-WebFetch `https://platform.claude.com/docs/en/about-claude/pricing.md` and compare:
+- Do the per-million-token rates on the page equal those tally used?
+- Is any model the page lists priced at $0 by tally?
 
-- Per-million-token rates of the models that carry most of the spend (the By model table).
-- Any model in the By model table that the page lists and tally priced at $0.
+Record one line: the rates agree, or which model differs and in which direction. A difference does not stop the run; fold it into the file and into how you read the totals.
 
-Note the outcome in one line: matching, or which model differs and by how much. A mismatch does not stop the run; it goes into the file and into your reading of the numbers. If the fetch fails, say so and carry on.
+## 3. Pull the report again with the comparison
 
-### 3. Fetch the report with the baseline comparison
+Call the tool with `{ "days": 30, "compare": true }`. With a saved baseline, the Baseline comparison section gives the pace then and now, plus the hints flagged back then. Note the old run rate; step 8 may need it. With no baseline the section says so, which is normal on a first pass.
 
-Call the tool again with `{ "days": 30, "compare": true }`. When a baseline exists, its Baseline comparison section shows the pace then and now and which hints were flagged at that time. With none saved the section says so; that is expected on a first run.
+## 4. Save the markdown file
 
-### 4. Write the file
+Create `api-spend-<YYYY-MM-DD>.md` in the working folder, dated today in local time. Put the markdown from step 3 in unchanged, then add a `## Price check` section carrying the step 2 line. Tell the user the path.
 
-Write `api-spend-<YYYY-MM-DD>.md` in the current working folder, using today's local date. Contents: the full markdown from step 3, then a short `## Price check` section with the step 2 outcome. Do not alter figures. Name the path afterwards.
+## 5. Read it out
 
-### 5. Interpret
+Give the user a short reading, plain words:
 
-Tell the user, in plain words and briefly:
+- The 30-day total, the main-thread versus sub-agent split, and where the models and repositories sit.
+- The one to three drivers that matter most, and why each one costs what it does.
+- How much weight the numbers can bear, from the Confidence section: its level, low-confidence hints, what-if hints, few active days.
+- Movement against the baseline, when step 3 found one.
 
-- What the 30 days cost in total, and the split between main thread and sub-agents, models and repositories.
-- The one to three drivers that matter most, with the reason each costs what it does.
-- How far to trust it: the Confidence level, low-confidence and projected hints, thin data.
-- Whether the pace moved against the baseline, if one was compared.
+Hint amounts are estimates that overlap; never total them. A what-if hint shows a projected saving rather than billed spend. Every amount is an API list price, not an invoice.
 
-Hint dollar figures are estimates that overlap, so never add them into one total saving. A hint marked as a what-if shows a projected saving, not billed spend. Amounts are API list prices, not an invoice.
+## 6. Let the user pick
 
-### 6. Choose what to adopt
+AskUserQuestion needs at least two options per question and at most four, and allows at most four questions. Build the choices from the hints in report order, one option per hint: label is the hint title, description is its amount and a one-line version of its action. Use `multiSelect: true`.
 
-If the report flagged nothing, say so and go to step 8 without an adopt list.
+- Zero hints flagged: say so, skip steps 6 and 7, and go to step 8 with no adopt list.
+- Exactly one hint: add a second option labelled "None", so the question is valid and the user can decline.
+- More than four hints: ask in groups of four, in order, up to four questions; name the leftover hints in your reading.
 
-Otherwise call AskUserQuestion with `multiSelect: true`. Offer the hints in the report's order, at most four options per question and at most four questions; leave out the rest and name them in your reading. One option per hint: the label is the hint title, the description its dollar figure and a one-line summary of its action. Include a hint with no dollar figure if it is useful. The user may pick none.
+A hint that carries no dollar figure may still be offered. Choosing nothing is a valid outcome.
 
-### 7. Apply the changes
+## 7. Make the changes
 
-For each chosen hint, make the change its `Action:` line describes: read the current file, edit it, and show what changed. Typical targets are user or project settings, a `CLAUDE.md`, a skill or hook, an MCP or plugin entry. Rules:
+For each chosen hint, do what its `Action:` line says: read the file it concerns, edit it, and show the user the change. Likely places are user or project settings, a `CLAUDE.md`, a hook, or an MCP or plugin entry.
 
-- Touch only what a chosen hint calls for.
-- When the action is a habit the user must carry out (a command to run, a way of working), do not fake it; list it as theirs to do.
-- When the action is unclear or would change something broader than the hint, ask before editing.
+- Edit only what a chosen hint requires.
+- When the action is something the user has to do themselves, for example running something or changing a working habit, hand it to them as a to-do instead of pretending it is done.
+- When the action is vague or would reach beyond the hint, ask first.
 
-Track which chosen hints you carried out or set up, and which stay with the user.
+Keep two lists: hints you completed or set up, and hints left with the user. Both go to step 8.
 
-### 8. Save the baseline and record the adoptions
+## 8. Store the reference point and the adoptions
 
-Call `mcp__tally__tally_report` once with `{ "days": 30, "saveBaseline": true, "adopt": [<rule ids>] }`. `adopt` lists the rule ids of the chosen hints that are done or handed to the user; leave it out when none were chosen. The tool stores the current pace and each hint's expected saving, and records an adoption for each id.
+A baseline overwrites the previous one, so decide whether to store one:
 
-Read the closing lines of the answer. `Baseline saved` confirms the baseline. `Adopted:` names the recorded ids; `Skipped` lines name any id that was unknown or not flagged, so correct a mistyped id and call again.
+- If step 1 showed unindexed projects or priced-at-$0 models, the current pace is partial and would replace a good baseline with a low one. Leave `saveBaseline` out, or ask the user first and save only if they agree.
+- Otherwise include `"saveBaseline": true`.
 
-Finish with a short summary: what changed, what stays with the user, and that tally compares the effect of an adopted hint after `recheckDays` days (14 by default) and reports it as a notice. Only rules with a before-and-after measure are rechecked; the rest are just recorded.
+Call `mcp__tally__tally_report` once with `{ "days": 30, "saveBaseline": true, "adopt": [<rule ids>] }`, dropping `saveBaseline` when step 8 says so and dropping `adopt` when nothing was chosen. `adopt` takes the ids of both lists from step 7. With neither field the call is pointless; skip it.
+
+Check the closing lines of the answer. `Baseline saved: $<rate> per 30 days` confirms the new baseline. `Adopted:` lists the recorded ids; each `Skipped` line names an id that was unknown or not flagged, so fix a mistyped one and call again.
+
+Close with a summary for the user:
+
+- What was changed, and what is still theirs to do.
+- Whether a baseline was stored. If it replaced an earlier one, give the old run rate from step 3 next to the new one. If you did not store one, say why.
+- That tally revisits each adopted hint after `recheckDays` days (14 by default) and shows the expected versus actual saving as a notice. Hints without a before-and-after measure are recorded only.
