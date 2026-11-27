@@ -13,7 +13,7 @@ import type { Hint } from "./hint.ts";
 import { dict } from "./dict.ts";
 import { utf8Length } from "./lines.ts";
 import { DAY_MS, HOUR_MS, localDayStart } from "./time.ts";
-import { drain, drainAsync, STEP_ROWS } from "./steps.ts";
+import { drain, drainAsync, sortSteps, STEP_ROWS } from "./steps.ts";
 import type { Steps } from "./steps.ts";
 import type { Settings } from "./settings.ts";
 import type { Shard } from "./shard.ts";
@@ -59,24 +59,33 @@ const zero = (): Money => ({ usd: 0, tokens: zeroTokens(), requests: 0 });
 
 // ---- build ----
 
+/** A first-seen repo's HMAC costs about this many rows of the main loop. */
+const ALIAS_WORK = 16;
+
 type Acc = { usd: number; started: number; byRepo: Map<string, number> };
 
 function* buildSteps(shards: Shard[], prices: PriceTable, s: Pick<Settings, "shareDetail" | "machineName" | "redactEvidence">, salt: string, nowMs: number, extra: Extra | undefined): Steps<MachineFile> {
   const detail = s.shareDetail;
   const resolve = memoResolver(prices);
   const aliases = new Map<string, string>();
+  let work = 0;
   const nameOf = (repo: string): string => {
     if (detail !== "numbers") return repo;
     let a = aliases.get(repo);
-    if (a === undefined) aliases.set(repo, (a = repoAlias(repo, salt)));
+    if (a === undefined) {
+      aliases.set(repo, (a = repoAlias(repo, salt)));
+      work += ALIAS_WORK;
+    }
     return a;
   };
   const cells = new Map<string, HourCell>();
   const sessions = new Map<string, Acc>();
-  let n = 0;
   for (const sh of shards) {
     for (const r of sh.usage) {
-      if (++n % STEP_ROWS === 0) yield;
+      if (++work >= STEP_ROWS) {
+        work = 0;
+        yield;
+      }
       if (r.synthetic) continue;
       const usd = costOf(r, prices, resolve).usd;
       const real = repoFor(r);
@@ -102,10 +111,9 @@ function* buildSteps(shards: Shard[], prices: PriceTable, s: Pick<Settings, "sha
       }
     }
   }
-  if (detail === "numbers") n += aliases.size * 16;
   yield;
 
-  const hours = [...cells.values()].sort((a, b) => a.h - b.h || cmpStr(a.model, b.model) || cmpStr(a.repo, b.repo) || cmpStr(a.sub ?? "", b.sub ?? "") || Number(a.fast) - Number(b.fast));
+  const hours = yield* sortSteps([...cells.values()], (a, b) => a.h - b.h || cmpStr(a.model, b.model) || cmpStr(a.repo, b.repo) || cmpStr(a.sub ?? "", b.sub ?? "") || Number(a.fast) - Number(b.fast));
   yield;
 
   const opt: { sessions?: TopSession[]; hints?: Hint[]; toolFill?: Record<string, number> } = {};
@@ -139,18 +147,22 @@ function* buildSteps(shards: Shard[], prices: PriceTable, s: Pick<Settings, "sha
     if (extra?.toolFill !== undefined) opt.toolFill = { ...extra.toolFill };
     yield;
   }
-  return fit({ v: 1, machine: s.machineName, detail, writtenAt: nowMs, hours }, opt);
+  return yield* fitSteps({ v: 1, machine: s.machineName, detail, writtenAt: nowMs, hours }, opt);
 }
 
 const bytesOf = (v: unknown): number => utf8Length(JSON.stringify(v));
 
 // Drops the largest optional section until the file fits, then the oldest hours. Sizes are summed from per-part
 // JSON, which is exact because a JSON array is its elements joined by commas.
-function fit(base: MachineFile, opt: { sessions?: TopSession[]; hints?: Hint[]; toolFill?: Record<string, number> }): MachineFile {
+function* fitSteps(base: MachineFile, opt: { sessions?: TopSession[]; hints?: Hint[]; toolFill?: Record<string, number> }): Steps<MachineFile> {
   const hours = base.hours;
   const sizes: [Optional, number][] = [];
   for (const k of ["sessions", "hints", "toolFill"] as const) if (opt[k] !== undefined) sizes.push([k, bytesOf(opt[k])]);
-  const cellBytes = hours.map(bytesOf);
+  const cellBytes: number[] = [];
+  for (let i = 0; i < hours.length; i++) {
+    cellBytes.push(bytesOf(hours[i]));
+    if ((i + 1) % STEP_ROWS === 0) yield;
+  }
   let sum = 0;
   for (const b of cellBytes) sum += b;
   const make = (keep: Optional[], omitted: Optional[], from: number, hs: HourCell[]): MachineFile => {
@@ -168,6 +180,7 @@ function fit(base: MachineFile, opt: { sessions?: TopSession[]; hints?: Hint[]; 
   let f = make(keep, omitted, -1, hours);
   const order = [...sizes].sort((a, b) => b[1] - a[1]);
   for (const [k] of order) {
+    yield;
     if (total(f, sum, hours.length) <= MACHINE_FILE_MAX) return f;
     keep.splice(keep.indexOf(k), 1);
     omitted.push(k);

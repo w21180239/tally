@@ -149,6 +149,37 @@ describe("buildMachineFile: size cap", () => {
     expect(ticks).toBeGreaterThanOrEqual(3);
     expect(a).toEqual(buildMachineFile([shard], PRICES, settings("full"), SALT, NOW));
   });
+
+  const rowsShard = (rows: number, cwd: (i: number) => string): Shard => {
+    const shard: Shard = { v: 1, project: "gen", files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [] };
+    shard.usage = Array.from({ length: rows }, (_, i) => usage({ id: `q${i}`, session: "s", ts: new Date(NOW - HOUR_MS).toISOString(), model: "claude-opus-5-5", k: 1, cwd: cwd(i) } as Spec));
+    return shard;
+  };
+  const countTicks = async (shard: Shard, detail: Detail): Promise<{ ticks: number; file: MachineFile }> => {
+    let ticks = 0;
+    const file = await buildMachineFileAsync([shard], PRICES, settings(detail), SALT, NOW, undefined, () => {
+      ticks++;
+    });
+    return { ticks, file };
+  };
+
+  test("the final fit pass yields per chunk of cells, not in one unsliced run", async () => {
+    const chunks = 4;
+    const shard = rowsShard(STEP_ROWS * chunks, (i) => `/w/repo-${i}`);
+    const { ticks, file } = await countTicks(shard, "repos");
+    expect(file.hours.length).toBe(STEP_ROWS * chunks);
+    // chunks ticks in the row loop, 2 phase ticks, and at least chunks more while sizing the cells.
+    expect(ticks).toBeGreaterThanOrEqual(2 * chunks + 2);
+    expect(file).toEqual(buildMachineFile([shard], PRICES, settings("repos"), SALT, NOW));
+  });
+
+  test("hashing a burst of new repos inside one STEP_ROWS window is metered", async () => {
+    const rows = STEP_ROWS - 1;
+    const many = await countTicks(rowsShard(rows, (i) => `/w/repo-${i}`), "numbers");
+    const one = await countTicks(rowsShard(rows, () => "/w/repo-0"), "numbers");
+    expect(many.ticks).toBeGreaterThan(one.ticks + 5);
+    expect(many.file).toEqual(buildMachineFile([rowsShard(rows, (i) => `/w/repo-${i}`)], PRICES, settings("numbers"), SALT, NOW));
+  });
 });
 
 describe("parseMachineFile", () => {
