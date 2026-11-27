@@ -159,9 +159,9 @@ export const register: Register = (on, options) => {
     }
     if (a.sub === "report") return { text: await reportCommand($, { ...(a.days !== undefined && { days: a.days }), ...(a.repo !== undefined && { repo: a.repo }) }) };
     if (a.sub === "sync") {
-      if (settings.syncDir === "") return { text: "Sharing is off: set syncDir to a git-synced folder first." };
+      if (settings.syncDir === "") return { text: "Sharing is off: set syncDir to a shared folder first." };
       const r = await runSync($, settings, () => syncExtra($));
-      return { text: r.error === undefined ? `Synced; machines: ${r.machines.join(", ")}.` : `Sync failed: ${r.error}` };
+      return { text: r.error === undefined ? (r.machines.length > 0 ? `Synced; machines: ${r.machines.join(", ")}.` : "Synced; no other machines yet.") : `Sync failed: ${r.error}` };
     }
 
     const hasSet = Object.keys(a.set).length > 0;

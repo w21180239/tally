@@ -274,7 +274,7 @@ describe("runSync", () => {
     expect(r.events).toEqual([]);
   });
 
-  test("with syncDir empty nothing is written and nothing runs",{ options: { syncDir: "", machineName: "box-a" } }, async ($, on) => {
+  test("with syncDir empty nothing is written and nothing runs", { options: { syncDir: "", machineName: "box-a" } }, async ($, on) => {
     const r = rig(on);
     await settled($, r);
     expect(r.runs).toEqual([]);

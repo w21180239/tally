@@ -214,8 +214,8 @@ export default class Tally extends kit.View {
       for (const span of SPANS) {
         const next = await loadSpan(span);
         const prev = this.snaps[span];
-        // tally writes the file in place, so a read can land mid-write; the last good report stays until the next read.
-        this.snaps[span] = next.torn && prev && prev.report ? prev : next;
+        // tally writes the file in place, so a read can land mid-write (empty, torn or failing); the last good report stays until the next read.
+        this.snaps[span] = !next.report && prev && prev.report ? prev : next;
       }
       c.notify();
     });

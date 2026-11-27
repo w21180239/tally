@@ -200,7 +200,7 @@ Measured on one macOS development machine on 2026-11-27, with 30 days of history
 
 The full method is in [docs/en/DESIGN.md](./docs/en/DESIGN.md). Typing latency during a scan has not been measured by hand yet.
 
-Accuracy was checked against ccusage over the same 30 local days on that machine: over the 30 local days from 2026-10-30 to 2026-11-28, tally was within 0.010% of ccusage on the total and within 0.03% on each model. The figures, method and known definitional differences are in [scripts/compare.md](./scripts/compare.md).
+Accuracy was checked against ccusage on that machine over the 30 local days from 2026-10-30 to 2026-11-28: tally was within 0.010% of ccusage on the total and within 0.03% on each model. The figures, method and known definitional differences are in [scripts/compare.md](./scripts/compare.md).
 
 ## Limitations
 
