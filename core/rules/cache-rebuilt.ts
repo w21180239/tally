@@ -6,7 +6,7 @@ export const REBUILD_MIN_USD = 1;
 
 const rebuildUsd = (i: HintInput): number => i.summary.cacheRebuilds.reduce((n, r) => n + r.usd, 0);
 
-// Rewrite cost relative to total spend, so spans of any length compare.
+// Rewrite cost relative to total spend, so spans of any length compare. A per-active-hour figure would need hours, which a 30-day summary does not count, so the share stands in.
 const rebuildShare = (i: HintInput): number => (i.summary.total.usd > 0 ? rebuildUsd(i) / i.summary.total.usd : 0);
 
 export const cacheRebuilt: HintRule = {

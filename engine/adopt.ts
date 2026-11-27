@@ -13,15 +13,15 @@ import { makeSlicer } from "./slicer.ts";
 import { invalidateWindow } from "./window.ts";
 
 // The rules' input for a 30-day window, cut to what came after `since` when given, and how many requests it holds.
-async function measure($: EngineInterface, since?: number): Promise<{ input: HintInput; requests: number }> {
+async function measure($: EngineInterface, since?: number): Promise<{ input: HintInput; requests: number; unread: number }> {
   const now = await $.clock.now();
   const loc = await locate($);
   const slicer = makeSlicer($);
   const tick = () => slicer.check();
-  const { shards, snaps } = await loadScope($, loc, now, tick);
+  const { shards, snaps, unread } = await loadScope($, loc, now, tick);
   const sh = await sharedOf($, loc.cfg, snaps, now, tick);
   const summary = await summarizeAsync(shards, sh.prices, { span: "30d", nowMs: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), usage: true, ...(since !== undefined && { since }) }, tick);
-  return { input: inputOf(sh, "span", summary, ""), requests: summary.total.requests };
+  return { input: inputOf(sh, "span", summary, ""), requests: summary.total.requests, unread };
 }
 
 export async function readAdoptions($: EngineInterface): Promise<Adoption[]> {
@@ -54,8 +54,9 @@ export async function adoptHint($: EngineInterface, hint: Hint): Promise<void> {
     try {
       const m = await measure($);
       if (m.requests > 0) {
+        // Value and saving must come from one measurement: a window where the rule stays silent keeps the stand-in pair.
         const own = rule.run(m.input).find((h) => h.rule === rule.id);
-        record = { ...record, before: rule.metric(m.input), expectedUsd: own?.usd ?? hint.usd };
+        if (own !== undefined) record = { ...record, before: rule.metric(m.input), expectedUsd: own.usd };
       }
     } catch {
       /* keep the stand-in figures */
@@ -69,7 +70,7 @@ export async function adoptHint($: EngineInterface, hint: Hint): Promise<void> {
 
 const idsOf = (stored: unknown): string[] => (Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : []);
 
-/** Toasts the saving of each due adoption once, then marks it done. An adoption with no requests since it to measure waits for a later start. */
+/** Toasts the saving of each due adoption once, then marks it done. An adoption with nothing to measure yet, or over a history not fully indexed, waits for a later start. */
 async function recheck($: EngineInterface, days: number): Promise<void> {
   const now = await $.clock.now();
   const checked = idsOf(await $.store.get(CHECKED_KEY).catch(() => undefined));
@@ -78,7 +79,8 @@ async function recheck($: EngineInterface, days: number): Promise<void> {
     const rule = HINT_RULES.find((r) => r.id === a.rule);
     if (rule?.metric === undefined) continue;
     const m = await measure($, a.at);
-    if (m.requests === 0) continue;
+    // A partly indexed history would read as a saving; wait for a start that finds it whole.
+    if (m.requests === 0 || m.unread > 0) continue;
     const result = recheckResult(a, rule.metric(m.input));
     // Marked before the toast, so one adoption never toasts twice.
     checked.push(adoptionId(a));

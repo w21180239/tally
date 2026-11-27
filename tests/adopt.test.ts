@@ -213,7 +213,7 @@ function rig(on: On, stored: Map<string, unknown> = new Map()): Rig {
   return r;
 }
 
-const start = ($: Engine) => $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
+const start = ($: Engine, isInteractive = true) => $.session.start({ cwd: CWD, surface: "terminal", isInteractive });
 const ago = (d: number): number => NOW - d * DAY;
 const at = <U extends { ts: number }>(row: U, ts: number): U => ({ ...row, ts });
 
@@ -223,8 +223,7 @@ const demoRows = (): { usage: UsageRow[]; users: UserRow[] } => ({
   users: [at(prompt(0, 200, "build it", "s-1"), ago(0.5))],
 });
 
-async function seed(w: World): Promise<void> {
-  const rows = demoRows();
+async function seed(w: World, rows = demoRows()): Promise<void> {
   const byDay = new Map<number, Shard>();
   const shardOn = (ts: number): Shard => {
     const d = dayIdx(ts);
@@ -244,8 +243,8 @@ const afterStart = async (r: Rig): Promise<void> => {
   await r.clock.settle();
 };
 
-async function openHints($: Engine, r: Rig) {
-  await seed(r.world);
+async function openHints($: Engine, r: Rig, rows = demoRows()) {
+  await seed(r.world, rows);
   await start($);
   await r.clock.settle();
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
@@ -288,6 +287,23 @@ describe("adopting a hint", () => {
   });
 });
 
+describe("adopting where the 30-day window is silent", () => {
+  test("the rule gives no hint over all repos: value and saving both stay the shown hint's, never mixed", async ($, on) => {
+    const r = rig(on);
+    // A $40 non-fast request in another session dilutes fast mode below its cutoff over 30 days; that session alone still fires.
+    const base = demoRows();
+    const big = at(req({ id: "big", at: 0, session: "s-2", cwd: CWD, tokens: { output: 2_000_000 } }), ago(0.4));
+    const ui = await openHints($, r, { usage: [...base.usage, big], users: [...base.users, at(prompt(0, 50, "other", "s-2"), ago(0.4))] });
+    await ui.press({ key: "adopt-hint|session|fast-mode" });
+    await r.clock.settle();
+    const a = parseAdoptions(r.stored.get(ADOPTIONS_KEY))[0]!;
+    // The shown hint: fast share of 1 in that session and its saving 2.024. The 30-day share would be near 0.09.
+    expect(a.before).toBe(1);
+    expect(Math.round(a.expectedUsd * 1e3) / 1e3).toBe(2.024);
+    await ui.unmount();
+  });
+});
+
 describe("recheck", () => {
   const due = (o: Partial<Adoption> = {}): Adoption => ({ rule: "fast-mode", at: NOW - 14 * DAY, metricName: "fast share of cost", before: 2, expectedUsd: 4, ...o });
 
@@ -303,6 +319,31 @@ describe("recheck", () => {
     await start($);
     await afterStart(r);
     expect(r.toasts.length).toBe(1);
+  });
+
+  test("a session that is not interactive neither toasts nor marks the adoption done", async ($, on) => {
+    const stored = new Map<string, unknown>([[ADOPTIONS_KEY, [due()]]]);
+    const r = rig(on, stored);
+    await seed(r.world);
+    await start($, false);
+    await afterStart(r);
+    expect(r.toasts).toEqual([]);
+    expect(stored.get(CHECKED_KEY)).toBeUndefined();
+    // The next interactive start still finds it due.
+    await start($);
+    await afterStart(r);
+    expect(r.toasts.length).toBe(1);
+  });
+
+  test("an index that is not whole yet waits: no toast and not marked done", async ($, on) => {
+    const stored = new Map<string, unknown>([[ADOPTIONS_KEY, [due()]]]);
+    const r = rig(on, stored);
+    await seed(r.world);
+    r.world.put(`${CFG}/projects/-work-late/s-9.jsonl`, "");
+    await start($);
+    await afterStart(r);
+    expect(r.toasts).toEqual([]);
+    expect(stored.get(CHECKED_KEY)).toBeUndefined();
   });
 
   test("one day short of due, or a rule with no metric: nothing", async ($, on) => {

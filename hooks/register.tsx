@@ -67,10 +67,13 @@ export const register: Register = (on, options) => {
     const loc = await locate($);
     stop?.();
     const mine = ++gen;
-    // Adopted hints that came due get their check once the scan has had a head start; a scan that finds nothing new reports nothing, so no scan event can be waited for.
-    $.clock.after(RECHECK_DELAY_MS, () => {
-      if (mine === gen) recheckSoon($, () => settings.recheckDays);
-    });
+    // Adopted hints that came due get their check once the scan has had a head start; a scan that finds nothing new
+    // reports nothing, so no scan event can be waited for. Only an interactive session has a toast to show it in.
+    if (e.isInteractive) {
+      $.clock.after(RECHECK_DELAY_MS, () => {
+        if (mine === gen) recheckSoon($, () => settings.recheckDays);
+      });
+    }
     resetSync();
     // Start off the hook's path so the session is never held up by the first listing.
     $.clock.after(100, () => {
