@@ -14,7 +14,6 @@ export const fastMode: HintRule = {
     const { fast, total } = i.summary;
     const mul = i.prices.fastMul;
     if (total.usd <= 0 || fast.usd < FAST_MIN_USD || fastShare(i) <= FAST_SHARE || mul <= 1) return [];
-    // Fast requests cost `mul` times the standard rate, so their standard-speed price is fast / mul.
     const saving = fast.usd - fast.usd / mul;
     return [
       {

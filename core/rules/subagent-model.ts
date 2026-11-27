@@ -4,9 +4,7 @@ import type { ModelPrice } from "../pricing.ts";
 import type { Tokens } from "../types.ts";
 import { LISTED, usdText } from "./shared.ts";
 
-// Inspection-only tools: a type restricted to them is a cheaper-model candidate.
 const LOOKING: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch", "bash"]);
-// Tools that carry results back to the parent; ignored when judging what a type does.
 const HANDBACK: ReadonlySet<string> = new Set(["subagenthandback", "structuredoutput"]);
 const BIG = /(opus|fable)/i;
 

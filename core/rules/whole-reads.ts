@@ -1,7 +1,6 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { usdText } from "./shared.ts";
 
-/** Complete reads of the same file, inside a session, needed before it is reported. */
 export const WHOLE_READS_MIN = 3;
 const FILES_LISTED = 4;
 

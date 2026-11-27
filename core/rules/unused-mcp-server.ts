@@ -9,7 +9,6 @@ export const unusedMcpServer: HintRule = {
     const near = nearestSnapshot(snaps, summary.to, live?.sessionId);
     const perToken = residentUsdPerToken(summary, prices);
     if (near === null || perToken <= 0) return [];
-    // A server a named-unused plugin ships is that rule's cost already.
     const idlePlugins = plugins.filter((p) => !p.used).map((p) => pluginServerName(p.name, ""));
     const idle = Object.entries(residentTokens(near.snap))
       .filter(([server]) => (summary.byMcp[server]?.calls ?? 0) === 0 && !idlePlugins.some((prefix) => server.startsWith(prefix)))
