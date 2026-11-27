@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="tally logo">
+  <title>tally</title>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#4338CA"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round">
+    <path d="M36 34v48"/>
+    <path d="M52 34v48"/>
+    <path d="M68 34v48"/>
+    <path d="M84 34v48"/>
+  </g>
+  <path d="M26 72L96 44" fill="none" stroke="#FBBF24" stroke-width="9" stroke-linecap="round"/>
+  <rect x="30" y="96" width="68" height="8" rx="4" fill="#A5B4FC"/>
+</svg>

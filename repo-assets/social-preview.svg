@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="tally: Claude Code spend, context makeup and money-saving hints">
+  <title>tally</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1020"/>
+      <stop offset="1" stop-color="#1B1B4B"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <g transform="translate(64 56) scale(0.75)">
+    <rect x="8" y="8" width="112" height="112" rx="24" fill="#4338CA"/>
+    <g fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round">
+      <path d="M36 34v48"/>
+      <path d="M52 34v48"/>
+      <path d="M68 34v48"/>
+      <path d="M84 34v48"/>
+    </g>
+    <path d="M26 72L96 44" fill="none" stroke="#FBBF24" stroke-width="9" stroke-linecap="round"/>
+    <rect x="30" y="96" width="68" height="8" rx="4" fill="#A5B4FC"/>
+  </g>
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <text x="176" y="124" font-size="76" font-weight="700" fill="#FFFFFF">tally</text>
+    <text x="68" y="216" font-size="36" fill="#E0E7FF">What your Claude Code sessions cost, and how to spend less.</text>
+    <text x="68" y="266" font-size="28" fill="#A5B4FC">Spend in API-equivalent dollars, what fills the context,</text>
+    <text x="68" y="304" font-size="28" fill="#A5B4FC">and hints with the evidence behind them.</text>
+
+    <text x="68" y="400" font-size="16" font-weight="700" letter-spacing="2" fill="#FBBF24">SAMPLE DATA: SPEND BY DAY, LAST 14 DAYS</text>
+    <g fill="#4338CA">
+      <rect x="68" y="470" width="64" height="40" rx="6"/>
+      <rect x="148" y="446" width="64" height="64" rx="6"/>
+      <rect x="228" y="430" width="64" height="80" rx="6"/>
+      <rect x="308" y="458" width="64" height="52" rx="6"/>
+      <rect x="388" y="482" width="64" height="28" rx="6"/>
+      <rect x="468" y="490" width="64" height="20" rx="6"/>
+      <rect x="548" y="438" width="64" height="72" rx="6"/>
+      <rect x="628" y="418" width="64" height="92" rx="6"/>
+      <rect x="708" y="436" width="64" height="74" rx="6"/>
+      <rect x="788" y="450" width="64" height="60" rx="6"/>
+      <rect x="868" y="474" width="64" height="36" rx="6"/>
+      <rect x="948" y="488" width="64" height="22" rx="6"/>
+      <rect x="1028" y="444" width="64" height="66" rx="6"/>
+    </g>
+    <rect x="1108" y="410" width="64" height="100" rx="6" fill="#FBBF24"/>
+    <path d="M68 520H1172" stroke="#2A2F5A" stroke-width="2"/>
+    <g font-size="20" fill="#C7CBE8">
+      <text x="68" y="568">Session</text>
+      <text x="168" y="568">Usage</text>
+      <text x="252" y="568">Context</text>
+      <text x="352" y="568">History</text>
+      <text x="446" y="568">Hints</text>
+      <text x="520" y="568">Help</text>
+    </g>
+    <text x="1172" y="568" font-size="20" fill="#A5B4FC" text-anchor="end">Windows | macOS | Linux | no dependencies</text>
+  </g>
+</svg>

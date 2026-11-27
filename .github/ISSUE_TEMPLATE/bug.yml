@@ -1,0 +1,38 @@
+name: Bug report
+description: A wrong number, a hint that fired at the wrong moment, a scan that hangs or fails, or a window problem
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`
+      placeholder: 2.1.332 (Claude Code)
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and where you run Claude Code
+      placeholder: Windows 11, terminal / macOS 15, desktop app / Ubuntu 24.04, VS Code
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you expected, what you saw, and which tab or command. Do not paste private content.
+    validations:
+      required: true
+  - type: textarea
+    id: debug
+    attributes:
+      label: /tally debug output
+      description: Run `/tally debug` (or `/tally debug --json`). Remove repository names, titles and paths you do not want to share.
+      render: json
+  - type: input
+    id: size
+    attributes:
+      label: History size
+      description: Roughly how many projects and how many GB of transcripts, if the problem is about speed
+      placeholder: 20 projects, 8 GB

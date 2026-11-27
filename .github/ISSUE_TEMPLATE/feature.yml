@@ -1,0 +1,18 @@
+name: Feature request
+description: A new hint rule, view, setting or platform behavior
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The question about your spend or context that tally cannot answer today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like it to show or do. A concrete example, with the numbers it would use, helps most.
+    validations:
+      required: true

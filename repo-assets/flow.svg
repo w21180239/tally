@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-label="tally flow: transcripts are scanned in 50 ms slices into an on-disk index, which feeds the window, the report and the optional sidebar; a weekly price fetch, an optional sync folder and the live session feed the numbers from the side">
+  <title>tally flow</title>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#A5B4FC"/>
+    </marker>
+    <marker id="arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#FBBF24"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="400" rx="16" fill="#0B1020"/>
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <g>
+      <rect x="32" y="40" width="248" height="196" rx="14" fill="#10142B" stroke="#2A2F5A"/>
+      <text x="52" y="72" font-size="14" font-weight="700" letter-spacing="2" fill="#FBBF24">1  READ</text>
+      <text x="52" y="104" font-size="18" font-weight="700" fill="#FFFFFF">Transcripts</text>
+      <text x="52" y="128" font-size="16" font-family="Menlo, Consolas, monospace" fill="#A5B4FC">projects/**/*.jsonl</text>
+      <text fill="#C7CBE8" font-size="15">
+        <tspan x="52" y="164">Chunks of at most 4 MiB</tspan>
+        <tspan x="52" y="188">Stops at whole lines</tspan>
+        <tspan x="52" y="212">Resumes at the saved offset</tspan>
+      </text>
+    </g>
+    <g>
+      <rect x="326" y="40" width="248" height="196" rx="14" fill="#10142B" stroke="#2A2F5A"/>
+      <text x="346" y="72" font-size="14" font-weight="700" letter-spacing="2" fill="#FBBF24">2  SCAN</text>
+      <text x="346" y="104" font-size="18" font-weight="700" fill="#FFFFFF">Sliced scanner</text>
+      <text x="346" y="128" font-size="16" font-family="Menlo, Consolas, monospace" fill="#A5B4FC">core/ + engine/</text>
+      <text fill="#C7CBE8" font-size="15">
+        <tspan x="346" y="164">50 ms CPU per slice, then yield</tspan>
+        <tspan x="346" y="188">Current project first, then 24 h,</tspan>
+        <tspan x="346" y="212">then 30 days</tspan>
+      </text>
+    </g>
+    <g>
+      <rect x="620" y="40" width="248" height="196" rx="14" fill="#10142B" stroke="#2A2F5A"/>
+      <text x="640" y="72" font-size="14" font-weight="700" letter-spacing="2" fill="#FBBF24">3  INDEX</text>
+      <text x="640" y="104" font-size="18" font-weight="700" fill="#FFFFFF">Day buckets on disk</text>
+      <text x="640" y="128" font-size="16" font-family="Menlo, Consolas, monospace" fill="#A5B4FC">tally/index/</text>
+      <text fill="#C7CBE8" font-size="15">
+        <tspan x="640" y="164">Two generation slots, A and B</tspan>
+        <tspan x="640" y="188">One scan lease per machine</tspan>
+        <tspan x="640" y="212">A bad bucket is rebuilt alone</tspan>
+      </text>
+    </g>
+    <g>
+      <rect x="914" y="40" width="254" height="196" rx="14" fill="#10142B" stroke="#2A2F5A"/>
+      <text x="934" y="72" font-size="14" font-weight="700" letter-spacing="2" fill="#FBBF24">4  SHOW</text>
+      <text x="934" y="104" font-size="18" font-weight="700" fill="#FFFFFF">Window, report,</text>
+      <text x="934" y="128" font-size="18" font-weight="700" fill="#FFFFFF">sidebar</text>
+      <text fill="#C7CBE8" font-size="15">
+        <tspan x="934" y="164">Six tabs and a fold line</tspan>
+        <tspan x="934" y="188">/tally report as markdown</tspan>
+        <tspan x="934" y="212">Optional Herdr sidebar</tspan>
+      </text>
+    </g>
+    <g stroke="#A5B4FC" stroke-width="3" fill="none">
+      <path d="M284 138H318" marker-end="url(#arr)"/>
+      <path d="M578 138H612" marker-end="url(#arr)"/>
+      <path d="M872 138H906" marker-end="url(#arr)"/>
+    </g>
+    <g stroke="#FBBF24" stroke-width="2" fill="none">
+      <path d="M450 292V240" marker-end="url(#arr-a)"/>
+      <path d="M744 292V240" marker-end="url(#arr-a)"/>
+      <path d="M1040 292V240" marker-end="url(#arr-a)"/>
+    </g>
+    <g font-size="15" fill="#E3E5F5">
+      <rect x="326" y="296" width="248" height="56" rx="10" fill="#14122B" stroke="#3A3560"/>
+      <text x="342" y="320">Price table: built in, refreshed</text>
+      <text x="342" y="340">weekly from the pricing page</text>
+      <rect x="620" y="296" width="248" height="56" rx="10" fill="#14122B" stroke="#3A3560"/>
+      <text x="636" y="320">Sync folder (optional): totals</text>
+      <text x="636" y="340">from your other machines</text>
+      <rect x="914" y="296" width="254" height="56" rx="10" fill="#14122B" stroke="#3A3560"/>
+      <text x="930" y="320">Live session: usage and context</text>
+      <text x="930" y="340">from the running Claude Code</text>
+    </g>
+    <text x="32" y="326" font-size="15" fill="#9AA0C8">Nothing is written to transcripts.</text>
+    <text x="32" y="346" font-size="15" fill="#9AA0C8">One network call: the price page.</text>
+  </g>
+</svg>

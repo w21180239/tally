@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/w21180239/tally/discussions
+    about: Usage questions, reading the numbers, and general discussion
+  - name: Security vulnerability
+    url: https://github.com/w21180239/tally/security/advisories/new
+    about: Report privately, not in a public issue
