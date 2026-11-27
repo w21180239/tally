@@ -1,0 +1,43 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Claude Code (macOS, Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Claude Code (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://claude.ai/install.ps1 | iex
+          "$env:USERPROFILE\.local\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Claude Code version
+        run: claude --version
+
+      - name: Validate plugin
+        run: claude plugin validate .
+
+      - name: Test plugin
+        run: claude plugin test .
