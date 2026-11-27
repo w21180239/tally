@@ -2,8 +2,11 @@ import { nearestSnapshot } from "../breakdown.ts";
 import type { Evidence, HintRule } from "../hint.ts";
 import { LISTED, proxyNote, residentUsdPerToken, tokensText, usdText } from "./shared.ts";
 
-/** Floor on what the whole skill list costs to carry, in dollars; ceiling (exclusive) on the fraction of listed skills called in the span. */
-export const SKILL_CATALOG_MIN_USD = 1;
+/**
+ * Floor on what the whole skill list costs to carry, in dollars; ceiling (exclusive) on the fraction of listed skills called in the span.
+ * The list is the same length in every span, so its cost only scales with requests: $25 is about 3% of a 30-day span's spend here.
+ */
+export const SKILL_CATALOG_MIN_USD = 25;
 export const SKILL_USED_MAX_SHARE = 0.5;
 
 // Plugin skills appear unprefixed in the list, yet a call record may read `plugin:name`.

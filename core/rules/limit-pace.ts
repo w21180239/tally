@@ -3,6 +3,8 @@ import { durationText } from "./shared.ts";
 
 /** Share of a window that must have elapsed before its pace says anything; earlier readings swing too much. */
 export const MIN_ELAPSED_SHARE = 0.05;
+/** Percent of a window that must be used before its pace is worth an alert: below it, early bursts raise false alarms. */
+export const MIN_PERCENT_USED = 50;
 
 const HOUR = 3_600_000;
 const WINDOWS = [
@@ -19,8 +21,8 @@ export const limitPace: HintRule = {
       const win = limits[w.key];
       if (win?.resetsAt === undefined || win.resetsAt <= nowMs) continue;
       const elapsed = w.length - (win.resetsAt - nowMs);
-      // Nothing to extrapolate from before the window has run a while, once it is full, or while it is untouched.
-      if (elapsed < w.length * MIN_ELAPSED_SHARE || win.percentUsed <= 0 || win.percentUsed >= 100) continue;
+      // Nothing to extrapolate from before the window has run a while, once it is full, or while little of it is used.
+      if (elapsed < w.length * MIN_ELAPSED_SHARE || win.percentUsed < MIN_PERCENT_USED || win.percentUsed >= 100) continue;
       // Linear pace: percentUsed per elapsed time reaches 100 before the window ends iff percentUsed / elapsed > 100 / length.
       if (win.percentUsed * w.length <= 100 * elapsed) continue;
       const fullIn = elapsed * (100 / win.percentUsed - 1);

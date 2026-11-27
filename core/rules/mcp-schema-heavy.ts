@@ -3,7 +3,7 @@ import type { Evidence, HintRule } from "../hint.ts";
 import { LISTED, proxyNote, residentUsdPerToken, tokensText, usdText } from "./shared.ts";
 
 /** A server's resident schemas must cost at least this many dollars, and it must be called less than once per this many main requests. */
-export const SCHEMA_MIN_USD = 1;
+export const SCHEMA_MIN_USD = 10;
 export const SCHEMA_REQUESTS_PER_CALL = 100;
 /** Servers with fewer calls than this belong to unused-mcp-server. */
 export const SCHEMA_MIN_CALLS = 1;
