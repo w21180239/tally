@@ -163,6 +163,26 @@ describe("redact", () => {
     expect(redact({ kind: "command", label: "Command", detail: "" }, true).detail).toBe("");
   });
 
+  test("a command line fails closed: an assignment alone, or a word that is not a program, shows nothing", () => {
+    const cmd = (detail: string) => redact({ kind: "command", label: "Command", detail }, true).detail;
+    expect(cmd("FOO=secret")).toBe("");
+    expect(cmd("TOKEN=abc")).toBe("");
+    expect(cmd("  A=1 B=2  ")).toBe("");
+    expect(cmd('FOO="a b')).toBe("");
+    expect(cmd('"unclosed program')).toBe("");
+    expect(cmd('FOO=a"b c" git')).toBe("git");
+    expect(cmd("A=1 B=2 git push")).toBe("git");
+    expect(cmd("cat x | grep y")).toBe("cat");
+    expect(cmd("ls|grep y")).toBe("ls");
+    expect(cmd("make; rm -rf x")).toBe("make");
+  });
+
+  test("a command path with a trailing separator keeps its last folder name", () => {
+    const cmd = (detail: string) => redact({ kind: "command", label: "Command", detail }, true).detail;
+    expect(cmd("/a/b/")).toBe("b");
+    expect(cmd("C:\\a\\b\\")).toBe("b");
+  });
+
   test("a path keeps only its file name, whichever separator it uses", () => {
     expect(redact({ kind: "path", label: "File", detail: "C:\\a\\b\\secret.txt" }, true).detail).toBe("secret.txt");
     expect(redact({ kind: "path", label: "File", detail: "/home/u/work/secret.txt" }, true).detail).toBe("secret.txt");
@@ -189,7 +209,7 @@ describe("hint ranking", () => {
     expect(sortHints([hintOf("b", 1), hintOf("c", 5), hintOf("a", 1), hintOf("d", 0)]).map((h) => h.rule)).toEqual(["c", "a", "b", "d"]);
   });
 
-  test("runRules joins every rule's hints ranked, and skips a rule that throws", () => {
+  test("runRules joins every rule's hints ranked, and skips a rule that throws", async () => {
     const boom: HintRule = {
       id: "boom",
       run: () => {
@@ -197,8 +217,22 @@ describe("hint ranking", () => {
       },
     };
     const input = { scope: "span" as const, nowMs: NOW, summary: {} as never };
-    expect(runRules([ruleOf([hintOf("low", 1)]), boom, ruleOf([hintOf("high", 9)])], input).map((h) => h.rule)).toEqual(["high", "low"]);
-    expect(runRules([], input)).toEqual([]);
+    expect((await runRules([ruleOf([hintOf("low", 1)]), boom, ruleOf([hintOf("high", 9)])], input)).map((h) => h.rule)).toEqual(["high", "low"]);
+    expect(await runRules([], input)).toEqual([]);
+  });
+
+  test("runRules yields to the caller between rules", async () => {
+    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never };
+    const log: string[] = [];
+    const rule = (id: string): HintRule => ({ id, run: () => (log.push(`run ${id}`), []) });
+    await runRules([rule("a"), rule("b"), rule("c")], input, async () => void log.push("tick"));
+    expect(log).toEqual(["run a", "tick", "run b", "tick", "run c", "tick"]);
+  });
+
+  test("runRules keeps the costlier hint when two share a rule id", async () => {
+    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never };
+    const found = await runRules([ruleOf([hintOf("x", 2, { title: "small" }), hintOf("y", 1), hintOf("x", 7, { title: "big" })]), ruleOf([hintOf("x", 7, { title: "later tie" })])], input);
+    expect(found.map((h) => [h.rule, h.usd, h.title])).toEqual([["x", 7, "big"], ["y", 1, "Title of y"]]);
   });
 
   test("the shipped registry holds the placeholder rule: a hint per costliest session, at most three", () => {

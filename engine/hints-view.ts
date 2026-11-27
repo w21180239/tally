@@ -76,7 +76,7 @@ async function build($: EngineInterface, want: HintsWant, now: number): Promise<
   const session =
     want.sessionId === ""
       ? []
-      : runRules(HINT_RULES, { scope: "session", nowMs: now, summary: await summarizeAsync(shards, BUILTIN_PRICES, { span: "session", sessionId: want.sessionId, nowMs: now, tzOffsetMin }, tick) });
+      : await runRules(HINT_RULES, { scope: "session", nowMs: now, summary: await summarizeAsync(shards, BUILTIN_PRICES, { span: "session", sessionId: want.sessionId, nowMs: now, tzOffsetMin }, tick) }, tick);
   const data: HintsData = {
     key: hintsKeyOf(want),
     at: now,
@@ -84,7 +84,7 @@ async function build($: EngineInterface, want: HintsWant, now: number): Promise<
     requests: spanSummary.total.requests,
     unread,
     session,
-    span: runRules(HINT_RULES, { scope: "span", nowMs: now, summary: spanSummary }),
+    span: await runRules(HINT_RULES, { scope: "span", nowMs: now, summary: spanSummary }, tick),
   };
   await update($, hintsAtom, () => data);
   invalidateWindow($);
