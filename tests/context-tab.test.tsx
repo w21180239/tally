@@ -488,7 +488,6 @@ describe("context tab: transcript view", () => {
     r.agents.v = [status("grow1", "completed")];
     await r.clock.advance(16_000);
     await redraw(ui, r);
-    console.log("DBG " + JSON.stringify([r.world.reads.filter((x) => x.path === FILE("grow1")), r.world.size(FILE("grow1")), r.clock.now(), await ui.find(TEXT(/ calls$/))]));
     expect(await ui.find(TEXT(/^5 calls$/))).toBeDefined();
     expect(await ui.find({ key: "call-4" })).toBeDefined();
     expect(await ui.find(TEXT(/^Fixed it in lexer\.ts\.$/))).toBeDefined();
