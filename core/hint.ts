@@ -61,7 +61,7 @@ const SAFE_NAME = /^[\w.][\w.+@:~-]*$/;
 const WRAPPERS: Record<string, RegExp> = { sudo: /^-[EHnSbkKA]+$/, env: /^-i$/ };
 const MAX_WRAPPERS = 3;
 
-// The first word of `rest` as a bare program name plus what follows it, or null when it is anything but a plain name.
+// The first word of `rest` as a bare command name plus the text after it; null for anything odd.
 function firstWord(rest: string): { name: string; after: string } | null {
   const q = QUOTED_WORD.exec(rest);
   let raw: string;
@@ -81,7 +81,7 @@ function firstWord(rest: string): { name: string; after: string } | null {
 }
 
 // The program a command line runs: past leading VAR=value words and sudo/env wrappers, unquoted, without its folder.
-// Fails closed: anything that is not a plain program name (assignments only, an open quote, `$(`, redirects) gives "".
+// Fails closed: any word that is no ordinary command name (assignments only, an open quote, `$(`, redirects) gives "".
 function programOf(command: string): string {
   let rest = command.trim();
   for (let depth = 0; depth <= MAX_WRAPPERS; depth++) {
