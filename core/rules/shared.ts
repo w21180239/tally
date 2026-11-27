@@ -32,6 +32,12 @@ export function durationText(ms: number): string {
   return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
 }
 
+/** Timeline buckets that hold requests, counted in days (24 active hours make one), never below 1: the divisor of per-day metrics. */
+export function activeDays(s: Summary): number {
+  const used = s.timeline.points.filter((p) => p.requests > 0).length;
+  return Math.max(1, s.timeline.bucketMs >= DAY ? used : Math.ceil(used / 24));
+}
+
 /** What `t` costs at `p`'s rates (no long-context or fast multiplier). */
 export const pricedTokens = (t: Tokens, p: ModelPrice): number => (t.input * p.input + t.output * p.output + t.cacheRead * p.cacheRead + t.cw5m * p.cw5m + t.cw1h * p.cw1h) / 1e6;
 /** `claude-opus-5-5` -> `opus-5-5`. */

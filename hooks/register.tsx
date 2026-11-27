@@ -10,6 +10,7 @@ import { summaryJson } from "../engine/summary-json.ts";
 import { makeSlicer } from "../engine/slicer.ts";
 import { currentPrices } from "../engine/price-update.ts";
 import { locate } from "../engine/locate.ts";
+import { recheckSoon } from "../engine/adopt.ts";
 import { syncHerdr } from "../engine/herdr.ts";
 import { resetSync, syncSoon } from "../engine/sync.ts";
 import { syncExtra } from "../engine/sync-extra.ts";
@@ -19,6 +20,7 @@ import { startSessionView } from "../engine/session-view.ts";
 import { startTimers } from "../engine/timers.ts";
 import { drawBand, drawPane } from "../view/app.tsx";
 
+const RECHECK_DELAY_MS = 10_000;
 const USAGE = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...) or debug";
 
 export const register: Register = (on, options) => {
@@ -65,6 +67,10 @@ export const register: Register = (on, options) => {
     const loc = await locate($);
     stop?.();
     const mine = ++gen;
+    // Adopted hints that came due get their check once the scan has had a head start; a scan that finds nothing new reports nothing, so no scan event can be waited for.
+    $.clock.after(RECHECK_DELAY_MS, () => {
+      if (mine === gen) recheckSoon($, () => settings.recheckDays);
+    });
     resetSync();
     // Start off the hook's path so the session is never held up by the first listing.
     $.clock.after(100, () => {

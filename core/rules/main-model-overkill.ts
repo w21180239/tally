@@ -1,4 +1,4 @@
-import type { Evidence, HintRule } from "../hint.ts";
+import type { Evidence, HintInput, HintRule } from "../hint.ts";
 import { resolvePrice } from "../pricing.ts";
 import { LISTED, percentText, pricedTokens, shortModel, usdText } from "./shared.ts";
 
@@ -8,9 +8,23 @@ export const SAVING_MIN_USD = 1;
 
 const FLAGSHIP = /(opus|fable)/i;
 
+// Read-only share of the flagship models' tool turns. Base: the dollars Sonnet rates save per unit of share.
+const readOnlyShare = ({ summary }: HintInput): number => {
+  let turns = 0;
+  let reading = 0;
+  for (const [model, m] of Object.entries(summary.mainTools)) {
+    if (!FLAGSHIP.test(model)) continue;
+    turns += m.turns;
+    reading += m.readOnly.requests;
+  }
+  return turns > 0 ? reading / turns : 0;
+};
+
 export const mainModelOverkill: HintRule = {
   id: "main-model-overkill",
-  run: ({ summary, prices }) => {
+  metric: readOnlyShare,
+  run: (i) => {
+    const { summary, prices } = i;
     const sonnet = resolvePrice("claude-sonnet", prices)?.price;
     if (sonnet === undefined) return [];
     let turns = 0;
@@ -41,6 +55,7 @@ export const mainModelOverkill: HintRule = {
         action: "Run exploration and reading on Sonnet (switch with /model) or hand that work to a Sonnet sub-agent, and move up to the flagship model for the edits that need it.",
         evidence,
         short: `${percentText(reading / turns)} of flagship tool turns were read-only`,
+        metric: { name: "read-only share of flagship turns", value: readOnlyShare(i) },
       },
     ];
   },

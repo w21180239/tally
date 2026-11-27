@@ -1,7 +1,7 @@
 // The Hints tab: rule findings for the live session, then for the selected span over all repositories or the live
-// session's. A hint draws as a titled block: amount, summary, recommended action, and a toggle that reveals its
-// evidence. With a sync folder, `t` adds the hints other computers shared, each under its machine name. `drawHints`
-// returns the rows and the keys they add.
+// session's. A hint draws as a titled block: amount, summary, recommended action, a toggle that reveals its evidence
+// and a button that adopts it (`y` adopts the leading one). With a sync folder, `t` adds the hints other computers
+// shared, each under its machine name. `drawHints` returns the rows and the keys they add.
 import type { RenderElement } from "claude-code";
 import { redact } from "../../core/hint.ts";
 import type { Hint } from "../../core/hint.ts";
@@ -31,6 +31,9 @@ export type HintsInput = {
   /** With a sync folder: this computer's hints or every computer's (the `t` key), and what the other computers' files hold. */
   machines?: { mode: "this" | "all"; remote: RemotesView };
   onShown: (key: string) => void;
+  /** Rule ids already adopted, and the adopt press. Without `onAdopt` no adopt button is drawn. */
+  adopted?: string[];
+  onAdopt?: (hint: Hint) => void;
 };
 
 export type HintsDrawing = { rows: RenderElement[]; ctx: KeyCtx };
@@ -47,6 +50,8 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
   const { d, data, view } = i;
   const ctx: KeyCtx = {};
   const want = hintsKeyOf(i.want);
+  // The `y` key goes to one button: the first hint not yet adopted.
+  let keyTaken = false;
 
   if (data.key !== want) {
     if (data.failure?.key === want) return { rows: [<Text key="failed" dimColor wrap="truncate-end">{`Could not look for hints: ${data.failure.why}`}</Text>], ctx };
@@ -63,6 +68,8 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
   const block = (scope: string, name: string, note: string | undefined, hints: Hint[], none: string): void => {
     out.push(title(t, scope, name, note));
     if (hints.length === 0) out.push(<Text key={`none-${scope}`} dimColor wrap="truncate-end">{none}</Text>);
+    // Hints other computers shared are theirs to adopt.
+    const adoptable = i.onAdopt !== undefined && (scope === "session" || scope === "span");
     for (const hint of hints) {
       const key = hintRowKey(scope, hint.rule);
       out.push(title(t, key, hint.title, hint.confidence === "low" ? "low confidence" : undefined, hint.usd > 0 ? amountText(hint, d) : undefined));
@@ -75,21 +82,33 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
           </Box>
         </Box>,
       );
-      if (hint.evidence.length > 0) {
-        const isOpen = view.shown.includes(key);
+      const isOpen = hint.evidence.length > 0 && view.shown.includes(key);
+      const isAdopted = i.adopted?.includes(hint.rule) === true;
+      const keyed = adoptable && !isAdopted && !keyTaken;
+      if (keyed) keyTaken = true;
+      if (hint.evidence.length > 0 || adoptable) {
         const face = `${isOpen ? "hide" : "show"} evidence (${hint.evidence.length})`;
-        ctx.evidence = true;
+        const adoptFace = isAdopted ? "adopted" : "adopt";
+        if (hint.evidence.length > 0) ctx.evidence = true;
+        if (keyed) ctx.adopt = true;
         out.push(
-          <Box key={`${key}-evidence-row`} paddingLeft={2}>
-            <Button key={`open-${key}`} label={face} plain dimColor onPress={() => i.onShown(key)}>
-              {face}
-            </Button>
+          <Box key={`${key}-actions`} flexDirection="row" columnGap={2} paddingLeft={2}>
+            {hint.evidence.length > 0 && (
+              <Button key={`open-${key}`} label={face} plain dimColor onPress={() => i.onShown(key)}>
+                {face}
+              </Button>
+            )}
+            {adoptable && (
+              <Button key={`adopt-${key}`} label={adoptFace} plain dimColor {...(keyed && { hotkey: "y" })} onPress={() => (isAdopted ? undefined : i.onAdopt?.(hint))}>
+                {adoptFace}
+              </Button>
+            )}
           </Box>,
         );
-        if (isOpen) {
-          const lines = hint.evidence.map((e) => redact(e, i.redact)).map((e) => (e.detail === "" ? e.label : `${e.label}${SEP}${e.detail}`));
-          out.push(textLines(t, `${key}-evidence`, lines.join("\n"), EVIDENCE_LINES));
-        }
+      }
+      if (isOpen) {
+        const lines = hint.evidence.map((e) => redact(e, i.redact)).map((e) => (e.detail === "" ? e.label : `${e.label}${SEP}${e.detail}`));
+        out.push(textLines(t, `${key}-evidence`, lines.join("\n"), EVIDENCE_LINES));
       }
       out.push(blank(t, key));
     }

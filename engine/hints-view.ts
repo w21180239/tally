@@ -84,15 +84,15 @@ export function limitsFrom(stored: unknown): RuleLimits | undefined {
 }
 
 // What every rule input shares, read once per build.
-type Shared = { inventory: PluginInventory[]; snaps: BreakdownSnapshot[]; limits: RuleLimits | undefined; live: LiveState; window: number; prices: PriceTable; now: number };
+export type Shared = { inventory: PluginInventory[]; snaps: BreakdownSnapshot[]; limits: RuleLimits | undefined; live: LiveState; window: number; prices: PriceTable; now: number };
 
-async function sharedOf($: EngineInterface, cfg: string, snaps: BreakdownSnapshot[], now: number, tick: () => Promise<void>): Promise<Shared> {
+export async function sharedOf($: EngineInterface, cfg: string, snaps: BreakdownSnapshot[], now: number, tick: () => Promise<void>): Promise<Shared> {
   const [inventory, stored, live, foot] = await Promise.all([readInventory($, cfg, tick), $.store.get(LAST_LIMITS_KEY).catch(() => undefined), readLive($), readFoot($)]);
   return { inventory, snaps, limits: limitsFrom(stored), live, window: foot.contextWindow, prices: await currentPrices($), now };
 }
 
 // The rules' input for one scope. Limits and the live figures belong to the live session; a span block with no live session takes the limits.
-function inputOf(sh: Shared, scope: "session" | "span", summary: Summary, sessionId: string): HintInput {
+export function inputOf(sh: Shared, scope: "session" | "span", summary: Summary, sessionId: string): HintInput {
   const mine = scope === "session" && sessionId !== "" && sh.live.sessionId === sessionId;
   const near = nearestSnapshot(sh.snaps, summary.to, scope === "session" && sessionId !== "" ? sessionId : undefined);
   const wantsLimits = scope === "session" || sessionId === "";
@@ -109,12 +109,8 @@ function inputOf(sh: Shared, scope: "session" | "span", summary: Summary, sessio
   };
 }
 
-async function build($: EngineInterface, want: HintsWant, now: number): Promise<void> {
-  const loc = await locate($);
-  const slicer = makeSlicer($);
-  const tick = () => slicer.check();
-  const tzOffsetMin = -new Date(now).getTimezoneOffset();
-  const repo = want.repoOnly ? repoOf(await $.session.cwd()) || UNKNOWN_REPO : "";
+/** Every project's shard and snapshots; `unread` counts the projects with no usable index. */
+export async function loadScope($: EngineInterface, loc: { cfg: string; roots: string[] }, now: number, tick: () => Promise<void>): Promise<{ shards: Shard[]; snaps: BreakdownSnapshot[]; unread: number }> {
   const shards: Shard[] = [];
   const snaps: BreakdownSnapshot[] = [];
   let unread = 0;
@@ -125,6 +121,16 @@ async function build($: EngineInterface, want: HintsWant, now: number): Promise<
     else shards.push(shard);
     snaps.push(...(await loadSnapshots($, loc.cfg, p, now, tick)));
   }
+  return { shards, snaps, unread };
+}
+
+async function build($: EngineInterface, want: HintsWant, now: number): Promise<void> {
+  const loc = await locate($);
+  const slicer = makeSlicer($);
+  const tick = () => slicer.check();
+  const tzOffsetMin = -new Date(now).getTimezoneOffset();
+  const repo = want.repoOnly ? repoOf(await $.session.cwd()) || UNKNOWN_REPO : "";
+  const { shards, snaps, unread } = await loadScope($, loc, now, tick);
   const sh = await sharedOf($, loc.cfg, snaps, now, tick);
   const prices = sh.prices;
   const spanSummary = await summarizeAsync(shards, prices, { span: want.span, nowMs: now, tzOffsetMin, usage: true, ...(want.repoOnly && { repo }) }, tick);

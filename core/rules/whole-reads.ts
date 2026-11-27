@@ -1,12 +1,21 @@
-import type { Evidence, HintRule } from "../hint.ts";
-import { usdText } from "./shared.ts";
+import type { Evidence, HintInput, HintRule } from "../hint.ts";
+import { activeDays, usdText } from "./shared.ts";
 
 export const WHOLE_READS_MIN = 3;
 const FILES_LISTED = 4;
 
+// Duplicate whole reads (copies beyond the first) of files read whole WHOLE_READS_MIN+ times, per active day. Base: a copy's re-read cost times the active days.
+const duplicatesPerDay = ({ summary }: HintInput): number => {
+  let extra = 0;
+  for (const n of Object.values(summary.wholeReads)) if (n >= WHOLE_READS_MIN) extra += n - 1;
+  return extra / activeDays(summary);
+};
+
 export const wholeReads: HintRule = {
   id: "whole-reads",
-  run: ({ summary }) => {
+  metric: duplicatesPerDay,
+  run: (i) => {
+    const { summary } = i;
     const costOf = new Map<string, number>();
     for (const f of summary.flow) if (f.source === "read") costOf.set(f.label, (costOf.get(f.label) ?? 0) + f.rereadUsd);
     // The first read is necessary; the saving is what the extra copies cost in cache reads.
@@ -30,6 +39,7 @@ export const wholeReads: HintRule = {
         action: "After an edit no re-read is needed; for big files pass offset and limit, and otherwise Read once and refer back to that copy.",
         evidence,
         short: `${files.length} ${files.length === 1 ? "file" : "files"} with ${WHOLE_READS_MIN}+ full-file Reads`,
+        metric: { name: "duplicate whole reads per day", value: duplicatesPerDay(i) },
       },
     ];
   },

@@ -93,6 +93,8 @@ export type SummaryOpts = {
   sessionId?: string;
   /** Also split each billed kind by source (the Usage tab's figures); costs one more pass over the requests. */
   usage?: boolean;
+  /** "24h" and "30d" spans: start the window here when later than the span's own start (a recheck looks only at what came after the adoption). */
+  since?: number;
 };
 
 export const TOP_SESSIONS = 20;
@@ -207,6 +209,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
       count = Math.floor((localDayStart(to, tzOffsetMin) - start) / DAY_MS) + 1;
     }
   }
+  if (span !== "session" && opts.since !== undefined) from = Math.max(from, opts.since);
   if (span !== "session") rows = rows.filter((x) => x.r.ts >= from && x.r.ts <= to);
 
   const out: Summary = {

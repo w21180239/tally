@@ -9,6 +9,7 @@ import { readSession } from "../engine/session-view.ts";
 import { loadTranscript, needsTranscript, readTranscripts } from "../engine/subagent-transcript.ts";
 import { readHistory, readScanView, wantHistory } from "../engine/history-view.ts";
 import { needsHelp, readHelp, refreshHelp } from "../engine/help-view.ts";
+import { adoptHint, loadAdopted, readAdopted } from "../engine/adopt.ts";
 import { needsHints, needsTop, readHints, readTopHint, refreshHints, refreshTop } from "../engine/hints-view.ts";
 import { needsRemotes, readRemotes, refreshRemotes } from "../engine/sync.ts";
 import { currentPrices, lastPriceError } from "../engine/price-update.ts";
@@ -256,7 +257,8 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
   } else if (tab === "hints") {
-    const [live, data] = await Promise.all([readLive($), readHints($)]);
+    const [live, data, adopted] = await Promise.all([readLive($), readHints($), readAdopted($)]);
+    if (!adopted.loaded) inBackground($, () => loadAdopted($));
     const want = { span, repoOnly: view.repoOnly, sessionId: live.sessionId };
     // Stale findings, or those of another span or repo, are rebuilt off the draw; the tab shows what it has meanwhile.
     if (needsHints(data, want, d.now)) inBackground($, () => refreshHints($, want));
@@ -271,6 +273,8 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
       redact: settings.redactEvidence,
       ...(ctx.machines === true && { machines: { mode: view.machines, remote } }),
       onShown: (key) => attempt($, () => toggleShown($, key)),
+      adopted: adopted.list.map((a) => a.rule),
+      onAdopt: (hint) => attempt($, () => adoptHint($, hint)),
     });
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);

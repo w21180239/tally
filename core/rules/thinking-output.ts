@@ -1,13 +1,22 @@
-import type { HintRule } from "../hint.ts";
+import type { HintInput, HintRule } from "../hint.ts";
 import { outputSpend, percentText, usdText } from "./shared.ts";
 
 /** Cutoffs on thinking spend: its portion of output cost, and an absolute dollar floor. */
 export const THINKING_SHARE = 0.6;
 export const THINKING_MIN_USD = 1;
 
+// Thinking cost over output cost. Base: output spend.
+const thinkingShare = ({ summary }: HintInput): number => {
+  if (summary.usage === undefined) return 0;
+  const { total, thinking } = outputSpend(summary.usage);
+  return total > 0 ? thinking / total : 0;
+};
+
 export const thinkingOutput: HintRule = {
   id: "thinking-output",
-  run: ({ summary }) => {
+  metric: thinkingShare,
+  run: (i) => {
+    const { summary } = i;
     if (summary.usage === undefined) return [];
     const { total, thinking } = outputSpend(summary.usage);
     if (total <= 0 || thinking < THINKING_MIN_USD || thinking / total <= THINKING_SHARE) return [];
@@ -20,6 +29,7 @@ export const thinkingOutput: HintRule = {
         action: "Thinking length scales with /effort; moving the default down one level cuts this line directly, and /effort high stays available per task.",
         evidence: [{ label: "Thinking", detail: `${usdText(thinking)} of ${usdText(total)} output`, kind: "text" }],
         short: `thinking: ${percentText(thinking / total)} of output cost`,
+        metric: { name: "thinking share of output cost", value: thinkingShare(i) },
       },
     ];
   },
