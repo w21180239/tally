@@ -46,6 +46,10 @@ const summaryOf = (over: Partial<Summary> = {}): Summary => ({
   wholeReads: {},
   compactions: {},
   toolFill: {},
+  hugeResults: [],
+  cacheTtl: { requests: 0, actual: "5m", usd5m: 0, usd1h: 0, pauses: { short: 0, mid: 0, long: 0 } },
+  subagentRuns: { runs: 0, small: 0, smallStartupUsd: 0, byType: {} },
+  mainTools: {},
   ...over,
 });
 const inputOf = (over: Partial<HintInput> = {}): HintInput => ({ scope: "span", summary: summaryOf(), snaps: [], plugins: [], prices: BUILTIN_PRICES, nowMs: NOW, ...over });
@@ -75,11 +79,11 @@ const plugin = (name: string, tokensPerRequest: number, used: boolean): Installe
 const HUNDRED = { byModel: { [OPUS]: money(0, 100) }, main: money(0, 100) };
 
 describe("rule registry", () => {
-  test("14 baseline rules with unique ids; the shipped registry is that list", () => {
+  test("14 baseline rules with unique ids; the shipped registry is that list plus the new rules", () => {
     expect(BASELINE_RULES.map((r) => r.id).sort()).toEqual(
       ["big-paste", "cache-rebuilt", "command-output", "costly-attribution", "fast-mode", "long-session", "near-limit", "repeat-compaction", "subagent-model", "thinking-output", "tool-output", "unused-mcp-server", "unused-plugin", "whole-reads"].sort(),
     );
-    expect(HINT_RULES).toBe(BASELINE_RULES);
+    expect(HINT_RULES.slice(0, 14)).toEqual(BASELINE_RULES);
   });
 
   test("an empty span raises nothing, and every rule copes with it", async () => {
@@ -402,7 +406,7 @@ describe("ranking and shape", () => {
       summary: summaryOf({ fast: money(3), total: money(10), cacheRebuilds: [rebuild(4)], peakContext: { s1: 900_000 } }),
       limits: { fiveHour: { percentUsed: 90, resetsAt: NOW + HOUR } },
     });
-    const out = await runRules(HINT_RULES, input);
+    const out = await runRules(BASELINE_RULES, input);
     // An urgent hint outranks every amount.
     expect(out.map((h) => h.rule)).toEqual(["near-limit", "cache-rebuilt", "fast-mode", "long-session"]);
     for (const h of out) {

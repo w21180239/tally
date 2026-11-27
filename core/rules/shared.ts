@@ -1,8 +1,11 @@
 // Figures the rules share: wording for amounts, and the price of keeping a token resident in the window.
+import type { BreakdownSnapshot } from "../breakdown.ts";
 import type { FlowItem } from "../flow.ts";
+import type { Evidence } from "../hint.ts";
 import { resolvePrice } from "../pricing.ts";
-import type { PriceTable } from "../pricing.ts";
+import type { ModelPrice, PriceTable } from "../pricing.ts";
 import type { Summary } from "../summary.ts";
+import type { Tokens } from "../types.ts";
 import type { UsageDetail } from "../usage-detail.ts";
 
 export const DEFAULT_WINDOW = 1_000_000;
@@ -28,6 +31,14 @@ export function durationText(ms: number): string {
   const m = Math.max(0, Math.floor(ms / 60_000));
   return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
 }
+
+/** What `t` costs at `p`'s rates (no long-context or fast multiplier). */
+export const pricedTokens = (t: Tokens, p: ModelPrice): number => (t.input * p.input + t.output * p.output + t.cacheRead * p.cacheRead + t.cw5m * p.cw5m + t.cw1h * p.cw1h) / 1e6;
+/** `claude-opus-5-5` -> `opus-5-5`. */
+export const shortModel = (model: string): string => model.replace(/^claude-/, "");
+
+/** The evidence row that says a figure rests on another session's snapshot; nothing when the snapshot is the session's own. */
+export const proxyNote = (near: { snap: BreakdownSnapshot; proxy: boolean }): Evidence[] => (near.proxy ? [{ label: "Estimate", detail: `based on the context snapshot from ${dayText(near.snap.ts)}`, kind: "text" }] : []);
 
 export const dayText = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
 

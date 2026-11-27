@@ -13,6 +13,8 @@ export type FlowSource = "prompt" | "read" | "bash" | "mcp" | "tool" | "compacti
 /** `rereadTokens`: the tokens of the part times the requests that re-read it (its cached share). */
 export type FlowItem = { label: string; source: FlowSource; tokens: number; rereadTokens: number; rereadUsd: number };
 export type Paste = { sessionId: string; tokens: number; rereadUsd: number };
+/** A tool result of HUGE_RESULT_MIN_TOKENS or more: the tool, the part it became (`source`, `label`) and what re-reading it cost. */
+export type BigResult = { sessionId: string; tool: string; source: FlowSource; label: string; tokens: number; rereadUsd: number };
 
 /** A chunk of text that entered the context, sized in chars until a request tells its token count. `text` is the full text where one is known. */
 export type Piece = { source: FlowSource; label: string; chars: number; paste: boolean; tool?: string; text?: string };
@@ -48,6 +50,8 @@ export type FlowOut = {
   byAgent: Record<string, FlowItem[]>;
   /** Prompts of PASTE_MIN_TOKENS or more, in any conversation. */
   pastes: Paste[];
+  /** Tool results of HUGE_RESULT_MIN_TOKENS or more that a counted request took in, in any conversation; costliest first, cut to FLOW_ITEMS. */
+  bigResults: BigResult[];
   /** File to the most whole reads of it within one conversation; only files read whole more than once. */
   wholeReads: Record<string, number>;
   /** Tool name to the tokens its results put into context. */
@@ -60,6 +64,8 @@ export type FlowOut = {
 
 export const FLOW_ITEMS = 40;
 export const PASTE_MIN_TOKENS = 5000;
+/** A tool result this large (5 pastes) is listed in `bigResults`. */
+export const HUGE_RESULT_MIN_TOKENS = 5 * PASTE_MIN_TOKENS;
 /** A first request may hold this many times the typical fixed part before the rest counts as carried-over conversation. */
 export const FIXED_CAP_FACTOR = 2;
 const CHARS_PER_TOKEN = 4;
@@ -175,11 +181,12 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     return it;
   };
   const pastes: Paste[] = [];
+  const bigResults: BigResult[] = [];
   const toolFill = new Map<string, number>();
   const peak = new Map<string, number>();
   const wholeBest = new Map<string, number>();
 
-  type Stay = { source: FlowSource; label: string; tokens: number; counted: boolean; listed: boolean; paste: boolean; from: number; item: FlowItem | null };
+  type Stay = { source: FlowSource; label: string; tokens: number; counted: boolean; listed: boolean; paste: boolean; tool?: string; from: number; item: FlowItem | null };
 
   const replay = function* (c: Conv, cap: number): Steps<void> {
     // Running totals after each counted request since the last compaction: re-read tokens share and USD.
@@ -196,12 +203,12 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     let prevTs: number | null = null;
     const wholes = new Map<string, number>();
 
-    const admit = (source: FlowSource, label: string, tokens: number, counted: boolean, flags: { paste?: boolean; listed?: boolean } = {}): void => {
+    const admit = (source: FlowSource, label: string, tokens: number, counted: boolean, flags: { paste?: boolean; listed?: boolean; tool?: string } = {}): void => {
       if (tokens <= 0) return;
       const listed = flags.listed !== false;
       const item = listed && counted ? itemFor(c.agent, source, label) : null;
       if (item) item.tokens += tokens;
-      stays.push({ source, label, tokens, counted, listed, paste: flags.paste === true, from: shares.length - 1, item });
+      stays.push({ source, label, tokens, counted, listed, paste: flags.paste === true, ...(flags.tool !== undefined && { tool: flags.tool }), from: shares.length - 1, item });
       held += tokens;
     };
     const dropAll = (): void => {
@@ -213,6 +220,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
         it.rereadUsd += usd;
         it.rereadTokens += s.tokens * (shares[end] - shares[s.from]);
         if (s.paste && s.counted && s.tokens >= PASTE_MIN_TOKENS) pastes.push({ sessionId: c.sessionId, tokens: s.tokens, rereadUsd: usd });
+        if (s.tool !== undefined && s.counted && s.tokens >= HUGE_RESULT_MIN_TOKENS) bigResults.push({ sessionId: c.sessionId, tool: s.tool, source: s.source, label: s.label, tokens: s.tokens, rereadUsd: usd });
       }
       stays = [];
       held = 0;
@@ -273,7 +281,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       }
       for (const p of waiting) {
         const tokens = (p.chars / CHARS_PER_TOKEN) * scale;
-        admit(p.source, p.label, tokens, counted, { paste: p.paste });
+        admit(p.source, p.label, tokens, counted, { paste: p.paste, ...(p.tool !== undefined && { tool: p.tool }) });
         if (counted && p.tool !== undefined) toolFill.set(p.tool, (toolFill.get(p.tool) ?? 0) + tokens);
       }
       waiting = [];
@@ -324,5 +332,6 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
   }
   const flow = ranked(whole.values());
   pastes.sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.sessionId, b.sessionId));
-  return { flow, byAgent, pastes: pastes.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak), mcpReread };
+  bigResults.sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.sessionId, b.sessionId) || text(a.label, b.label));
+  return { flow, byAgent, pastes: pastes.slice(0, FLOW_ITEMS), bigResults: bigResults.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak), mcpReread };
 }

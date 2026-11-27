@@ -2,16 +2,17 @@
 import { DAY_MS, HOUR_MS, hourStart, localDayStart, localHourIndex } from "./time.ts";
 import { repoOf } from "./path.ts";
 import { bump, dict } from "./dict.ts";
-import { cacheUnitPrices, costOf, memoResolver } from "./pricing.ts";
+import { cacheUnitPrices, costOf, memoResolver, unitPrices } from "./pricing.ts";
 import type { PriceTable } from "./pricing.ts";
-import { findRebuildsSteps } from "./cache-life.ts";
-import type { Rebuild } from "./cache-life.ts";
+import { findRebuildsSteps, ttlModelSteps } from "./cache-life.ts";
+import type { Rebuild, TtlModel } from "./cache-life.ts";
 import { analyzeFlowSteps } from "./flow.ts";
 import { usageCollector } from "./usage-detail.ts";
 import type { UsageDetail } from "./usage-detail.ts";
-import type { FlowItem, Paste } from "./flow.ts";
+import type { BigResult, FlowItem, Paste } from "./flow.ts";
+import { streamOf } from "./stream.ts";
 import type { Shard } from "./shard.ts";
-import type { Tokens, UsageRow } from "./types.ts";
+import type { Tokens, ToolUse, UsageRow } from "./types.ts";
 import { drain, drainAsync, STEP_ROWS } from "./steps.ts";
 import type { Steps } from "./steps.ts";
 
@@ -19,6 +20,14 @@ export type Span = "session" | "24h" | "30d";
 export type Money = { usd: number; tokens: Tokens; requests: number };
 /** One sub-agent type: conversations (tasks) it ran, tool results they received, and how many of those failed. */
 export type SubStats = { tasks: number; results: number; errors: number };
+/** Sub-agent runs (one transcript each) in the span; "small" ones wrote under SMALL_RUN_OUTPUT_TOKENS output tokens in all. */
+export type SubagentRuns = {
+  runs: number;
+  small: number;
+  /** What the small runs' first requests cost apart from their output: loading the starting context. */
+  smallStartupUsd: number;
+  byType: Record<string, { runs: number; small: number; startupUsd: number }>;
+};
 export type TopSession = { sessionId: string; repo: string; title?: string; pr?: string; started: number; usd: number; resume: string };
 export type Summary = {
   span: Span;
@@ -66,6 +75,13 @@ export type Summary = {
   compactions: Record<string, number>;
   /** Tokens each tool put into context. */
   toolFill: Record<string, number>;
+  /** Tool results of 25k+ tokens by re-read cost, top 40, over the main thread and every sub-agent. */
+  hugeResults: BigResult[];
+  /** What the main threads' pauses would cost under a 5-minute and under a 1-hour cache. */
+  cacheTtl: TtlModel;
+  subagentRuns: SubagentRuns;
+  /** Per model, the main-thread requests that called tools, and the part of them that only read or searched. */
+  mainTools: Record<string, { turns: number; readOnly: Money }>;
 };
 export type SummaryOpts = {
   span: Span;
@@ -80,6 +96,11 @@ export type SummaryOpts = {
 };
 
 export const TOP_SESSIONS = 20;
+/** A sub-agent run that wrote fewer output tokens than this, over all its requests, is small. */
+export const SMALL_RUN_OUTPUT_TOKENS = 500;
+/** Tools that change nothing; a request calling only these is a read-only turn (names lower-cased). */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch", "notebookread", "toolsearch"]);
+export const isReadOnlyTurn = (tools: ToolUse[]): boolean => tools.length > 0 && tools.every((t) => READ_ONLY_TOOLS.has(t.name.toLowerCase()));
 /** A "session" span longer than this many hourly buckets switches to daily buckets. */
 export const SESSION_HOURLY_MAX = 72;
 export const UNKNOWN_REPO = "unknown";
@@ -216,11 +237,17 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     wholeReads: dict(),
     compactions: dict(),
     toolFill: dict(),
+    hugeResults: [],
+    cacheTtl: { requests: 0, actual: "5m", usd5m: 0, usd1h: 0, pauses: { short: 0, mid: 0, long: 0 } },
+    subagentRuns: { runs: 0, small: 0, smallStartupUsd: 0, byType: dict() },
+    mainTools: dict(),
   };
 
   type Acc = { usd: number; started: number; byRepo: Map<string, number> };
   const sessions = new Map<string, Acc>();
   const hourTokens = new Map<number, number>();
+  type SubAcc = { type: string; output: number; firstTs: number; startupUsd: number };
+  const subs = new Map<string, SubAcc>();
   yield;
   for (const { r, usd, repo } of rows) {
     if (++n % STEP_ROWS === 0) yield;
@@ -233,6 +260,19 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
       const m = slot(slot(out.bySubType, r.agentType ?? UNKNOWN_SUB, () => dict<Money & { tools: Record<string, number> }>()), r.model, () => ({ ...zero(), tools: dict<number>() }));
       add(m, r, usd);
       for (const t of r.tools) bump(m.tools, t.name);
+      const key = streamOf(r);
+      let acc = subs.get(key);
+      if (!acc) subs.set(key, (acc = { type: r.agentType ?? UNKNOWN_SUB, output: 0, firstTs: Infinity, startupUsd: 0 }));
+      acc.output += r.tokens.output;
+      if (r.ts < acc.firstTs) {
+        const u = unitPrices(r, prices, resolve);
+        acc.firstTs = r.ts;
+        acc.startupUsd = r.tokens.input * u.input + r.tokens.cacheRead * u.read + r.tokens.cw5m * u.cw5m + r.tokens.cw1h * u.cw1h;
+      }
+    } else if (r.tools.length > 0) {
+      const m = slot(out.mainTools, r.model, () => ({ turns: 0, readOnly: zero() }));
+      m.turns++;
+      if (isReadOnlyTurn(r.tools)) add(m.readOnly, r, usd);
     }
     if (r.skill) add(slot(out.bySkill, r.skill, zero), r, usd);
     if (r.plugin) add(slot(out.byPlugin, r.plugin, zero), r, usd);
@@ -255,6 +295,17 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     a.byRepo.set(repo, (a.byRepo.get(repo) ?? 0) + usd);
   }
 
+  for (const a of subs.values()) {
+    const t = slot(out.subagentRuns.byType, a.type, () => ({ runs: 0, small: 0, startupUsd: 0 }));
+    out.subagentRuns.runs++;
+    t.runs++;
+    if (a.output < SMALL_RUN_OUTPUT_TOKENS) {
+      out.subagentRuns.small++;
+      out.subagentRuns.smallStartupUsd += a.startupUsd;
+      t.small++;
+      t.startupUsd += a.startupUsd;
+    }
+  }
   yield;
   if (hourTokens.size) {
     const sorted = [...hourTokens.values()].sort((a, b) => a - b);
@@ -317,6 +368,8 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     return r.tokens.cw5m * u.cw5m + r.tokens.cw1h * u.cw1h;
   });
   yield;
+  out.cacheTtl = yield* ttlModelSteps(everyRow, (r) => counted.has(r), (r) => cacheUnitPrices(r, prices, resolve));
+  yield;
   const collector = opts.usage === true ? usageCollector(prices) : undefined;
   const flow = yield* analyzeFlowSteps({
     rows: everyRow,
@@ -332,6 +385,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
   out.flowByAgent = flow.byAgent;
   out.mcpReread = flow.mcpReread;
   out.pastes = flow.pastes;
+  out.hugeResults = flow.bigResults;
   out.wholeReads = flow.wholeReads;
   out.toolFill = flow.toolFill;
   for (const c of compacts) {

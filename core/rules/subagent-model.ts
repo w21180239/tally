@@ -1,9 +1,7 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { resolvePrice } from "../pricing.ts";
-import type { ModelPrice } from "../pricing.ts";
 import type { Summary } from "../summary.ts";
-import type { Tokens } from "../types.ts";
-import { LISTED, usdText } from "./shared.ts";
+import { LISTED, pricedTokens as priced, shortModel, usdText } from "./shared.ts";
 
 const LOOKING: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch", "bash"]);
 // Tools that cannot change anything; a shell can, so a type that runs one fires but is not high confidence.
@@ -17,9 +15,6 @@ const MAX_ERROR_SHARE = 0.05;
 const MAX_AVG_TURNS = 10;
 
 const LOW_ACTION = "Try sonnet for one week";
-
-const priced = (t: Tokens, p: ModelPrice): number => (t.input * p.input + t.output * p.output + t.cacheRead * p.cacheRead + t.cw5m * p.cw5m + t.cw1h * p.cw1h) / 1e6;
-const shortModel = (model: string): string => model.replace(/^claude-/, "");
 
 type Slice = Summary["bySubType"][string];
 

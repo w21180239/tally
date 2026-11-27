@@ -5,7 +5,7 @@ import type { LiveState } from "./live-state.ts";
 import { baseName } from "./path.ts";
 import type { InstalledPlugin } from "./plugins.ts";
 import type { PriceTable } from "./pricing.ts";
-import { BASELINE_RULES } from "./rules/index.ts";
+import { ALL_RULES } from "./rules/index.ts";
 import type { Summary } from "./summary.ts";
 
 export type EvidenceKind = "command" | "path" | "title" | "text";
@@ -145,4 +145,4 @@ export function redact(e: Evidence, on: boolean): Evidence {
 }
 
 /** The registered rules; the engine runs whatever this holds. */
-export const HINT_RULES: HintRule[] = BASELINE_RULES;
+export const HINT_RULES: HintRule[] = ALL_RULES;
