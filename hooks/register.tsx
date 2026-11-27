@@ -70,8 +70,11 @@ export const register: Register = (on, options) => {
     gen++;
     stop?.();
     stop = undefined;
-    for (const t of timers) t.cancel();
-    timers = [];
+    // A /clear ends the session but the process goes on with no session.start: the redraw timers keep running.
+    if (e.reason !== "clear") {
+      for (const t of timers) t.cancel();
+      timers = [];
+    }
     return next(e);
   });
 

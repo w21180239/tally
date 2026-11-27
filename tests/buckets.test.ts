@@ -122,6 +122,19 @@ describe("day buckets", () => {
     expect(Object.keys(r2.seqs)).toEqual([]);
   });
 
+  test("sinceMs loads only the days from the one holding it and reads no older bucket", async () => {
+    const w = worldOf();
+    const days = new Map([5, 3, 1, 0].map((back) => [dayIdx(T0 - back * DAY), bucket([usage(back, T0 - back * DAY)])] as const));
+    await saveBuckets(w.$, CFG, P, { days }, {}, T0);
+    w.reads.length = 0;
+    const l = await loadBuckets(w.$, CFG, P, T0, undefined, T0 - DAY + 3_600_000);
+    expect(l.kind === "ok" && [...l.days.keys()].sort((a, b) => a - b)).toEqual([dayIdx(T0 - DAY), dayIdx(T0)]);
+    for (const back of [5, 3]) expect(w.reads.some((r) => r.path.includes(`d-${dayKey(dayIdx(T0 - back * DAY))}`))).toBe(false);
+    expect((await loadProject(w.$, CFG, P, T0, undefined, T0 - DAY + 3_600_000))!.usage.map((u) => u.requestId)).toEqual(["req-1", "req-0"]);
+    // Without it all four days load, as before.
+    expect((await loadProject(w.$, CFG, P, T0))!.usage).toHaveLength(4);
+  });
+
   test("a crash between the day-bucket writes and the manifest write reads the committed generation", async () => {
     const w = worldOf();
     const day = dayIdx(T0);

@@ -42,27 +42,30 @@ export const hasRepoSwitch = (tab: TabId): boolean => tab === "history" || tab =
 
 /** The keys that work on `tab`, each as `key words`, in line order; Esc folds the window on every tab. */
 export function keyLine(tab: TabId, ctx: KeyCtx = {}): string[] {
-  const keys = ["0-5 tabs"];
-  if (spansOf(tab).length > 0) keys.push("s span");
-  if (hasRepoSwitch(tab)) keys.push("r repos");
+  const keys = ["0-5 switch tab"];
+  if (spansOf(tab).length > 0) keys.push("s time span");
+  if (hasRepoSwitch(tab)) keys.push("r repo filter");
   if (ctx.machines === true && (tab === "usage" || tab === "history" || tab === "hints")) keys.push("t machines");
-  if (ctx.agents === true) keys.push("a agents", "p/n agent");
-  if (ctx.canView === true) keys.push("v view");
-  if (ctx.canGoBack === true) keys.push("b back");
-  if (ctx.more === true) keys.push("m more");
+  if (ctx.agents === true) keys.push("a agent list", "p/n prev/next");
+  if (ctx.canView === true) keys.push("v open agent");
+  if (ctx.canGoBack === true) keys.push("b return");
+  if (ctx.more === true) keys.push("m full lists");
   if (ctx.rows === true) keys.push("tab/enter open rows");
   if (ctx.evidence === true) keys.push("tab/enter show evidence");
   if (ctx.adopt === true) keys.push("y adopt");
-  keys.push("esc fold");
+  keys.push(ESC_WORDS);
   return keys;
 }
 
 /** What the key line says while the window does not hold the keys: ctrl+x, then tab. */
 export const HOW_TO_FOCUS = "ctrl+x then tab to focus";
+/** What the key line says while the window holds the keys, and how Esc reads there. */
+export const KEYS_ACTIVE = "keys active";
+export const ESC_WORDS = "esc collapse";
 
 /** The keys in one dim row of `cols` cells: how to focus first, then whole entries while they fit. */
 export function keyLineText(cols: number, isFocused: boolean, keys: string[]): string {
-  let line = isFocused ? "focused" : HOW_TO_FOCUS;
+  let line = isFocused ? KEYS_ACTIVE : HOW_TO_FOCUS;
   for (const entry of keys) {
     if (line.length + 3 + entry.length > cols) break;
     line = `${line} \u{b7} ${entry}`;

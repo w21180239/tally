@@ -7,6 +7,7 @@ import { costOf } from "../core/pricing.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { stepRow } from "../core/live-state.ts";
 import { summarizeAsync } from "../core/summary.ts";
+import { HOUR_MS, hourStart } from "../core/time.ts";
 import type { Span } from "../core/summary.ts";
 import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import type { Settings } from "../core/settings.ts";
@@ -83,14 +84,17 @@ const isSpan = (v: unknown): v is Span => v === "session" || v === "24h" || v ==
 
 // Window work that may be slow runs off the caller's path; a failure goes to the debug log, never to the caller.
 export function inBackground($: EngineInterface, work: () => Promise<unknown>): void {
-  $.clock.after(0, () => {
-    work().catch((err: unknown) => {
-      try {
-        $.ui.log(`tally: ${err instanceof Error ? err.message : String(err)}`, { to: "debug" });
-      } catch {
-        /* nothing to log to */
-      }
-    });
+  $.clock.after(0, () => attempt($, work));
+}
+
+/** Runs `work` now without awaiting it; a rejection goes to the debug log, so a button press never leaves one unhandled. */
+export function attempt($: EngineInterface, work: () => Promise<unknown>): void {
+  work().catch((err: unknown) => {
+    try {
+      $.ui.log(`tally: ${err instanceof Error ? err.message : String(err)}`, { to: "debug" });
+    } catch {
+      /* nothing to log to */
+    }
   });
 }
 
@@ -133,7 +137,8 @@ export async function openWindow($: EngineInterface, settings: Settings, o: Open
   // No await may come before the open: the engine links it to the press or command behind it only until the
   // first await, and an open after that counts as unasked.
   const opened = await $.ui.open({ id: PANE_ID, title: PANE_TITLE, closeOnEscape: true, columns: OPEN_COLUMNS, rows: OPEN_ROWS, ...(o.asked === true && { focus: true as const }) });
-  if (!opened.isPlaced && /^unasked/.test(opened.reason)) {
+  // Not placed means held back (a narrow terminal, or surfaces that place nothing) except `no-surface`: the pane stays open for a surface that attaches later.
+  if (!opened.isPlaced && !opened.reason.startsWith("no-surface")) {
     // The mode first, so the `ui.close` hook knows the close is ours.
     await changeView($, (v) => ({ ...v, mode: "folded" }));
     await $.ui.close({ id: PANE_ID });
@@ -171,6 +176,22 @@ export async function restoreWindow($: EngineInterface, settings: Settings, isIn
   }
   await openWindow($, settings);
 }
+/**
+ * After a /clear (a new session id, no `session.start`) the view starts over: the tab and span from the store, then
+ * folded when the person left it folded or the pane is down, open when the pane is still up (never: shut). Opens nothing itself.
+ */
+export async function reseatView($: EngineInterface): Promise<void> {
+  await restoreChoices($);
+  if ((await $.store.get(MODE_KEY)) === "folded") {
+    await changeView($, (v) => ({ ...v, mode: "folded" }));
+    return;
+  }
+  if (current.open === "never") return;
+  const panes = await $.ui.panes().catch(() => []);
+  const isUp = panes.some((p) => p.id === PANE_ID && p.isPlaced);
+  await changeView($, (v) => ({ ...v, mode: isUp ? "open" : "folded" }));
+}
+
 
 export async function showTab($: EngineInterface, tab: TabId): Promise<void> {
   await changeView($, (v) => ({ ...v, tab, hasTipped: true }));
@@ -267,12 +288,14 @@ export async function refreshChart($: EngineInterface, force = false): Promise<v
   if (!force && chartAt !== 0 && now - chartAt < CHART_INTERVAL_MS) return;
   chartAt = now;
   const loc = await locate($);
+  // The summary reads the 24 hours up to now (its bands rank those hours), which touch at most two UTC day buckets.
+  const from = hourStart(now) - 23 * HOUR_MS;
   const slicer = makeSlicer($);
   const tick = () => slicer.check();
   const shards: Shard[] = [];
   for (const project of await listProjects($, loc.roots)) {
     await tick();
-    const shard = await loadProject($, loc.cfg, project, now, tick);
+    const shard = await loadProject($, loc.cfg, project, now, tick, from);
     if (shard) shards.push(shard);
   }
   const s = await summarizeAsync(shards, BUILTIN_PRICES, { span: "24h", nowMs: now, tzOffsetMin: -new Date(now).getTimezoneOffset() }, tick);

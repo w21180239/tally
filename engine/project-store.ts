@@ -32,12 +32,12 @@ export type Loaded =
   | { kind: "stale" }
   | { kind: "ok"; days: Map<number, Shard>; seqs: Record<string, number> };
 
-/** Manifest plus every bucket inside the 30-day window; older days are skipped. */
-export async function loadBuckets(env: StoreEnv, cfg: string, project: string, nowMs: number, tick: Tick = noTick): Promise<Loaded> {
+/** Manifest plus every bucket inside the 30-day window; older days are skipped, and with `sinceMs` the days before the one holding it. */
+export async function loadBuckets(env: StoreEnv, cfg: string, project: string, nowMs: number, tick: Tick = noTick, sinceMs?: number): Promise<Loaded> {
   const manifest = await loadAt(env, projectDir(cfg, project), project, tick);
   if (!manifest) return { kind: "empty" };
   if (manifest.fmt !== INDEX_FORMAT) return { kind: "stale" };
-  const cut = dayIdx(nowMs - WINDOW_MS);
+  const cut = Math.max(dayIdx(nowMs - WINDOW_MS), sinceMs === undefined ? -Infinity : dayIdx(sinceMs));
   const days = new Map<number, Shard>();
   const seqs: Record<string, number> = {};
   for (const [key, seq] of Object.entries(manifest.days ?? {})) {
@@ -85,9 +85,9 @@ export async function saveBuckets(
   return { seqs: next, dropped };
 }
 
-/** The whole project as one Shard (window days only); null when there is no usable index. */
-export async function loadProject(env: StoreEnv, cfg: string, project: string, nowMs: number, tick: Tick = noTick): Promise<Shard | null> {
-  const l = await loadBuckets(env, cfg, project, nowMs, tick);
+/** The whole project as one Shard (window days only, or only those from `sinceMs`); null when there is no usable index. */
+export async function loadProject(env: StoreEnv, cfg: string, project: string, nowMs: number, tick: Tick = noTick, sinceMs?: number): Promise<Shard | null> {
+  const l = await loadBuckets(env, cfg, project, nowMs, tick, sinceMs);
   if (l.kind !== "ok") return null;
   const out: Shard = { v: 1, project, files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [] };
   const metas = new Map<string, Shard["metas"][number]>();

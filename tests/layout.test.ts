@@ -85,6 +85,31 @@ describe("foldLine", () => {
     expect(foldParts(d, 30).map((p) => p.role)).toEqual(["cost", "context"]);
   });
 
+  test("each drop boundary removes exactly one role, in the order cache, chart, saving, hint, context", () => {
+    const d = dataOf();
+    const SEP_LEN = " \u{b7} ".length;
+    const widthOf = (parts: Array<{ text: string }>): number => parts.reduce((n, p, i) => n + p.text.length + (i === 0 ? 0 : SEP_LEN), 0);
+    const steps: Array<{ roles: string[]; saving: boolean }> = [];
+    let cols = 200;
+    for (;;) {
+      const parts = foldParts(d, cols);
+      const w = widthOf(parts);
+      // Exactly at its own width the same parts stay.
+      expect(foldParts(d, w).map((p) => p.text)).toEqual(parts.map((p) => p.text));
+      steps.push({ roles: parts.map((p) => p.role), saving: parts.some((p) => p.role === "hint" && p.text.includes("saves $2.10")) });
+      if (parts.length === 1) break;
+      cols = w - 1;
+    }
+    expect(steps).toEqual([
+      { roles: ["hint", "chart", "cost", "context", "cache"], saving: true },
+      { roles: ["hint", "chart", "cost", "context"], saving: true },
+      { roles: ["hint", "cost", "context"], saving: true },
+      { roles: ["hint", "cost", "context"], saving: false },
+      { roles: ["cost", "context"], saving: false },
+      { roles: ["cost"], saving: false },
+    ]);
+  });
+
   test("a line never passes its width, down to the cost alone cut to fit", () => {
     const d = dataOf();
     for (let cols = 3; cols <= 90; cols++) expect(foldLine(d, cols).length).toBeLessThanOrEqual(cols);
@@ -105,27 +130,27 @@ describe("foldLine", () => {
 
 describe("keyLine", () => {
   test("lists only the keys that work on the tab", () => {
-    expect(keyLine("session")).toEqual(["0-5 tabs", "esc fold"]);
-    expect(keyLine("usage")).toEqual(["0-5 tabs", "s span", "esc fold"]);
-    expect(keyLine("hints")).toEqual(["0-5 tabs", "s span", "r repos", "esc fold"]);
-    expect(keyLine("history")).toEqual(["0-5 tabs", "r repos", "esc fold"]);
-    expect(keyLine("help")).toEqual(["0-5 tabs", "esc fold"]);
+    expect(keyLine("session")).toEqual(["0-5 switch tab", "esc collapse"]);
+    expect(keyLine("usage")).toEqual(["0-5 switch tab", "s time span", "esc collapse"]);
+    expect(keyLine("hints")).toEqual(["0-5 switch tab", "s time span", "r repo filter", "esc collapse"]);
+    expect(keyLine("history")).toEqual(["0-5 switch tab", "r repo filter", "esc collapse"]);
+    expect(keyLine("help")).toEqual(["0-5 switch tab", "esc collapse"]);
   });
 
   test("the body's own keys appear only while it has them", () => {
     const all = keyLine("usage", { agents: true, canView: true, canGoBack: true, more: true, rows: true, machines: true });
-    expect(all).toEqual(["0-5 tabs", "s span", "t machines", "a agents", "p/n agent", "v view", "b back", "m more", "tab/enter open rows", "esc fold"]);
-    expect(keyLine("hints", { evidence: true, adopt: true })).toEqual(["0-5 tabs", "s span", "r repos", "tab/enter show evidence", "y adopt", "esc fold"]);
+    expect(all).toEqual(["0-5 switch tab", "s time span", "t machines", "a agent list", "p/n prev/next", "v open agent", "b return", "m full lists", "tab/enter open rows", "esc collapse"]);
+    expect(keyLine("hints", { evidence: true, adopt: true })).toEqual(["0-5 switch tab", "s time span", "r repo filter", "tab/enter show evidence", "y adopt", "esc collapse"]);
     expect(keyLine("session", { machines: true })).not.toContain("t machines");
   });
 
   test("the line leads with how to focus, then whole entries while they fit", () => {
     const keys = keyLine("hints");
-    expect(keyLineText(200, false, keys)).toBe("ctrl+x then tab to focus \u{b7} 0-5 tabs \u{b7} s span \u{b7} r repos \u{b7} esc fold");
-    expect(keyLineText(200, true, keys).startsWith("focused \u{b7} 0-5 tabs")).toBe(true);
-    const cut = keyLineText(40, false, keys);
-    expect(cut.length).toBeLessThanOrEqual(40);
-    expect(cut.endsWith("0-5 tabs")).toBe(true);
+    expect(keyLineText(200, false, keys)).toBe("ctrl+x then tab to focus \u{b7} 0-5 switch tab \u{b7} s time span \u{b7} r repo filter \u{b7} esc collapse");
+    expect(keyLineText(200, true, keys).startsWith("keys active \u{b7} 0-5 switch tab")).toBe(true);
+    const cut = keyLineText(44, false, keys);
+    expect(cut.length).toBeLessThanOrEqual(44);
+    expect(cut.endsWith("0-5 switch tab")).toBe(true);
   });
 
   test("only Usage cycles three spans; Hints two; the rest none", () => {

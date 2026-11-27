@@ -43,6 +43,10 @@ type Rig = {
   usage: { v: SessionUsage };
   config: { sets: Array<{ key: string; value: unknown }> };
   clock: ReturnType<typeof mock.clock>;
+  sid: { v: string };
+  logs: string[];
+  redraws: { n: number };
+  failSet: { v: boolean };
 };
 
 /** The engine beneath tally: clock, env, store, the pane calls, the session's id and usage, an empty index. */
@@ -56,14 +60,21 @@ function rig(on: On, store: Record<string, unknown> = {}, world?: World): Rig {
     usage: { v: { startedAt: NOW, context: { tokens: 236_000, window: 1_000_000, percent: 24 }, rateLimits: limits(6), cost: { usd: 0 } } },
     config: { sets: [] },
     clock: mock.clock(on, { now: NOW }),
+    sid: { v: "s-1" },
+    logs: [],
+    redraws: { n: 0 },
+    failSet: { v: false },
   };
   mock.env(on, { HOME: "/home/u" });
   on("store.get", (_, e) => ({ value: r.stored.get(e.key) }));
   on("store.set", (_, e) => {
+    if (r.failSet.v) return { deny: "disk full" };
     r.stored.set(e.key, e.value);
     return { value: undefined };
   });
   on("session.start", (_, e) => ({ cwd: e.cwd }));
+  on("session.end", (_, e) => ({ sessionId: e.sessionId }));
+  on("session.measure", (_, e) => ({ changed: e.changed }));
   on("command.register", (_, e) => ({ value: { command: e.name } }));
   on("ui.open", (_, e) => {
     r.opened.push(e);
@@ -77,8 +88,16 @@ function rig(on: On, store: Record<string, unknown> = {}, world?: World): Rig {
     r.toasts.push(e.text);
     return { value: undefined };
   });
-  on("ui.log", () => ({ value: undefined }));
-  on("session.id", () => ({ value: "s-1" }));
+  on("ui.log", (_, e) => {
+    r.logs.push(e.text);
+    return { value: undefined };
+  });
+  on("ui.invalidate", () => {
+    r.redraws.n++;
+    return { value: undefined };
+  });
+  on("ui.panes", () => ({ value: r.opened.length > 0 && r.closed.length < r.opened.length ? [{ id: PLUGIN, title: PLUGIN, isShown: true, isFocused: false, isPlaced: true }] : [] }));
+  on("session.id", () => ({ value: r.sid.v }));
   on("session.cwd", () => ({ value: CWD }));
   on("session.model", () => ({ value: "claude-opus-5-5" }));
   on("session.info", () => ({ value: { platform: "linux" } }));
@@ -188,9 +207,9 @@ describe("window: tabs and keys", () => {
     await start($);
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect(await ui.find(TEXT(/^focused \u{b7} 0-5 tabs \u{b7} esc fold$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^keys active \u{b7} 0-5 switch tab \u{b7} esc collapse$/u))).toBeDefined();
     await ui.press({ key: "tab-hints" });
-    expect(await ui.find(TEXT(/0-5 tabs \u{b7} s span \u{b7} r repos \u{b7} esc fold/u))).toBeDefined();
+    expect(await ui.find(TEXT(/0-5 switch tab \u{b7} s time span \u{b7} r repo filter \u{b7} esc collapse/u))).toBeDefined();
     await ui.unmount();
   });
 
@@ -278,13 +297,13 @@ describe("window: surfaces", () => {
     await start($);
     await turn($, r, "t1");
     const code = await $.ui.mount({ plugin: PLUGIN, surface: "vscode", ...PANE });
-    expect(await code.find(TEXT(/esc fold|ctrl\+x|0-5 tabs/))).toBeUndefined();
+    expect(await code.find(TEXT(/esc collapse|ctrl\+x|0-5 switch tab/))).toBeUndefined();
     expect((await code.find({ key: "tab-usage" }))?.props.plain).toBeUndefined();
     expect((await code.findAll({ type: "Svg" })).length).toBeGreaterThanOrEqual(3);
     expect(await code.find(TEXT(/\u{2588}|\u{2591}/u))).toBeUndefined();
     await code.unmount();
     const term = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect(await term.find(TEXT(/esc fold/))).toBeDefined();
+    expect(await term.find(TEXT(/esc collapse/))).toBeDefined();
     expect((await term.findAll({ type: "Svg" })).length).toBe(0);
     expect(await term.find(TEXT(/\u{2588}|\u{2591}/u))).toBeDefined();
     await term.unmount();
@@ -561,6 +580,144 @@ describe("window: limit warning", () => {
     expect(r.toasts).toHaveLength(1);
     expect(r.toasts[0]).toContain("7-day limit is 83% used");
     await turn($, r, "t3");
+    expect(r.toasts).toHaveLength(1);
+  });
+});
+
+describe("window: /clear keeps the line and the timers", () => {
+  const clear = ($: Engine, r: Rig) => $.session.end({ reason: "clear", sessionId: r.sid.v, resume: { id: r.sid.v } } as never);
+
+  test("session.end with reason clear leaves the timers running; the next prompt draws the fold line again", async ($, on) => {
+    const r = rig(on, { mode: "folded" });
+    await start($);
+    await r.clock.settle();
+    await clear($, r);
+    r.sid.v = "s-2";
+    await $.prompt.submit(prompt("after the clear"));
+    await r.clock.settle();
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect((await band.find({ key: "tally-fold" }))?.props.label).toMatch(/ctx 236k/);
+    // The minute redraw still fires.
+    const before = r.redraws.n;
+    await r.clock.advance(60_000);
+    expect(r.redraws.n).toBeGreaterThan(before);
+    await band.unmount();
+  });
+
+  test("a window the person left open is open again for the new session; an auto-folded one shows its line", async ($, on) => {
+    const r = rig(on, { tab: "usage" });
+    await start($);
+    await r.clock.settle();
+    await clear($, r);
+    r.sid.v = "s-2";
+    await $.prompt.submit(prompt("after the clear"));
+    await r.clock.settle();
+    // before-first-message folded it on that first message: the line is there, on the stored tab.
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect(await band.find({ key: "tally-fold" })).toBeDefined();
+    await band.unmount();
+  });
+
+  test("the first prompt under a new session id seats the view again from the store", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    await clear($, r);
+    // What the view starts over from: the choices kept in the store.
+    r.stored.set("tab", "hints");
+    r.sid.v = "s-2";
+    await $.prompt.submit(prompt("after the clear"));
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    expect(await ui.find({ key: "body-hints" })).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("any other end reason cancels the timers", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    await $.session.end({ reason: "other", sessionId: r.sid.v, resume: { id: r.sid.v } } as never);
+    await r.clock.settle();
+    const before = r.redraws.n;
+    await r.clock.advance(120_000);
+    expect(r.redraws.n).toBe(before);
+  });
+});
+
+describe("window: the chart reads only the days it draws", () => {
+  const DAY = 86_400_000;
+  // Another project than the session's own: the live tally reads that one whole, the chart must not.
+  const OTHER = "-other-proj";
+  const dayRow = (id: string, at: number) => req({ id, at, tokens: { input: 5000 } });
+
+  test("buckets older than the 24 hours are not read, while today's and yesterday's are", async ($, on) => {
+    const world = worldOf();
+    const rows = [dayRow("old1", NOW - T0 - 10 * DAY), dayRow("old2", NOW - T0 - 3 * DAY), dayRow("recent", NOW - T0 - 30 * 60_000), dayRow("late", NOW - T0 - 20 * 3_600_000)];
+    const days = new Map<number, Shard>();
+    for (const row of rows) {
+      const d = dayIdx(row.ts);
+      const shard = days.get(d) ?? { v: 1, project: OTHER, files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [] };
+      shard.usage.push(row);
+      days.set(d, shard);
+    }
+    await saveBuckets(world.$, CFG, OTHER, { days }, {}, NOW);
+    world.put(`${CFG}/projects/${OTHER}/x.jsonl`, "");
+    world.reads.length = 0;
+    const r = rig(on, { mode: "folded" }, world);
+    await start($);
+    await r.clock.settle();
+    const key = (ts: number) => new Date(ts).toISOString().slice(0, 10);
+    const paths = world.reads.map((x) => x.path);
+    const read = (row: { ts: number }) => paths.some((p) => p.includes(`d-${key(row.ts)}`));
+    expect(rows.slice(0, 2).map(read)).toEqual([false, false]);
+    expect(rows.slice(2).map(read)).toEqual([true, true]);
+  });
+});
+
+describe("window: held back or not placed", () => {
+  test("a held-back open with any reason but no-surface starts folded", async ($, on) => {
+    const r = rig(on);
+    r.place.v = () => ({ isPlaced: false, reason: "terminal 120 columns, floor 144" });
+    await start($);
+    await r.clock.settle();
+    expect(r.closed).toEqual([PLUGIN]);
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect(await band.find({ key: "tally-fold" })).toBeDefined();
+    await band.unmount();
+  });
+
+  test("no-surface keeps the pane open for a surface that attaches later", async ($, on) => {
+    const r = rig(on);
+    r.place.v = () => ({ isPlaced: false, reason: "no-surface: nothing is attached" });
+    await start($);
+    await r.clock.settle();
+    expect(r.closed).toEqual([]);
+    expect(r.opened).toHaveLength(1);
+  });
+});
+
+describe("window: background work never rejects unhandled", () => {
+  test("a press whose store write is denied is logged, not thrown", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    r.failSet.v = true;
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    expect(r.logs.some((l) => l.startsWith("tally:"))).toBe(true);
+    await ui.unmount();
+  });
+
+  test("the foot's update for a measurement runs after the hook has answered", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const measured = await $.session.measure({ context: { tokens: 300_000, window: 1_000_000, percent: 30 }, rateLimits: limits(90), changed: ["rateLimits"] } as never);
+    expect(measured).toBeDefined();
+    expect(r.toasts).toHaveLength(0);
+    await r.clock.settle();
     expect(r.toasts).toHaveLength(1);
   });
 });

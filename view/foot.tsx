@@ -33,7 +33,7 @@ export function footRows(d: WindowData, isShort: boolean): Row[] {
   }
   const share = contextShare(d);
   if (d.context.tokens === null) {
-    rows.push({ label: isShort ? "ctx" : "Context", words: ["no request yet", "none yet", "-"], figure: "", quiet: true });
+    rows.push({ label: isShort ? "ctx" : "Context", words: ["awaiting first reply", "idle", "-"], figure: "", quiet: true });
   } else {
     rows.push({
       label: isShort ? "ctx" : "Context",

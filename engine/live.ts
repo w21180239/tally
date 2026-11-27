@@ -12,7 +12,7 @@ import { drainAsync } from "../core/steps.ts";
 import { locate } from "./locate.ts";
 import { loadProject } from "./project-store.ts";
 import { makeSlicer } from "./slicer.ts";
-import { onMeasure, onPrompt, onTurnEnd } from "./window.ts";
+import { onMeasure, onPrompt, onTurnEnd, reseatView } from "./window.ts";
 
 /** The atom the views read. */
 export const liveAtom = atom({ plugin: "tally", key: "live" } as const, emptyLive("", 0, 0), { shape: "live-1" });
@@ -129,7 +129,10 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
 
   // Accounting never holds up or fails the call it watches: each handler swallows its own errors.
   on("prompt.submit", async ($, e, next) => {
-    await ensure($).catch(() => undefined);
+    const was = (await read($, liveAtom)).sessionId;
+    const now = await ensure($).catch(() => undefined);
+    // A /clear raises no session.start: the new id is the cue to seat the window's view again.
+    if (now !== undefined && now.sessionId !== was) await reseatView($).catch(() => undefined);
     // The window's first-message fold never fails the prompt.
     await onPrompt($, e).catch(() => undefined);
     return next(e);
@@ -194,7 +197,8 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
   // The engine's own reading of the windows, whenever one moves.
   on("session.measure", async ($, e, next) => {
     if (e.rateLimits.length > 0) await $.store.set(LAST_LIMITS_KEY, { at: await $.clock.now(), limits: e.rateLimits }).catch(() => undefined);
-    await onMeasure($, e, await mainLife($)).catch(() => undefined);
+    // The foot's update is the window's own work: off the hook's path.
+    inBackground($, async () => onMeasure($, e, await mainLife($)));
     return next(e);
   });
 }

@@ -4,7 +4,7 @@ import type { EngineInterface, RenderElement, RenderInput } from "claude-code";
 import type { TabId } from "../core/args.ts";
 import type { Settings } from "../core/settings.ts";
 import type { Span } from "../core/summary.ts";
-import { openWindow, readChart, readFoot, readView, setMachines, setRepoOnly, setSpan, showTab } from "../engine/window.ts";
+import { attempt, openWindow, readChart, readFoot, readView, setMachines, setRepoOnly, setSpan, showTab } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
 import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
@@ -12,7 +12,7 @@ import { readLive } from "../engine/live.ts";
 import { glanceLines, moneyOf, windowData } from "./data.ts";
 import type { WindowData } from "./data.ts";
 import { layoutOf } from "./layout.ts";
-import { hasRepoSwitch, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
+import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
 import type { KeyCtx } from "./keys.ts";
 import { tableOf } from "./table.ts";
 import type { Table } from "./table.ts";
@@ -79,7 +79,7 @@ function drawShort(t: Table, d: WindowData, cols: number, isFocused: boolean, is
       ))}
       {t.hasKeys && (
         <Text dimColor wrap="truncate-end">
-          {`${isFocused ? "focused \u{b7} esc folds" : "ctrl+x, tab to activate"}${SEP}${note}`}
+          {`${isFocused ? `${KEYS_ACTIVE}${SEP}${ESC_WORDS}` : HOW_TO_FOCUS}${SEP}${note}`}
         </Text>
       )}
     </Box>
@@ -133,7 +133,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
           hotkey={s.hotkey}
           {...(t.hasKeys && !isNarrow && { plain: true as const })}
           {...(s.tab === tab ? { variant: "primary" as const } : { dimColor: true })}
-          onPress={() => void showTab($, s.tab)}
+          onPress={() => attempt($, () => showTab($, s.tab))}
         >
           {isNarrow ? s.short : s.label}
         </Button>
@@ -144,21 +144,21 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   const switches: RenderElement[] = [];
   const spans = spansOf(tab);
   if (spans.length > 0) {
-    switches.push(switchRow(t, "Span", "s", spans.map((s) => ({ key: `span-${s}`, label: SPAN_LABEL[s], isChosen: s === span, onPress: () => void setSpan($, s) }))));
+    switches.push(switchRow(t, "Span", "s", spans.map((s) => ({ key: `span-${s}`, label: SPAN_LABEL[s], isChosen: s === span, onPress: () => attempt($, () => setSpan($, s)) }))));
   }
   if (hasRepoSwitch(tab)) {
     switches.push(
       switchRow(t, "Repos", "r", [
-        { key: "repo-all", label: "All", isChosen: !view.repoOnly, onPress: () => void setRepoOnly($, false) },
-        { key: "repo-only", label: "This repo", isChosen: view.repoOnly, onPress: () => void setRepoOnly($, true) },
+        { key: "repo-all", label: "All", isChosen: !view.repoOnly, onPress: () => attempt($, () => setRepoOnly($, false)) },
+        { key: "repo-only", label: "Current repo", isChosen: view.repoOnly, onPress: () => attempt($, () => setRepoOnly($, true)) },
       ]),
     );
   }
   if (ctx.machines === true && (tab === "usage" || tab === "history" || tab === "hints")) {
     switches.push(
       switchRow(t, "Machines", "t", [
-        { key: "machines-this", label: "This machine", isChosen: view.machines === "this", onPress: () => void setMachines($, "this") },
-        { key: "machines-all", label: "All computers", isChosen: view.machines === "all", onPress: () => void setMachines($, "all") },
+        { key: "machines-this", label: "This machine", isChosen: view.machines === "this", onPress: () => attempt($, () => setMachines($, "this")) },
+        { key: "machines-all", label: "All computers", isChosen: view.machines === "all", onPress: () => attempt($, () => setMachines($, "all")) },
       ]),
     );
   }
@@ -224,7 +224,7 @@ export async function drawBand(
   settings: Settings,
 ): Promise<RenderElement> {
   if (e.props.hasSurvey || (e.surface !== "terminal" && e.surface !== "desktop")) return next(e);
-  const onOpen = () => void openWindow($, settings, { asked: true });
+  const onOpen = () => attempt($, () => openWindow($, settings, { asked: true }));
   if (e.surface === "desktop" && settings.desktopRow) return drawInfoRow($, e, await loadData($, settings), onOpen);
   if ((await readView($)).mode !== "folded") return next(e);
   return drawFold($, e, await loadData($, settings), onOpen);
