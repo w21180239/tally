@@ -206,6 +206,22 @@ describe("tool arguments", () => {
 });
 
 // The plugin under test, driven through its hooks over an in-memory home.
+describe("thinking-output effort floor", () => {
+  const thinking = HINT_RULES.find((h) => h.id === "thinking-output")!;
+  const at = (effort: string | undefined): UsageRow[] => [usageRow("a", 3), usageRow("b", 20)].map((r) => (effort === undefined ? r : { ...r, effort }));
+  test("no lower-effort advice when most requests already ran at medium or below; the spend is still summed", () => {
+    for (const effort of ["medium", "low"]) {
+      const s = summaryOf(at(effort));
+      expect(s.byEffort?.[effort]?.requests).toBe(2);
+      expect(thinking.run(inputOf(s))).toEqual([]);
+    }
+  });
+  test("above medium, or with no effort recorded, the hint stays", () => {
+    expect(thinking.run(inputOf(summaryOf(at("high"))))).toHaveLength(1);
+    expect(thinking.run(inputOf(summaryOf(at(undefined))))).toHaveLength(1);
+  });
+});
+
 const PLUGIN = "tally";
 const PANE: Omit<RenderInput<"Pane">, "surface"> = {
   component: "Pane",

@@ -38,6 +38,8 @@ export type Summary = {
   sub: Money;
   fast: Money;
   byModel: Record<string, Money>;
+  /** Requests by the effort they ran at; rows without one are left out. */
+  byEffort?: Record<string, Money>;
   byRepo: Record<string, Money>;
   bySubType: Record<string, Record<string, Money & { tools: Record<string, number> }>>;
   /** `bySubType`'s types, over their conversations that have a counted request. Tasks need agent ids, so shards from before them count none. */
@@ -221,6 +223,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     sub: zero(),
     fast: zero(),
     byModel: dict(),
+    byEffort: dict(),
     byRepo: dict(),
     bySubType: dict(),
     subStats: dict(),
@@ -258,6 +261,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     add(r.sidechain ? out.sub : out.main, r, usd);
     if (r.fast) add(out.fast, r, usd);
     add(slot(out.byModel, r.model, zero), r, usd);
+    if (r.effort !== undefined) add(slot(out.byEffort!, r.effort, zero), r, usd);
     add(slot(out.byRepo, repo, zero), r, usd);
     if (r.sidechain) {
       const m = slot(slot(out.bySubType, r.agentType ?? UNKNOWN_SUB, () => dict<Money & { tools: Record<string, number> }>()), r.model, () => ({ ...zero(), tools: dict<number>() }));
