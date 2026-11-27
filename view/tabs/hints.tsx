@@ -76,7 +76,10 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
       out.push(textLines(t, `${key}-summary`, hint.summary, SUMMARY_LINES));
       out.push(
         <Box key={`${key}-action`} flexDirection="row" columnGap={1} paddingLeft={2}>
-          <Text dimColor>Action</Text>
+          {/* Fixed width: a shrinkable label wrapped to "Actio" / "n" beside a long action. */}
+          <Box key={`${key}-action-label`} flexShrink={0}>
+            <Text dimColor>Action</Text>
+          </Box>
           <Box flexGrow={1} flexShrink={1}>
             <Text>{hint.action}</Text>
           </Box>
