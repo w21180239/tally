@@ -37,13 +37,13 @@
     "redactEvidence": {
       "type": "boolean",
       "title": "Redact evidence",
-      "description": "Hide prompt and file text in the evidence shown behind a hint.",
+      "description": "Redact the evidence shown behind a hint: commands keep only the program name, paths only the file name, and titles are blank.",
       "default": false
     },
     "recheckDays": {
       "type": "number",
       "title": "Recheck days",
-      "description": "Days before a dismissed hint is checked again.",
+      "description": "Days after a hint is adopted before tally checks whether the saving held.",
       "default": 14
     },
     "open": {

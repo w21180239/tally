@@ -1,5 +1,5 @@
 import { describe, expect, test } from "claude-code/testing";
-import { mcpResultUsd, mcpSchemaSteps, mcpServerOf, nearestSnapshot, residentTokens, snapshotOf } from "../core/breakdown.ts";
+import { mcpSchemaSteps, mcpServerOf, nearestSnapshot, residentTokens, snapshotOf } from "../core/breakdown.ts";
 import type { BreakdownSnapshot } from "../core/breakdown.ts";
 import { addActive, addAgent, applyEarlier, applyStep, earlierSteps, emptyLive } from "../core/live-state.ts";
 import type { LiveState } from "../core/live-state.ts";
@@ -223,15 +223,5 @@ describe("breakdown snapshots", () => {
     // 800 resident tokens x $0.2 per MTok x 3 main requests; a fully deferred server costs nothing.
     expect(near(cost.demo!, 800 * 0.2e-6 * 3)).toBe(true);
     expect(cost.idle).toBeUndefined();
-  });
-
-  test("result re-read cost is summed per server from the context flow's mcp parts only", () => {
-    const usd = mcpResultUsd([
-      { label: "mcp__demo__a", source: "mcp", tokens: 10, rereadUsd: 0.5 },
-      { label: "mcp__demo__b", source: "mcp", tokens: 10, rereadUsd: 0.25 },
-      { label: "mcp__other__a", source: "mcp", tokens: 10, rereadUsd: 1 },
-      { label: "Read", source: "read", tokens: 10, rereadUsd: 9 },
-    ]);
-    expect(usd).toEqual({ demo: 0.75, other: 1 });
   });
 });

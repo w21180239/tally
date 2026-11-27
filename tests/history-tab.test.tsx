@@ -411,6 +411,7 @@ describe("history figures", () => {
     expect(scanOf(null, NOW)).toBeNull();
     expect(scanOf(f("day", 42, 100, NOW - SCAN_STALE_MS - 1), NOW)).toBeNull();
     expect(scanOf(f("day", 42, 100, NOW - SCAN_STALE_MS), NOW)).toEqual({ percent: 42 });
+    expect(scanOf(f("day", 42, 100, Number.NaN), NOW)).toBeNull();
     expect(scanText({ percent: 7 })).toBe("7% of the transcripts indexed so far; these figures are still changing.");
     expect(scanText({ percent: null })).toMatch(/^Listing transcripts/);
   });

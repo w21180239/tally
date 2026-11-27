@@ -163,7 +163,7 @@ export const SCAN_STALE_MS = 60_000;
 
 /** The running scan's state, or null if idle, done or stale. */
 export function scanOf(p: ScanFile | null, now: number): ScanState | null {
-  if (p === null || now - p.updatedAt > SCAN_STALE_MS) return null;
+  if (p === null || !(now - p.updatedAt <= SCAN_STALE_MS)) return null;
   if (p.phase === "listing") return { percent: null };
   if (p.phase !== "current" && p.phase !== "day" && p.phase !== "month") return null;
   const share = p.bytesTotal > 0 ? p.bytesDone / p.bytesTotal : 0;

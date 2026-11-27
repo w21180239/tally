@@ -13,7 +13,7 @@ import { locate } from "../engine/locate.ts";
 import { recheckSoon } from "../engine/adopt.ts";
 import { syncHerdr } from "../engine/herdr.ts";
 import { REPORT_TOOL_FULL, argsOf, registerReportTool, reportCommand, reportText, snapshotSoon } from "../engine/report-tool.ts";
-import { resetSync, syncSoon } from "../engine/sync.ts";
+import { resetSync, runSync, syncSoon } from "../engine/sync.ts";
 import { syncExtra } from "../engine/sync-extra.ts";
 import { readLive, startLive, updatePrices, wireLive } from "../engine/live.ts";
 import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
@@ -24,7 +24,7 @@ import { drawBand, drawPane } from "../view/app.tsx";
 const RECHECK_DELAY_MS = 10_000;
 // The 24h snapshot slides with the clock even when a scan finds nothing new, so the owner refreshes it on this beat too.
 const SNAPSHOT_EVERY_MS = 600_000;
-const USAGE = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), report or debug";
+const USAGE = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), report, sync or debug";
 
 export const register: Register = (on, options) => {
   // A change in the config menu reloads the module with the new options, so this runs again.
@@ -158,7 +158,11 @@ export const register: Register = (on, options) => {
       return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now(), () => $.clock.sleep(0)) };
     }
     if (a.sub === "report") return { text: await reportCommand($, { ...(a.days !== undefined && { days: a.days }), ...(a.repo !== undefined && { repo: a.repo }) }) };
-    if (a.sub !== undefined) return { text: `/tally ${a.sub} is not available yet.` };
+    if (a.sub === "sync") {
+      if (settings.syncDir === "") return { text: "Sharing is off: set syncDir to a git-synced folder first." };
+      const r = await runSync($, settings, () => syncExtra($));
+      return { text: r.error === undefined ? `Synced; machines: ${r.machines.join(", ")}.` : `Sync failed: ${r.error}` };
+    }
 
     const hasSet = Object.keys(a.set).length > 0;
     const target = openTarget(e.args, a);

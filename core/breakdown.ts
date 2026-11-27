@@ -5,7 +5,6 @@ import { cacheUnitPrices, memoResolver } from "./pricing.ts";
 import type { PriceTable } from "./pricing.ts";
 import { STEP_ROWS } from "./steps.ts";
 import type { Steps } from "./steps.ts";
-import type { FlowItem } from "./flow.ts";
 import type { UsageRow } from "./types.ts";
 
 export type BreakdownSnapshot = {
@@ -117,17 +116,6 @@ export function* mcpSchemaSteps(rows: UsageRow[], snap: BreakdownSnapshot, price
     const read = cacheUnitPrices(r, prices, resolve).read;
     if (read === 0) continue;
     for (const [server, tokens] of resident) out[server] = (out[server] ?? 0) + tokens * read;
-  }
-  return out;
-}
-
-/** What re-reading each server's tool results cost, from the context flow's parts. */
-export function mcpResultUsd(flow: FlowItem[]): Record<string, number> {
-  const out = dict<number>();
-  for (const f of flow) {
-    if (f.source !== "mcp") continue;
-    const server = mcpServerOf(f.label);
-    if (server !== null) out[server] = (out[server] ?? 0) + f.rereadUsd;
   }
   return out;
 }

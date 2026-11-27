@@ -28,6 +28,11 @@ describe("parseLine usage", () => {
     expect(r.ts).toBe(TIME);
     expect(r.cwd).toBe("/work/demo");
   });
+  test("a cache write total above the split's parts leaves the remainder as 5m, like the live tally", () => {
+    const r = usage(parseLine(assistant({ usage: { cache_creation_input_tokens: 12, cache_creation: { ephemeral_5m_input_tokens: 4, ephemeral_1h_input_tokens: 5 } } }), ctx));
+    expect(r.tokens.cw5m).toBe(7);
+    expect(r.tokens.cw1h).toBe(5);
+  });
   test("without the split, all writes are 5m", () => {
     const r = usage(parseLine(assistant(), ctx));
     expect(r.tokens).toEqual({ input: 10, output: 20, cacheRead: 30, cw5m: 40, cw1h: 0 });

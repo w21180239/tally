@@ -4,7 +4,7 @@ import { LISTED, proxyNote, residentUsdPerToken, tokensText, usdText } from "./s
 
 /**
  * Floor on what the whole skill list costs to carry, in dollars, and on its part of all spend (strictly over); ceiling (exclusive) on the fraction of listed skills called in the span.
- * The share keeps the rule meaningful at any spend level: the list costs 1% to 4% of a span almost everywhere, so only an unusually heavy one passes 3%.
+ * The share keeps the rule meaningful at any spend level: only a list that is an unusually large part of a span passes 3%.
  */
 export const SKILL_CATALOG_MIN_USD = 1;
 export const SKILL_CATALOG_MIN_SHARE = 0.03;

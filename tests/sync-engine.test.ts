@@ -251,7 +251,30 @@ describe("runSync", () => {
     expect(r.world.text(`${SYNC}/tally/box-a.json`)).toBeDefined();
   });
 
-  test("with syncDir empty nothing is written and nothing runs", { options: { syncDir: "", machineName: "box-a" } }, async ($, on) => {
+  test("/tally sync runs one sync now and names the machines it saw", { options: { ...OPTS } }, async ($, on) => {
+    const r = rig(on);
+    putRemote(r.world, remoteFile());
+    await seedProject(r.world, "-work-demo", demoUsage());
+    await start($, r);
+    // The sync's time slicing sleeps on the manual clock, so the clock is driven until the command answers.
+    const asked = $.command.run({ command: "tally", args: "sync", origin: { kind: "composer" }, presentation: { isFullscreen: true, columns: 200 } });
+    await r.clock.advance(1000);
+    await r.clock.settle();
+    const out = await asked;
+    expect(r.world.text(`${SYNC}/tally/box-a.json`)).toBeDefined();
+    expect(out.text).toContain("box-a");
+    expect(out.text).toContain("box-b");
+  });
+
+  test("/tally sync with no sync folder says so and writes nothing", { options: { syncDir: "", machineName: "box-a" } }, async ($, on) => {
+    const r = rig(on);
+    await start($, r);
+    const out = await $.command.run({ command: "tally", args: "sync", origin: { kind: "composer" }, presentation: { isFullscreen: true, columns: 200 } });
+    expect(out.text).toContain("syncDir");
+    expect(r.events).toEqual([]);
+  });
+
+  test("with syncDir empty nothing is written and nothing runs",{ options: { syncDir: "", machineName: "box-a" } }, async ($, on) => {
     const r = rig(on);
     await settled($, r);
     expect(r.runs).toEqual([]);
