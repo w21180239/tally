@@ -8,6 +8,7 @@ import { readAgentStates, readContext, wantContext } from "../engine/context-vie
 import { readSession } from "../engine/session-view.ts";
 import { loadTranscript, needsTranscript, readTranscripts } from "../engine/subagent-transcript.ts";
 import { readHistory, readScanView, wantHistory } from "../engine/history-view.ts";
+import { needsHints, readHints, refreshHints } from "../engine/hints-view.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
 import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setCtxAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, setTranscript, showTab, toggleShown } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
@@ -21,6 +22,7 @@ import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineTe
 import type { KeyCtx } from "./keys.ts";
 import { drawContext } from "./tabs/context.tsx";
 import { drawHistory } from "./tabs/history.tsx";
+import { drawHints } from "./tabs/hints.tsx";
 import { drawSession } from "./tabs/session.tsx";
 import { drawUsage } from "./tabs/usage.tsx";
 import { tableOf } from "./table.ts";
@@ -36,8 +38,7 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
 
 // Until each tab has its own body: one dim line saying what it will hold.
-const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage" | "context" | "history">, string> = {
-  hints: "Ways to spend less.",
+const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage" | "context" | "history" | "hints">, string> = {
   help: "Keys, prices and settings.",
 };
 
@@ -249,10 +250,25 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     });
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
+  } else if (tab === "hints") {
+    const [live, data] = await Promise.all([readLive($), readHints($)]);
+    const want = { span, repoOnly: view.repoOnly, sessionId: live.sessionId };
+    // Stale findings, or those of another span or repo, are rebuilt off the draw; the tab shows what it has meanwhile.
+    if (needsHints(data, want, d.now)) inBackground($, () => refreshHints($, want));
+    const drawn = drawHints(t, {
+      d,
+      data,
+      want,
+      view: { shown: view.shown },
+      redact: settings.redactEvidence,
+      onShown: (key) => attempt($, () => toggleShown($, key)),
+    });
+    tabRows = drawn.rows;
+    Object.assign(ctx, drawn.ctx);
   } else {
     tabRows = [
       <Text key="placeholder" dimColor wrap="truncate-end">
-        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage" | "context" | "history">]}
+        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage" | "context" | "history" | "hints">]}
       </Text>,
     ];
   }
