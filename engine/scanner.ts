@@ -2,6 +2,7 @@ import { Ledger } from "../core/ledger.ts";
 import { agentIdOfPath, isSubagentPath, joinPath, sessionOfPath } from "../core/path.ts";
 import { DAY_MS, orderFiles, WINDOW_MS } from "../core/plan-scan.ts";
 import type { FileJob, Listing } from "../core/plan-scan.ts";
+import { INDEX_FORMAT } from "../core/shard.ts";
 import type { Shard, ShardFile } from "../core/shard.ts";
 import type { CompactRow, MetaRow, Parsed, UserRow } from "../core/types.ts";
 import { yieldNow } from "./clock.ts";
@@ -15,7 +16,7 @@ import { createSlicer } from "./slicer.ts";
 import type { Slicer } from "./slicer.ts";
 import { dayIdx, loadBuckets, saveBuckets } from "./project-store.ts";
 import type { SavePlan } from "./project-store.ts";
-import { shardSeq } from "./store-index.ts";
+import { loadAt, projectDir, shardSeq } from "./store-index.ts";
 import type { StoreEnv } from "./store-index.ts";
 
 export type { ScanProgress };
@@ -164,6 +165,8 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
   const seqs = new Map<string, number>();
   // Outlives the in-memory state, which is dropped once a project is clean.
   const lastSave = new Map<string, number>();
+  // Projects settleIdle found or gave an index this tenure.
+  const indexed = new Set<string>();
   // Bumped whenever the lease is lost: work that started under an earlier tenure drops its results.
   let epoch = 0;
 
@@ -196,8 +199,10 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     }
   }
 
-  async function listAll(slicer: Slicer): Promise<Listing[]> {
+  // Transcripts under the roots, plus the project folders listed (the names `listProjects` gives readers).
+  async function listAll(slicer: Slicer): Promise<{ files: Listing[]; projects: string[] }> {
     const out: Listing[] = [];
+    const projects: string[] = [];
     for (let i = 0; i < opts.roots.length; i++) {
       const tag = rootTag(i);
       const stack: { dir: string; project: string | null }[] = [{ dir: opts.roots[i], project: null }];
@@ -219,7 +224,10 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
           for (const e of entries) {
             if (e.isLink) continue;
             const path = joinPath(dir, e.name);
-            if (e.kind === "dir") stack.push({ dir: path, project: project ?? tag + e.name });
+            if (e.kind === "dir") {
+              if (project === null) projects.push(tag + e.name);
+              stack.push({ dir: path, project: project ?? tag + e.name });
+            }
             else if (e.kind === "file" && e.name.endsWith(".jsonl") && e.name !== SKIPPED) {
               out.push({ project: project ?? `${tag}_`, path, size: e.size, mtimeMs: e.mtimeMs });
             }
@@ -227,7 +235,39 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
         }
       }
     }
-    return out;
+    return { files: out, projects };
+  }
+
+  // A listed project whose window transcripts are all read but that has no index (none in the window, or no
+  // rows in them) gets an empty one, so readers count it read and empty rather than unread.
+  async function settleIdle(listed: string[], inWindow: FileJob[], slicer: Slicer): Promise<void> {
+    const tick = async () => {
+      if (!live()) throw new Error("lease lost");
+      await slicer.check();
+    };
+    const pending = new Set<string>();
+    for (const j of inWindow) if (known.get(j.path)?.key !== keyOf(j)) pending.add(j.project);
+    for (const project of listed) {
+      if (!live()) return;
+      const st = states.get(project);
+      if (pending.has(project) || indexed.has(project) || lastSave.has(project) || (st && anyDirty(st))) continue;
+      try {
+        const nowMs = await $.clock.now();
+        // The manifest alone answers "is there an index"; its buckets are not loaded.
+        if ((await loadAt($, projectDir(cfg, project), project, tick))?.fmt !== INDEX_FORMAT) {
+          await saveBuckets($, cfg, project, { days: new Map() }, {}, nowMs, tick);
+          try {
+            opts.onShardSaved(project);
+          } catch {
+            /* listener errors stay out of the scan */
+          }
+        }
+        indexed.add(project);
+      } catch {
+        /* retried next pass */
+      }
+      await slicer.check();
+    }
   }
 
   async function stateOf(project: string, slicer: Slicer): Promise<ProjState> {
@@ -465,9 +505,11 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     await emit(true);
     const listing = await listAll(slicer);
     const nowMs = await $.clock.now();
-    const jobs = orderFiles(listing, opts.currentProject, nowMs).filter((j) => known.get(j.path)?.key !== keyOf(j));
+    const inWindow = orderFiles(listing.files, opts.currentProject, nowMs);
+    const jobs = inWindow.filter((j) => known.get(j.path)?.key !== keyOf(j));
     if (jobs.length === 0) {
       await sweep(slicer);
+      await settleIdle(listing.projects, inWindow, slicer);
       progress = { ...progress, phase: "done" };
       if (quiet) progress = before;
       await emit(true);
@@ -500,6 +542,7 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     }
     if (!live() || ep !== epoch) return;
     await sweep(slicer);
+    await settleIdle(listing.projects, inWindow, slicer);
     progress = { ...progress, phase: "done" };
     await emit(true);
   }
@@ -571,6 +614,7 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
     states.clear();
     known.clear();
     lastSave.clear();
+    indexed.clear();
     seqs.clear();
     again = false;
     clearTimers();

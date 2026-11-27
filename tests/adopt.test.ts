@@ -166,13 +166,14 @@ const PANE: Omit<RenderInput<"Pane">, "surface"> = {
 };
 const TEXT = (re: RegExp) => ({ type: "Text" as const, text: re });
 
-type Rig = { world: World; clock: ReturnType<typeof mock.clock>; stored: Map<string, unknown>; toasts: string[] };
+// `unreadable`: paths whose reads fail, so the scanner never finishes them.
+type Rig = { world: World; clock: ReturnType<typeof mock.clock>; stored: Map<string, unknown>; toasts: string[]; unreadable: Set<string> };
 
 const usageOf = (): TurnUsage => ({ input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 100_000, cache_creation_input_tokens: 10_000, model: OPUS, ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 10_000 });
 
 function rig(on: On, stored: Map<string, unknown> = new Map()): Rig {
   const world = worldOf();
-  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), stored, toasts: [] };
+  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), stored, toasts: [], unreadable: new Set() };
   mock.env(on, { HOME: "/home/u" });
   on("store.get", (_, e) => ({ value: stored.get(e.key) }));
   on("store.set", (_, e) => {
@@ -197,7 +198,12 @@ function rig(on: On, stored: Map<string, unknown> = new Map()): Rig {
   on("session.model", () => ({ value: OPUS }));
   on("session.info", () => ({ value: { platform: "linux" } }));
   on("session.usage", () => ({ value: { startedAt: NOW, context: { tokens: 236_000, window: 1_000_000, percent: 24 }, rateLimits: [], cost: { usd: 0 } } as never }));
-  on("fs.read", async (_, e) => ({ value: await world.$.fs.read(e.path, { as: e.as, offset: e.offset, length: e.length } as never) }));
+  on("fs.read", async (_, e) => {
+    // The engine may hand over a drive-prefixed, backslashed path.
+    const p = e.path.replace(/\\/g, "/");
+    if ([...r.unreadable].some((u) => p.endsWith(u))) throw new Error("unreadable");
+    return { value: await world.$.fs.read(e.path, { as: e.as, offset: e.offset, length: e.length } as never) };
+  });
   on("fs.write", async (_, e) => ({ value: await world.$.fs.write(e.path, e.text) }));
   on("fs.list", async (_, e) => ({ value: await world.$.fs.list(e.path) }));
   on("fs.exists", async (_, e) => ({ value: await world.$.fs.exists(e.path) }));
@@ -339,11 +345,28 @@ describe("recheck", () => {
     const stored = new Map<string, unknown>([[ADOPTIONS_KEY, [due()]]]);
     const r = rig(on, stored);
     await seed(r.world);
-    r.world.put(`${CFG}/projects/-work-late/s-9.jsonl`, "");
+    // A transcript inside the window that the scan has not read.
+    const late = `${CFG}/projects/-work-late/s-9.jsonl`;
+    r.world.put(late, "{}\n");
+    r.world.setMtime(late, ago(1));
+    r.unreadable.add(late);
     await start($);
     await afterStart(r);
     expect(r.toasts).toEqual([]);
     expect(stored.get(CHECKED_KEY)).toBeUndefined();
+  });
+
+  test("a project whose only transcript is older than 30 days counts as read: the recheck runs", async ($, on) => {
+    const stored = new Map<string, unknown>([[ADOPTIONS_KEY, [due()]]]);
+    const r = rig(on, stored);
+    await seed(r.world);
+    const old = `${CFG}/projects/-work-old/s-8.jsonl`;
+    r.world.put(old, "");
+    r.world.setMtime(old, ago(40));
+    await start($);
+    await afterStart(r);
+    expect(r.toasts.length).toBe(1);
+    expect(stored.get(CHECKED_KEY)).toEqual([adoptionId(due())]);
   });
 
   test("one day short of due, or a rule with no metric: nothing", async ($, on) => {
