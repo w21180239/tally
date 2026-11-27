@@ -1,6 +1,11 @@
 // Hints: what a rule found, what it is worth and the evidence behind it. A rule reads one scope's figures and
 // returns zero or more hints; `runRules` ranks them. `redact` strips an evidence row for display or for a report.
+import type { BreakdownSnapshot } from "./breakdown.ts";
+import type { LiveState } from "./live-state.ts";
 import { baseName } from "./path.ts";
+import type { InstalledPlugin } from "./plugins.ts";
+import type { PriceTable } from "./pricing.ts";
+import { BASELINE_RULES } from "./rules/index.ts";
 import type { Summary } from "./summary.ts";
 
 export type EvidenceKind = "command" | "path" | "title" | "text";
@@ -12,7 +17,12 @@ export type Hint = {
   /** The rule's id, stable across runs: it names the hint in open rows and in adoption records. */
   rule: string;
   title: string;
+  /** Dollars at stake over the scope's span: what acting could save, or what the pattern costs when a rule has no price for the saving. 0 when no figure applies. */
   usd: number;
+  /** Sorted ahead of every amount: the finding is about now (a limit close to running out). */
+  urgent?: true;
+  /** `usd` is an estimate of a saving under a stated what-if (a cheaper model, no fast mode), not billed spend. */
+  projected?: true;
   summary: string;
   action: string;
   evidence: Evidence[];
@@ -23,13 +33,32 @@ export type Hint = {
   metric?: { name: string; value: number };
 };
 
-/** What a rule sees: the live session's figures (`session`) or those of the chosen span and repos (`span`). */
-export type HintInput = { scope: "session" | "span"; summary: Summary; nowMs: number };
+/** One rate-limit window: percent used (0 to 100) and the reset time (epoch ms). */
+export type LimitWindow = { percentUsed: number; resetsAt: number };
+export type RuleLimits = { fiveHour?: LimitWindow; sevenDay?: LimitWindow };
 
-export type HintRule = { id: string; run: (input: HintInput) => Hint[] };
+/**
+ * What a rule sees: the live session's figures (`session`) or those of the chosen span and repos (`span`), the
+ * breakdown snapshots, the installed plugins, the last known limits, the prices and the clock. `window` is the model's context size
+ * in tokens when the engine reported it; rules assume 1M otherwise.
+ */
+export type HintInput = {
+  scope: "session" | "span";
+  summary: Summary;
+  live?: LiveState;
+  snaps: BreakdownSnapshot[];
+  plugins: InstalledPlugin[];
+  limits?: RuleLimits;
+  prices: PriceTable;
+  window?: number;
+  nowMs: number;
+};
 
-/** Costliest first; equal amounts by rule id, so the order never depends on registration order. */
-export const sortHints = (hints: Hint[]): Hint[] => [...hints].sort((a, b) => b.usd - a.usd || (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0));
+/** `run` returns the rule's hints; `metric` is the figure an adopted hint is later checked against (see `Hint.metric`). */
+export type HintRule = { id: string; run: (input: HintInput) => Hint[]; metric?: (input: HintInput) => number };
+
+/** Urgent hints first, then costliest first; equal amounts by rule id, so the order never depends on registration order. */
+export const sortHints = (hints: Hint[]): Hint[] => [...hints].sort((a, b) => Number(b.urgent === true) - Number(a.urgent === true) || b.usd - a.usd || (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0));
 
 /** Awaited between rules so a long list never holds one slice; the engine passes its own, the default does not wait. */
 export type Tick = () => Promise<void>;
@@ -115,26 +144,5 @@ export function redact(e: Evidence, on: boolean): Evidence {
   }
 }
 
-const PLACEHOLDER_HINTS = 3;
-
-// Stands in until the real rules land (Task 6.x), so the tab has something to draw: one hint per costliest session.
-export const PLACEHOLDER_RULE: HintRule = {
-  id: "placeholder",
-  run: ({ summary }) =>
-    summary.topSessions.slice(0, PLACEHOLDER_HINTS).map((s) => ({
-      rule: `placeholder-${s.sessionId}`,
-      title: `Placeholder hint for ${s.repo}`,
-      usd: s.usd,
-      summary: "A stand-in finding: this session is among the costliest.",
-      action: "No action yet; real rules replace this one.",
-      evidence: [
-        ...(s.title === undefined || s.title === "" ? [] : [{ label: "Session", detail: s.title, kind: "title" as const }]),
-        { label: "Resume", detail: s.resume, kind: "command" as const },
-        { label: "First request", detail: new Date(s.started).toISOString().slice(0, 10), kind: "text" as const },
-      ],
-      short: "placeholder",
-    })),
-};
-
-/** The registered rules; the engine runs whatever this holds. Real rules are added here and the placeholder dropped. */
-export const HINT_RULES: HintRule[] = [PLACEHOLDER_RULE];
+/** The registered rules; the engine runs whatever this holds. */
+export const HINT_RULES: HintRule[] = BASELINE_RULES;

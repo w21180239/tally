@@ -1,4 +1,5 @@
 // What the window draws from, as plain data: built once per drawing from the live atom, the foot and the chart.
+import type { Hint } from "../core/hint.ts";
 import type { LiveState } from "../core/live-state.ts";
 import { formatMoney } from "../core/money.ts";
 import { totalUsd } from "../core/where.ts";
@@ -20,8 +21,14 @@ export type Foot = {
 /** The last 8 hours' token totals, oldest first, and the rank bands that turn them into glyphs. */
 export type Chart = { values: number[]; bands: number[] };
 
-/** The top hint of this session in short words (set by the rules; none until they exist). */
+/** The top hint of this session in short words: what was found, and its amount (`~` before a projected one). */
 export type HintGlance = { found: string; saving: string | null };
+
+/** A hint's amount, led by `~` for an estimated saving. */
+export const amountText = (hint: Pick<Hint, "usd" | "projected">, s: Pick<Settings, "money" | "decimals">): string => `${hint.projected === true ? "~" : ""}${formatMoney(hint.usd, s.money, s.decimals)}`;
+
+/** `hint` in the one-line forms (fold, card, Session tab); no amount when the rule priced none. */
+export const glanceOf = (hint: Hint, s: Pick<Settings, "money" | "decimals">): HintGlance => ({ found: hint.short, saving: hint.usd > 0 ? amountText(hint, s) : null });
 
 export type Cache = { leftMs: number; lifeMs: number; isExpired: boolean; refillUsd: number | null };
 

@@ -9,7 +9,7 @@ import type { Span } from "../../core/summary.ts";
 import { hintsKeyOf } from "../../engine/hints-view.ts";
 import type { HintsData, HintsWant } from "../../engine/hints-view.ts";
 import type { RemotesView } from "../../engine/sync.ts";
-import { moneyOf } from "../data.ts";
+import { amountText } from "../data.ts";
 import type { WindowData } from "../data.ts";
 import type { KeyCtx } from "../keys.ts";
 import { blank, textLines, title } from "../rows.tsx";
@@ -65,7 +65,7 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
     if (hints.length === 0) out.push(<Text key={`none-${scope}`} dimColor wrap="truncate-end">{none}</Text>);
     for (const hint of hints) {
       const key = hintRowKey(scope, hint.rule);
-      out.push(title(t, key, hint.title, hint.confidence === "low" ? "low confidence" : undefined, moneyOf(d, hint.usd)));
+      out.push(title(t, key, hint.title, hint.confidence === "low" ? "low confidence" : undefined, hint.usd > 0 ? amountText(hint, d) : undefined));
       out.push(textLines(t, `${key}-summary`, hint.summary, SUMMARY_LINES));
       out.push(
         <Box key={`${key}-action`} flexDirection="row" columnGap={1} paddingLeft={2}>

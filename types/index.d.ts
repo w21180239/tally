@@ -1,5 +1,5 @@
 // The values tally keeps in `$.state`, as the engine's plugin contract.
-// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts, SessionData in engine/session-view.ts, UsageData in engine/usage-view.ts, HistoryData in core/history.ts, HintsData in engine/hints-view.ts, HelpData in engine/help-view.ts, Hint in core/hint.ts, ScanView in engine/history-view.ts, RemotesView in engine/sync.ts, ContextData in core/context.ts, AgentStates in engine/context-view.ts, Transcripts in engine/subagent-transcript.ts; keep them in step.
+// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts, SessionData in engine/session-view.ts, UsageData in engine/usage-view.ts, HistoryData in core/history.ts, HintsData and TopHint in engine/hints-view.ts, HelpData in engine/help-view.ts, Hint in core/hint.ts, ScanView in engine/history-view.ts, RemotesView in engine/sync.ts, ContextData in core/context.ts, AgentStates in engine/context-view.ts, Transcripts in engine/subagent-transcript.ts; keep them in step.
 
 export interface TallyTokens {
   input: number;
@@ -204,6 +204,8 @@ export interface TallyHint {
   rule: string;
   title: string;
   usd: number;
+  urgent?: true;
+  projected?: true;
   summary: string;
   action: string;
   evidence: TallyEvidence[];
@@ -238,6 +240,12 @@ export interface TallyRemotes {
   machines: Array<{ machine: string; detail: "numbers" | "repos" | "full"; writtenAt: number; hints?: TallyHint[]; hintsDropped: boolean }>;
 }
 
+export interface TallyTopHint {
+  sessionId: string;
+  at: number;
+  hint: TallyHint | null;
+}
+
 export interface TallyChart {
   values: number[];
   bands: number[];
@@ -257,6 +265,7 @@ declare module "claude-code" {
       hints: Shaped<TallyHints>;
       help: Shaped<TallyHelp>;
       remotes: Shaped<TallyRemotes>;
+      "top-hint": Shaped<TallyTopHint>;
       context: Shaped<TallyContext>;
       "context-agents": Shaped<TallyAgentStates>;
       transcripts: Shaped<TallyTranscripts>;

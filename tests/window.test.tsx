@@ -721,3 +721,42 @@ describe("window: background work never rejects unhandled", () => {
     expect(r.toasts).toHaveLength(1);
   });
 });
+
+// One fast request of session s-1 half an hour ago: (1000*4 + 100000*20 + 100000*0.2) / 1e6 * 2 = 4.048 dollars, half of it saved by fast mode off.
+async function seedFast(w: World): Promise<void> {
+  const row = { ...req({ id: "f", at: NOW - T0 - 30 * 60_000, session: "s-1", cwd: CWD, tokens: { input: 1000, output: 100_000, cacheRead: 100_000 } }), fast: true, replyChars: 400_000 };
+  const shard: Shard = { v: 1, project: PROJECT, files: {}, usage: [row], users: [], metas: [], compacts: [], snapshots: [] };
+  await saveBuckets(w.$, CFG, PROJECT, { days: new Map([[dayIdx(row.ts), shard]]) }, {}, NOW);
+  w.put(`${CFG}/projects/${PROJECT}/s-1.jsonl`, "");
+}
+
+describe("window: the leading hint", () => {
+  const HINT = "\u{25b2} fast mode 100% of spend \u{b7} ~$2.02";
+
+  test("fold line and Session tab carry the live session's leading hint and its estimated saving", async ($, on) => {
+    const world = worldOf();
+    await seedFast(world);
+    const r = rig(on, { mode: "folded" }, world);
+    await start($);
+    await r.clock.settle();
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    await r.clock.settle();
+    expect((await band.find({ key: "tally-fold" }))?.props.label).toContain(HINT);
+    await band.unmount();
+    const pane = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await r.clock.settle();
+    expect(await pane.find(TEXT(new RegExp(`^${HINT.replace(/[$~.]/g, "\\$&")}$`)))).toBeDefined();
+    expect(await pane.find(TEXT(/^No hint for this session yet\.$/))).toBeUndefined();
+    await pane.unmount();
+  });
+
+  test("a session that raises no hint leaves the fold line without one", async ($, on) => {
+    const r = rig(on, { mode: "folded" });
+    await start($);
+    await r.clock.settle();
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    await r.clock.settle();
+    expect((await band.find({ key: "tally-fold" }))?.props.label).not.toContain("\u{25b2}");
+    await band.unmount();
+  });
+});

@@ -1,7 +1,7 @@
 import type { On, RenderInput, TurnStepResult, TurnUsage } from "claude-code";
 import type { Engine } from "claude-code/testing";
 import { describe, expect, mock, test } from "claude-code/testing";
-import { HINT_RULES, PLACEHOLDER_RULE, redact, runRules, sortHints } from "../core/hint.ts";
+import { redact, runRules, sortHints } from "../core/hint.ts";
 import type { Evidence, Hint, HintRule } from "../core/hint.ts";
 import { costOf } from "../core/pricing.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
@@ -11,7 +11,10 @@ import type { Shard } from "../core/shard.ts";
 import type { UsageRow, UserRow } from "../core/types.ts";
 import { EMPTY_HINTS, HINTS_INTERVAL_MS, HINTS_RETRY_MS, hintsKeyOf, needsHints } from "../engine/hints-view.ts";
 import type { HintsData, HintsWant } from "../engine/hints-view.ts";
+import { LAST_LIMITS_KEY } from "../engine/live.ts";
+import { registryPath } from "../engine/plugins.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
+import { saveSnapshot } from "../engine/snapshot.ts";
 import { keyLine } from "../view/keys.ts";
 import { tableOf } from "../view/table.ts";
 import { drawHints } from "../view/tabs/hints.tsx";
@@ -36,14 +39,14 @@ const TEXT = (re: RegExp) => ({ type: "Text" as const, text: re });
 const money = (usd: number): string => formatMoney(usd, DEFAULT_SETTINGS.money, DEFAULT_SETTINGS.decimals);
 const exact = (s: string): RegExp => new RegExp(`^${s.replace(/[$.*+?^${}()|[\]\\]/g, "\\$&")}$`);
 
-type Rig = { world: World; clock: ReturnType<typeof mock.clock>; cwd: { v: unknown } };
+type Rig = { world: World; clock: ReturnType<typeof mock.clock>; cwd: { v: unknown }; stored: Map<string, unknown> };
 
 const usageOf = (): TurnUsage => ({ input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 100_000, cache_creation_input_tokens: 10_000, model: OPUS, ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 10_000 });
 
 function rig(on: On): Rig {
   const world = worldOf();
   const stored = new Map<string, unknown>();
-  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), cwd: { v: CWD } };
+  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), cwd: { v: CWD }, stored };
   mock.env(on, { HOME: "/home/u" });
   on("store.get", (_, e) => ({ value: stored.get(e.key) }));
   on("store.set", (_, e) => {
@@ -86,22 +89,32 @@ const start = ($: Engine) => $.session.start({ cwd: CWD, surface: "terminal", is
 const ago = (days: number, min = 0): number => NOW - days * DAY + min * 60_000;
 const at = <T extends { ts: number }>(row: T, ts: number): T => ({ ...row, ts });
 
-// Demo repo: s-1 half a day ago (titled) and the small s-3 just after it. Other repo: s-2 three days ago, the costliest.
+// Demo repo: s-1 half a day ago (titled), one fast request worth 4.048 dollars, and the small s-3 just after it.
+// Other repo: s-2 three days ago, a small request and then a 150k-token cache write two hours later (a 1.20 dollar rebuild).
 const demoRows = (): { usage: UsageRow[]; users: UserRow[] } => ({
   usage: [
-    at(req({ id: "a", at: 0, session: "s-1", cwd: CWD, tokens: { input: 1000, output: 500, cacheRead: 100_000 } }), ago(0.5)),
+    { ...at(req({ id: "a", at: 0, session: "s-1", cwd: CWD, tokens: { input: 1000, output: 100_000, cacheRead: 100_000 } }), ago(0.5)), fast: true, replyChars: 400_000 },
     at(req({ id: "b", at: 0, session: "s-3", cwd: CWD, tokens: { input: 100 } }), ago(0.5, 30)),
   ],
   users: [at(prompt(0, 200, "build it", "s-1"), ago(0.5)), at(prompt(0, 50, "tiny", "s-3"), ago(0.5, 30))],
 });
+// s-1 also grows to a 750k-token prompt, so long-session names it.
+const longDemoRows = (): { usage: UsageRow[]; users: UserRow[] } => {
+  const base = demoRows();
+  return { usage: [...base.usage, at(req({ id: "d", at: 0, session: "s-1", cwd: CWD, tokens: { input: 750_000 } }), ago(0.5, 5))], users: base.users };
+};
 const otherRows = (): { usage: UsageRow[]; users: UserRow[] } => ({
-  usage: [at(req({ id: "c", at: 0, session: "s-2", cwd: "/work/other", tokens: { input: 5000, output: 2000, cacheRead: 4_000_000 } }), ago(3))],
+  usage: [
+    at(req({ id: "c1", at: 0, session: "s-2", cwd: "/work/other", tokens: { input: 5000, output: 2000 } }), ago(3)),
+    at(req({ id: "c2", at: 0, session: "s-2", cwd: "/work/other", tokens: { input: 100, cw1h: 150_000 } }), ago(3, 120)),
+  ],
   users: [at(prompt(0, 100, "other", "s-2"), ago(3))],
 });
 const usdOf = (rows: UsageRow[]): number => rows.reduce((n, row) => n + costOf(row, BUILTIN_PRICES).usd, 0);
-const S1 = (): number => usdOf(demoRows().usage.slice(0, 1));
-const S3 = (): number => usdOf(demoRows().usage.slice(1));
-const S2 = (): number => usdOf(otherRows().usage);
+// Hand-computed: a = (1000*4 + 100000*20 + 100000*0.2) / 1e6 * 2 = 4.048; fast mode saves half. c2 = 150000 * 8 / 1e6 = 1.2.
+const FAST_USD = 4.048;
+const FAST_SAVING = 2.024;
+const REBUILD_USD = 1.2;
 
 async function seedProject(w: World, project: string, rows: { usage: UsageRow[]; users: UserRow[] }, metas: Shard["metas"] = []): Promise<void> {
   const byDay = new Map<number, Shard>();
@@ -118,8 +131,8 @@ async function seedProject(w: World, project: string, rows: { usage: UsageRow[];
   w.put(`${CFG}/projects/${project}/${rows.usage[0]!.sessionId}.jsonl`, "");
 }
 
-async function open($: Engine, r: Rig, o: { other?: boolean } = {}) {
-  await seedProject(r.world, "-work-demo", demoRows(), [{ sessionId: "s-1", key: "ai-title", value: "Fix the widget" }]);
+async function open($: Engine, r: Rig, o: { other?: boolean; long?: boolean } = {}) {
+  await seedProject(r.world, "-work-demo", o.long === true ? longDemoRows() : demoRows(), [{ sessionId: "s-1", key: "ai-title", value: "Fix the widget" }]);
   if (o.other !== false) await seedProject(r.world, "-work-other", otherRows());
   await start($);
   await r.clock.settle();
@@ -249,6 +262,10 @@ describe("hint ranking", () => {
     expect(sortHints([hintOf("b", 1), hintOf("c", 5), hintOf("a", 1), hintOf("d", 0)]).map((h) => h.rule)).toEqual(["c", "a", "b", "d"]);
   });
 
+  test("an urgent hint leads whatever the amounts", () => {
+    expect(sortHints([hintOf("b", 9), hintOf("z", 0, { urgent: true }), hintOf("a", 1, { urgent: true })]).map((h) => h.rule)).toEqual(["a", "z", "b"]);
+  });
+
   test("runRules joins every rule's hints ranked, and skips a rule that throws", async () => {
     const boom: HintRule = {
       id: "boom",
@@ -256,13 +273,13 @@ describe("hint ranking", () => {
         throw new Error("rule bug");
       },
     };
-    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never };
+    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
     expect((await runRules([ruleOf([hintOf("low", 1)]), boom, ruleOf([hintOf("high", 9)])], input)).map((h) => h.rule)).toEqual(["high", "low"]);
     expect(await runRules([], input)).toEqual([]);
   });
 
   test("runRules yields to the caller between rules", async () => {
-    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never };
+    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
     const log: string[] = [];
     const rule = (id: string): HintRule => ({ id, run: () => (log.push(`run ${id}`), []) });
     await runRules([rule("a"), rule("b"), rule("c")], input, async () => void log.push("tick"));
@@ -270,18 +287,9 @@ describe("hint ranking", () => {
   });
 
   test("runRules keeps the costlier hint when two share a rule id", async () => {
-    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never };
+    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
     const found = await runRules([ruleOf([hintOf("x", 2, { title: "small" }), hintOf("y", 1), hintOf("x", 7, { title: "big" })]), ruleOf([hintOf("x", 7, { title: "later tie" })])], input);
     expect(found.map((h) => [h.rule, h.usd, h.title])).toEqual([["x", 7, "big"], ["y", 1, "Title of y"]]);
-  });
-
-  test("the shipped registry holds the placeholder rule: a hint per costliest session, at most three", () => {
-    expect(HINT_RULES).toContain(PLACEHOLDER_RULE);
-    expect(PLACEHOLDER_RULE.run({ scope: "span", nowMs: NOW, summary: { topSessions: [] } as never })).toEqual([]);
-    const top = (n: number) => ({ sessionId: `s${n}`, repo: "r", started: 0, usd: n, resume: `claude --resume s${n}` });
-    const hints = PLACEHOLDER_RULE.run({ scope: "span", nowMs: NOW, summary: { topSessions: [top(4), top(3), top(2), top(1)] } as never });
-    expect(hints.map((h) => [h.rule, h.usd])).toEqual([["placeholder-s4", 4], ["placeholder-s3", 3], ["placeholder-s2", 2]]);
-    expect(hints[0]?.evidence.map((e) => e.kind)).toEqual(["command", "text"]);
   });
 });
 
@@ -313,15 +321,25 @@ describe("hints tab", () => {
     expect(await ui.find({ key: "body-hints" })).toBeDefined();
     expect(await ui.find(TEXT(exact("Current session")))).toBeDefined();
     expect(await ui.find(TEXT(exact("Past 30 days")))).toBeDefined();
-    expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|placeholder-s-1"]);
-    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|placeholder-s-2", "title-hint|span|placeholder-s-1", "title-hint|span|placeholder-s-3"]);
-    expect(S2()).toBeGreaterThan(S1());
-    expect(S1()).toBeGreaterThan(S3());
-    for (const usd of [S1(), S2(), S3()]) expect(await ui.find(TEXT(exact(money(usd))))).toBeDefined();
-    expect(await ui.find(TEXT(exact("Placeholder hint for other")))).toBeDefined();
-    expect((await ui.findAll(TEXT(exact("Placeholder hint for demo")))).length).toBe(3);
-    expect((await ui.findAll(TEXT(/^A stand-in finding/))).length).toBe(4);
-    expect((await ui.findAll(TEXT(/^No action yet; real rules replace this one\.$/))).length).toBe(4);
+    expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|fast-mode"]);
+    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode", "title-hint|span|cache-rebuilt"]);
+    // Fast mode's amount is a projected saving (half the fast cost, marked "~"); the rebuild's is the measured cost.
+    expect(Math.round(usdOf(demoRows().usage.slice(0, 1)) * 1e6) / 1e6).toBe(FAST_USD);
+    expect((await ui.findAll(TEXT(exact(`~${money(FAST_SAVING)}`)))).length).toBe(2);
+    expect(await ui.find(TEXT(exact(money(REBUILD_USD))))).toBeDefined();
+    expect((await ui.findAll(TEXT(exact("Fast mode drives a big part of the bill")))).length).toBe(2);
+    expect(await ui.find(TEXT(exact("Cache rewritten after idle gaps")))).toBeDefined();
+    expect((await ui.findAll(TEXT(/^Fast-mode requests account for /))).length).toBe(2);
+    expect((await ui.findAll(TEXT(/^Switch \/fast off by default/))).length).toBe(2);
+    await ui.unmount();
+  });
+
+  test("a hint with no dollar figure shows no amount, and a projected one is marked", async ($, on) => {
+    hintsHost(on, { span: [hintOf("none", 0), hintOf("exact", 3), hintOf("projected", 2, { projected: true })] });
+    const ui = await mountHost($);
+    expect(await ui.find(TEXT(exact(money(3))))).toBeDefined();
+    expect(await ui.find(TEXT(exact(`~${money(2)}`)))).toBeDefined();
+    expect(await ui.find(TEXT(exact(money(0))))).toBeUndefined();
     await ui.unmount();
   });
 
@@ -332,74 +350,96 @@ describe("hints tab", () => {
     expect(await ui.find(TEXT(exact("all repos")))).toBeDefined();
     await ui.press({ key: "repo-only" });
     await r.clock.settle();
-    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|placeholder-s-1", "title-hint|span|placeholder-s-3"]);
-    expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|placeholder-s-1"]);
+    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode"]);
+    expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|fast-mode"]);
     expect(await ui.find(TEXT(exact("demo")))).toBeDefined();
     expect(await ui.find(TEXT(exact("all repos")))).toBeUndefined();
     await ui.press({ key: "repo-all" });
     await r.clock.settle();
-    expect((await boxKeys(ui, "title-hint|span|")).length).toBe(3);
+    expect((await boxKeys(ui, "title-hint|span|")).length).toBe(2);
     await ui.unmount();
   });
 
-  test("the span switch offers 24 hours and 30 days; 24 hours leaves out a session from three days ago", async ($, on) => {
+  test("the span switch has 24h and 30d; 24h drops the rebuild made three days back", async ($, on) => {
     const r = rig(on);
     const ui = await open($, r);
     expect(await ui.find({ key: "span-session" })).toBeUndefined();
     expect((await ui.find({ key: "span-30d" }))?.props.variant).toBe("primary");
-    expect((await boxKeys(ui, "title-hint|span|")).length).toBe(3);
+    expect((await boxKeys(ui, "title-hint|span|")).length).toBe(2);
     await ui.press({ key: "span-24h" });
     await r.clock.settle();
     expect(await ui.find(TEXT(exact("Past 24 hours")))).toBeDefined();
-    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|placeholder-s-1", "title-hint|span|placeholder-s-3"]);
+    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode"]);
     await ui.unmount();
   });
 
   test("evidence is folded until its row is pressed; an open row is keyed by scope and rule and survives span and repo switches", async ($, on) => {
     const r = rig(on);
     const ui = await open($, r);
-    // The untitled sessions have no title row: two rows of evidence, the titled one three.
-    expect(await ui.find(TEXT(/^Resume \u{b7} /u))).toBeUndefined();
-    expect((await ui.findAll({ type: "Button" })).filter((b) => String(b.props.key).startsWith("open-hint|")).map((b) => b.props.label)).toEqual(["3", "2", "3", "2"].map((n) => `show evidence (${n})`));
-    await ui.press({ key: "open-hint|span|placeholder-s-1" });
+    expect(await ui.find(TEXT(/^Fast requests \u{b7} /u))).toBeUndefined();
+    expect((await ui.findAll({ type: "Button" })).filter((b) => String(b.props.key).startsWith("open-hint|")).map((b) => b.props.label)).toEqual(["show evidence (1)", "show evidence (1)", "show evidence (1)"]);
+    await ui.press({ key: "open-hint|span|fast-mode" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Resume \u{b7} claude --resume s-1")))).toBeDefined();
-    expect(await ui.find(TEXT(exact("Session \u{b7} Fix the widget")))).toBeDefined();
-    expect(await ui.find(TEXT(exact("First request \u{b7} 2026-11-27")))).toBeDefined();
-    expect((await ui.find({ key: "open-hint|span|placeholder-s-1" }))?.props.label).toBe("hide evidence (3)");
+    expect(await ui.find(TEXT(exact("Fast requests \u{b7} 1 request, $4.05")))).toBeDefined();
+    expect((await ui.find({ key: "open-hint|span|fast-mode" }))?.props.label).toBe("hide evidence (1)");
     // The session block's row of the same rule is its own row and stays folded.
-    expect((await ui.findAll(TEXT(/^Resume \u{b7} /u))).length).toBe(1);
+    expect((await ui.findAll(TEXT(/^Fast requests \u{b7} /u))).length).toBe(1);
     await ui.press({ key: "span-24h" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Resume \u{b7} claude --resume s-1")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Fast requests \u{b7} 1 request, $4.05")))).toBeDefined();
     await ui.press({ key: "repo-only" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Resume \u{b7} claude --resume s-1")))).toBeDefined();
-    await ui.press({ key: "open-hint|span|placeholder-s-1" });
+    expect(await ui.find(TEXT(exact("Fast requests \u{b7} 1 request, $4.05")))).toBeDefined();
+    await ui.press({ key: "open-hint|span|fast-mode" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(/^Resume \u{b7} /u))).toBeUndefined();
+    expect(await ui.find(TEXT(/^Fast requests \u{b7} /u))).toBeUndefined();
+    await ui.unmount();
+  });
+
+  test("a rebuild's evidence names its day, size, pause and cost", async ($, on) => {
+    const r = rig(on);
+    const ui = await open($, r);
+    await ui.press({ key: "open-hint|span|cache-rebuilt" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(exact("Rebuild \u{b7} 2026-11-24, 150k tokens after 2h 00m idle, $1.20")))).toBeDefined();
     await ui.unmount();
   });
 
   test("redactEvidence off shows the evidence as found", { options: { redactEvidence: false } }, async ($, on) => {
     const r = rig(on);
-    const ui = await open($, r);
-    await ui.press({ key: "open-hint|span|placeholder-s-1" });
+    const ui = await open($, r, { long: true });
+    await ui.press({ key: "open-hint|span|long-session" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Resume \u{b7} claude --resume s-1")))).toBeDefined();
     expect(await ui.find(TEXT(exact("Session \u{b7} Fix the widget")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Peak context \u{b7} 750k of 1M tokens (75%)")))).toBeDefined();
     await ui.unmount();
   });
 
-  test("redactEvidence on shows a command as its program, a title as its label alone, and a text row whole", { options: { redactEvidence: true } }, async ($, on) => {
+  test("redactEvidence on empties a title to its label and leaves a text row whole", { options: { redactEvidence: true } }, async ($, on) => {
     const r = rig(on);
-    const ui = await open($, r);
-    await ui.press({ key: "open-hint|span|placeholder-s-1" });
+    const ui = await open($, r, { long: true });
+    await ui.press({ key: "open-hint|span|long-session" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Resume \u{b7} claude")))).toBeDefined();
     expect(await ui.find(TEXT(exact("Session")))).toBeDefined();
-    expect(await ui.find(TEXT(exact("First request \u{b7} 2026-11-27")))).toBeDefined();
-    expect(await ui.find(TEXT(/--resume|Fix the widget/))).toBeUndefined();
+    expect(await ui.find(TEXT(exact("Peak context \u{b7} 750k of 1M tokens (75%)")))).toBeDefined();
+    expect(await ui.find(TEXT(/Fix the widget/))).toBeUndefined();
+    await ui.unmount();
+  });
+
+  test("installed plugins, breakdown snapshots and the last limits reach the rules", async ($, on) => {
+    const r = rig(on);
+    r.world.put(registryPath(CFG), JSON.stringify({ version: 2, plugins: { "idle@m": [{ scope: "user", installPath: "/p/idle" }] } }));
+    await saveSnapshot(r.world.$, CFG, "-work-demo", { sessionId: "s-1", ts: ago(0.5), skills: { "idle:thing": 2000 }, mcp: {}, agents: {}, memory: {}, system: 0, tools: 0 });
+    r.stored.set(LAST_LIMITS_KEY, { at: NOW, limits: [{ kind: "five_hour", percentUsed: 91, resetsAt: new Date(NOW + 3_600_000).toISOString() }] });
+    const ui = await open($, r);
+    // Session: the limit leads (about now, no amount), then fast mode 2.02, then the plugin's 2000 tokens on one request.
+    expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|near-limit", "title-hint|session|fast-mode", "title-hint|session|unused-plugin"]);
+    // The span block carries no limit hint: the limits belong to the live session.
+    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode", "title-hint|span|cache-rebuilt", "title-hint|span|unused-plugin"]);
+    expect(await ui.find(TEXT(exact("Usage limit running low")))).toBeDefined();
+    await ui.press({ key: "open-hint|session|near-limit" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(exact("5-hour window \u{b7} 91% used, resets in 1h 00m")))).toBeDefined();
     await ui.unmount();
   });
 
@@ -421,7 +461,7 @@ describe("hints tab", () => {
     r.world.put(`${CFG}/projects/-work-late/s-9.jsonl`, "");
     const ui = await open($, r);
     expect(await ui.find(TEXT(exact("1 project is not indexed yet; hints may be missing.")))).toBeDefined();
-    expect((await boxKeys(ui, "title-hint|span|")).length).toBe(3);
+    expect((await boxKeys(ui, "title-hint|span|")).length).toBe(2);
     await ui.unmount();
   });
 

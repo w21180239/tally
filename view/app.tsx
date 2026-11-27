@@ -9,7 +9,7 @@ import { readSession } from "../engine/session-view.ts";
 import { loadTranscript, needsTranscript, readTranscripts } from "../engine/subagent-transcript.ts";
 import { readHistory, readScanView, wantHistory } from "../engine/history-view.ts";
 import { needsHelp, readHelp, refreshHelp } from "../engine/help-view.ts";
-import { needsHints, readHints, refreshHints } from "../engine/hints-view.ts";
+import { needsHints, needsTop, readHints, readTopHint, refreshHints, refreshTop } from "../engine/hints-view.ts";
 import { needsRemotes, readRemotes, refreshRemotes } from "../engine/sync.ts";
 import { currentPrices, lastPriceError } from "../engine/price-update.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
@@ -18,7 +18,7 @@ import { drawInfoRow } from "./desktop-row.tsx";
 import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
 import { readLive } from "../engine/live.ts";
-import { glanceLines, moneyOf, windowData } from "./data.ts";
+import { glanceLines, glanceOf, moneyOf, windowData } from "./data.ts";
 import type { WindowData } from "./data.ts";
 import { layoutOf } from "./layout.ts";
 import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
@@ -35,8 +35,11 @@ import { SEP } from "./theme.ts";
 
 /** Everything a drawing reads, built from the atoms and the clock. */
 async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "decimals">): Promise<WindowData> {
-  const [live, foot, chart, now] = await Promise.all([readLive($), readFoot($), readChart($), $.clock.now()]);
-  return windowData({ live, foot, chart, settings, now });
+  const [live, foot, chart, top, now] = await Promise.all([readLive($), readFoot($), readChart($), readTopHint($), $.clock.now()]);
+  // The session's leading hint is rebuilt off the draw once it is stale; until then the line shows none.
+  if (needsTop(top, live.sessionId, now)) inBackground($, () => refreshTop($, live.sessionId));
+  const hint = top.sessionId === live.sessionId && top.hint !== null ? glanceOf(top.hint, settings) : null;
+  return windowData({ live, foot, chart, hint, settings, now });
 }
 
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
