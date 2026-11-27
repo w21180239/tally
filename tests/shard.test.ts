@@ -19,7 +19,7 @@ const usage = (i: number, ts = 1_000_000 + i): UsageRow => ({
   synthetic: i % 5 === 0,
   thinkingChars: 6,
   replyChars: 7,
-  tools: i % 4 === 0 ? [{ name: "Bash", command: "ls", inputChars: 2 }] : [],
+  tools: i % 4 === 0 ? [{ name: "Bash", command: "ls", inputChars: 2, id: "toolu_1" }, { name: "Read", target: "/p/a/x", inputChars: 3, whole: true }] : [],
   ...(i % 2 ? { cwd: "/p/a", skill: "sk" } : { plugin: "pl", effort: "high" }),
 });
 const shard = (n = 3): Shard => ({
@@ -27,7 +27,10 @@ const shard = (n = 3): Shard => ({
   project: "demo",
   files: { "/p/a/s-0.jsonl": { size: 10, mtimeMs: 5, offset: 10, isSub: false, sessionId: "s-0" }, "/p/a/s-1.jsonl": { size: 1, mtimeMs: 6, offset: 1, isSub: true, agentType: "x", sessionId: "s-1" } },
   usage: Array.from({ length: n }, (_, i) => usage(i)),
-  users: [{ sessionId: "s-0", ts: 1_000_001, kind: "prompt", chars: 4, text: "h\u00e9llo" }],
+  users: [
+    { sessionId: "s-0", ts: 1_000_001, kind: "prompt", chars: 4, text: "h\u00e9llo" },
+    { sessionId: "s-0", ts: 1_000_002, kind: "toolResult", chars: 9, toolUseId: "t1", results: [{ toolUseId: "t1", chars: 9 }], sidechain: true },
+  ],
   metas: [{ sessionId: "s-0", key: "ai-title", value: "T" }],
   compacts: [{ sessionId: "s-0", ts: 1_000_002 }],
   snapshots: [{ ts: 1_000_003, a: [1, 2] }],

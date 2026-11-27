@@ -71,3 +71,14 @@ export function costOf(row: UsageRow, table: PriceTable): { usd: number; exact: 
   if (row.fast) usd *= table.fastMul;
   return { usd, exact: r.exact, priced: true };
 }
+
+/** USD per token of one request's cache read and cache writes, with the long-context and fast multipliers applied. */
+export function cacheUnitPrices(row: UsageRow, table: PriceTable): { read: number; cw5m: number; cw1h: number } {
+  const r = row.synthetic ? null : resolvePrice(row.model, table);
+  if (!r) return { read: 0, cw5m: 0, cw1h: 0 };
+  const { price: p } = r;
+  const t = row.tokens;
+  const lc = p.longContext;
+  const mul = (lc !== undefined && t.input + t.cacheRead + t.cw5m + t.cw1h > lc.threshold ? lc.inputMul : 1) * (row.fast ? table.fastMul : 1) / 1e6;
+  return { read: p.cacheRead * mul, cw5m: p.cw5m * mul, cw1h: p.cw1h * mul };
+}

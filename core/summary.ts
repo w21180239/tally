@@ -1,8 +1,12 @@
 // Pure aggregation of shard rows into the dimensions the History and Usage views render.
 import { DAY_MS, HOUR_MS, hourStart, localDayStart, localHourIndex } from "./time.ts";
 import { repoOf } from "./path.ts";
-import { costOf } from "./pricing.ts";
+import { cacheUnitPrices, costOf } from "./pricing.ts";
 import type { PriceTable } from "./pricing.ts";
+import { findRebuilds } from "./cache-life.ts";
+import type { Rebuild } from "./cache-life.ts";
+import { analyzeFlow } from "./flow.ts";
+import type { FlowItem, Paste } from "./flow.ts";
 import type { Shard } from "./shard.ts";
 import type { Tokens, UsageRow } from "./types.ts";
 
@@ -29,6 +33,20 @@ export type Summary = {
   hourBands: number[];
   topSessions: TopSession[];
   unpriced: string[];
+  /** Cache writes of 20k+ tokens after a pause longer than the cache lives, by time. */
+  cacheRebuilds: Rebuild[];
+  /** Largest main-thread prompt per session. */
+  peakContext: Record<string, number>;
+  /** Main-thread context parts by re-read cost, top 40; a compaction releases the parts before it. */
+  flow: FlowItem[];
+  /** Prompts of 5000+ tokens by re-read cost, top 40. */
+  pastes: Paste[];
+  /** File to its whole-read count in one conversation; files read whole at least twice, top 40. */
+  wholeReads: Record<string, number>;
+  /** Compactions per session. */
+  compactions: Record<string, number>;
+  /** Tokens each tool put into context. */
+  toolFill: Record<string, number>;
 };
 export type SummaryOpts = {
   span: Span;
@@ -75,9 +93,12 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
   // Synthetic rows are not API requests. Rows are priced once here.
   const unpriced = new Set<string>();
   let rows: Row[] = [];
+  // Every real request, before the repo and window filters: the deep dimensions need the history around a span.
+  const everyRow: UsageRow[] = [];
   for (const s of shards) {
     for (const r of s.usage) {
       if (r.synthetic) continue;
+      everyRow.push(r);
       const repo = repoFor(r);
       if (opts.repo !== undefined && repo !== opts.repo) continue;
       const c = costOf(r, prices);
@@ -148,6 +169,13 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     hourBands: [0, 0, 0, 0, 0],
     topSessions: [],
     unpriced: [...unpriced].sort(),
+    cacheRebuilds: [],
+    peakContext: {},
+    flow: [],
+    pastes: [],
+    wholeReads: {},
+    compactions: {},
+    toolFill: {},
   };
 
   type Acc = { usd: number; started: number; byRepo: Map<string, number> };
@@ -217,5 +245,32 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
   }
   top.sort((x, y) => y.usd - x.usd || x.started - y.started || (x.sessionId < y.sessionId ? -1 : 1));
   out.topSessions = top.slice(0, TOP_SESSIONS);
+
+  // Deep dimensions: a request is counted when it is one of the summarized rows.
+  const counted = new Set<UsageRow>();
+  for (const { r } of rows) counted.add(r);
+  const users = shards.flatMap((s) => s.users);
+  const compacts = shards.flatMap((s) => s.compacts);
+  const inWindow = (ts: number) => span === "session" || (ts >= from && ts <= to);
+  out.cacheRebuilds = findRebuilds(everyRow, (r) => counted.has(r), (r) => {
+    const u = cacheUnitPrices(r, prices);
+    return r.tokens.cw5m * u.cw5m + r.tokens.cw1h * u.cw1h;
+  });
+  const flow = analyzeFlow({
+    rows: everyRow,
+    users,
+    compacts,
+    counted: (r) => counted.has(r),
+    countedUser: (u) => sessions.has(u.sessionId) && inWindow(u.ts),
+    cacheReadUsd: (r) => cacheUnitPrices(r, prices).read,
+  });
+  out.peakContext = flow.peakContext;
+  out.flow = flow.flow;
+  out.pastes = flow.pastes;
+  out.wholeReads = flow.wholeReads;
+  out.toolFill = flow.toolFill;
+  for (const c of compacts) {
+    if (sessions.has(c.sessionId) && inWindow(c.ts)) out.compactions[c.sessionId] = (out.compactions[c.sessionId] ?? 0) + 1;
+  }
   return out;
 }

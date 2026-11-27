@@ -11,7 +11,17 @@ export type RawUsage = {
   cwd?: string;
 };
 
-export type ToolUse = { name: string; mcpServer?: string; target?: string; command?: string; inputChars: number };
+export type ToolUse = {
+  name: string;
+  mcpServer?: string;
+  target?: string;
+  command?: string;
+  inputChars: number;
+  /** tool_use id: pairs the call with its tool_result row. Absent in shards written before it existed. */
+  id?: string;
+  /** A Read with no offset, limit or pages. */
+  whole?: boolean;
+};
 
 export type UsageRow = RawUsage & {
   synthetic: boolean;
@@ -32,6 +42,8 @@ export type UserRow = {
   chars: number;
   toolUseId?: string;
   results?: { toolUseId: string; chars: number }[];
+  /** The line came from a sub-agent transcript. */
+  sidechain?: boolean;
   text?: string;
   /** Where a prompt line starts: transcript path and byte offset, so the full text can be fetched on demand. */
   fileKey?: string;

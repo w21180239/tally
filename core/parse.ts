@@ -30,6 +30,9 @@ function toolOf(block: Rec): ToolUse {
   const name = nonEmpty(block.name) ?? "?";
   const input = isRec(block.input) ? block.input : {};
   const t: ToolUse = { name, inputChars: JSON.stringify(block.input ?? {}).length };
+  const id = nonEmpty(block.id);
+  if (id) t.id = id;
+  if (name === "Read" && input.offset === undefined && input.limit === undefined && input.pages === undefined) t.whole = true;
   if (name.startsWith("mcp__")) {
     const srv = name.split("__")[1];
     if (srv) t.mcpServer = srv;
@@ -104,11 +107,13 @@ function userRow(l: Rec, ctx: FileCtx): Parsed | null {
   if (Number.isNaN(ts)) return null;
   const content = isRec(l.message) ? l.message.content : undefined;
   const sessionId = sessionOf(l, ctx);
+  const sidechain = ctx.isSub || l.isSidechain === true;
   const results = Array.isArray(content) ? content.filter((b) => isRec(b) && b.type === "tool_result") : [];
   if (results.length > 0) {
     // One row per line: chars sums all blocks, toolUseId is the first, results lists every block.
     // Any text beside tool_result blocks is dropped on purpose.
     const row: UserRow = { sessionId, ts, kind: "toolResult", chars: results.reduce((n, b) => n + charsOf(b.content), 0) };
+    if (sidechain) row.sidechain = true;
     const id = nonEmpty(results[0].tool_use_id);
     if (id) row.toolUseId = id;
     const per = results.flatMap((b) => { const i = nonEmpty(b.tool_use_id); return i ? [{ toolUseId: i, chars: charsOf(b.content) }] : []; });
@@ -121,6 +126,7 @@ function userRow(l: Rec, ctx: FileCtx): Parsed | null {
   const kind: UserRow["kind"] =
     l.isCompactSummary === true ? "compaction" : l.isMeta === true || NOTICE_PREFIXES.some((p) => start.startsWith(p)) ? "notice" : "prompt";
   const row: UserRow = { sessionId, ts, kind, chars: text.length };
+  if (sidechain) row.sidechain = true;
   if (kind === "prompt") row.text = text.slice(0, TEXT_CAP);
   return { t: "user", row };
 }

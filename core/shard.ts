@@ -146,7 +146,7 @@ function userCols(rows: UserRow[]): unknown {
       const b = r.fileKey.slice(cut);
       base = b === `${r.sessionId}.jsonl` ? 0 : b;
     }
-    const row: unknown[] = [si, r.ts, USER_KINDS.indexOf(r.kind), r.chars, r.toolUseId ?? null, res, r.text ?? null, di, base, r.offset ?? null];
+    const row: unknown[] = [si, r.ts, USER_KINDS.indexOf(r.kind), r.chars, r.toolUseId ?? null, res, r.text ?? null, di, base, r.offset ?? null, r.sidechain ? 1 : null];
     while (row.length && row[row.length - 1] === null) row.pop();
     return row;
   });
@@ -162,6 +162,7 @@ function userRows(o: { s: string[]; d: string[]; c: unknown[][] }): UserRow[] {
     if (a[6] != null) r.text = a[6] as string;
     if (a[7] != null) r.fileKey = o.d[a[7] as number] + (a[8] === 0 ? `${r.sessionId}.jsonl` : (a[8] as string));
     if (a[9] != null) r.offset = a[9] as number;
+    if (a[10] === 1) r.sidechain = true;
     return r;
   });
 }

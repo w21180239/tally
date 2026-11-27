@@ -65,6 +65,31 @@ describe("parseLine usage", () => {
     expect(r.tools[2].target).toBe("/x/y.ts");
     expect(r.tools[1].inputChars).toBe(JSON.stringify({ command: "ls -l" }).length);
   });
+  test("tool ids and whole reads: a Read without offset, limit or pages is whole", () => {
+    const r = usage(
+      parseLine(
+        assistant({
+          content: [
+            { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/a" } },
+            { type: "tool_use", id: "t2", name: "Read", input: { file_path: "/a", offset: 5 } },
+            { type: "tool_use", id: "t3", name: "Read", input: { file_path: "/a", limit: 5 } },
+            { type: "tool_use", id: "t4", name: "Read", input: { file_path: "/a.pdf", pages: "1-2" } },
+            { type: "tool_use", id: "t5", name: "Bash", input: { command: "ls" } },
+            { type: "tool_use", name: "Read", input: { file_path: "/b" } },
+          ],
+        }),
+        ctx,
+      ),
+    );
+    expect(r.tools.map((t) => t.id)).toEqual(["t1", "t2", "t3", "t4", "t5", undefined]);
+    expect(r.tools.map((t) => t.whole === true)).toEqual([true, false, false, false, false, true]);
+  });
+  test("user rows from a sub-agent transcript or a sidechain line are marked", () => {
+    const line = user([{ type: "tool_result", tool_use_id: "a", content: "1" }]);
+    expect(userRow(parseLine(line, ctx)).sidechain).toBeUndefined();
+    expect(userRow(parseLine(line, sub)).sidechain).toBe(true);
+    expect(userRow(parseLine(user("hi", { isSidechain: true }), ctx)).sidechain).toBe(true);
+  });
   test("attribution, effort and sidechain", () => {
     const r = usage(parseLine(assistant({ extra: { attributionSkill: "sk", attributionPlugin: "pl", perTurnEffort: "high", isSidechain: true } }), ctx));
     expect([r.skill, r.plugin, r.effort, r.sidechain]).toEqual(["sk", "pl", "high", true]);
