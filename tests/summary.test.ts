@@ -3,6 +3,7 @@ import { summarize } from "../core/summary.ts";
 import { activeHours, localDay, localDayStart, utcHour } from "../core/time.ts";
 import { month, usage, NOW, OPUS, PRICES, SONNET, TZ } from "./fixtures/month.ts";
 import type { Shard } from "../core/shard.ts";
+import { read, req } from "./fixtures/rows.ts";
 
 const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 const usd = (m: { usd: number }) => Math.round(m.usd * 1e6) / 1e6;
@@ -251,5 +252,34 @@ describe("time helpers", () => {
     const ts = [base, base + 29 * 60_000, base + 30 * 60_000, base + 59 * 60_000];
     expect(activeHours(ts)).toBe(1);
     expect(activeHours(ts, 330)).toBe(2);
+  });
+});
+
+describe("summarize internals", () => {
+  const shard = (usage: Shard["usage"], extra: Partial<Shard> = {}): Shard => ({ v: 1, project: "p", files: {}, usage, users: [], metas: [], compacts: [], snapshots: [], ...extra });
+  const base = Date.UTC(2026, 10, 27, 10);
+
+  test("a model's price is looked up once per summary, not once per request", () => {
+    let touched = 0;
+    const count = { get: (t: object, k: string | symbol) => (touched++, Reflect.get(t, k)), ownKeys: (t: object) => (touched++, Reflect.ownKeys(t)) };
+    const models = new Proxy(PRICES.models, count);
+    const rows = Array.from({ length: 300 }, (_, i) => ({ ...req({ id: `r${i}`, at: i * 1000, tokens: { cacheRead: 100 + i, output: 5 } }), ts: base + i * 1000 }));
+    const s = summarize([shard(rows)], { ...PRICES, models }, { span: "24h", nowMs: base + 3_600_000, tzOffsetMin: 0 });
+    expect(s.total.requests).toBe(300);
+    expect(touched).toBeLessThan(20);
+  });
+
+  test("keys that are also Object.prototype members stay ordinary keys", () => {
+    const rows = [
+      { ...req({ id: "a", at: 0, session: "constructor", cwd: "/w/constructor", tokens: { input: 1000 }, tools: [read("t1", "constructor"), read("t2", "constructor")] }), ts: base, model: "constructor" },
+      { ...req({ id: "b", at: 1000, session: "constructor", sidechain: true, agentType: "constructor", agentId: "a1", cwd: "/w/constructor", tokens: { input: 10 }, tools: [{ name: "constructor", inputChars: 1 }, { name: "constructor", inputChars: 1 }] }), ts: base + 1000, model: "toString" },
+    ];
+    const s = summarize([shard(rows, { compacts: [{ sessionId: "constructor", ts: base + 5 }] })], PRICES, { span: "24h", nowMs: base + 3_600_000, tzOffsetMin: 0 });
+    expect(s.compactions).toEqual({ constructor: 1 });
+    expect(s.peakContext).toEqual({ constructor: 1000 });
+    expect(s.wholeReads).toEqual({ constructor: 2 });
+    expect(Object.keys(s.byRepo)).toEqual(["constructor"]);
+    expect(Object.keys(s.byModel).sort()).toEqual(["constructor", "toString"]);
+    expect(s.bySubType.constructor.toString.tools.constructor).toBe(2);
   });
 });

@@ -61,15 +61,23 @@ describe("findRebuilds", () => {
     expect(find([req({ id: "a", at: 0, tokens: { cw5m: 90_000 } })])).toEqual([]);
   });
 
-  test("streams are per session and per sub-agent type; input order does not matter", () => {
+  test("streams are per session and per sub-agent transcript; input order does not matter", () => {
     const rows = [
       req({ id: "m2", at: 6 * MIN, tokens: { cw5m: 25_000 } }),
       req({ id: "x1", session: "other", at: 5 * MIN }),
       req({ id: "m1", at: 0 }),
-      req({ id: "s1", at: 5 * MIN, sidechain: true, agentType: "Explore" }),
+      req({ id: "s1", at: 5 * MIN, sidechain: true, agentType: "Explore", agentId: "a1" }),
     ];
     // The main stream's gap is 6 minutes; the sub-agent request in between belongs to another stream.
     expect(find(rows).map((r) => r.sessionId)).toEqual(["s"]);
+  });
+
+  test("two sub-agents of one type are separate streams; one transcript is one stream", () => {
+    const agent = (id: string, at: number, agentId: string, cw5m = 0) => req({ id, at, sidechain: true, agentType: "Explore", agentId, tokens: { cw5m } });
+    const rows = [agent("a", 0, "a1"), agent("b", 5 * MIN, "a2"), agent("c", 6 * MIN, "a1", 25_000)];
+    expect(find(rows).map((r) => [r.sessionId, r.gapMs])).toEqual([["s", 6 * MIN]]);
+    // The same request pattern inside one transcript is not a rebuild.
+    expect(find([agent("a", 0, "a1"), agent("b", 5 * MIN, "a1"), agent("c", 6 * MIN, "a1", 25_000)])).toEqual([]);
   });
 
   test("only counted rebuilds are reported, but a gap measured from an uncounted request still stands", () => {
@@ -101,9 +109,13 @@ describe("summarize cacheRebuilds", () => {
   });
 
   test("a window that starts between the two requests still sees the gap", () => {
-    // 24h window: hourStart(now) - 23h = T0 + 10h - 23h; every row is inside it, so shift now instead.
-    const s = run({ span: "24h", nowMs: T0 + 6 * MIN + 30 * MIN });
-    expect(s.cacheRebuilds.map((r) => r.sessionId)).toEqual(["s"]);
+    const HOUR = 60 * MIN;
+    // The 24h window starts at T0 + 1h: request a (T0 + 55m) is outside it, request b (T0 + 1h10m) inside.
+    const two = [req({ id: "a", at: 55 * MIN, cwd: "/work/alpha", tokens: { cacheRead: 1 } }), req({ id: "b", at: HOUR + 10 * MIN, cwd: "/work/alpha", tokens: { cw5m: 25_000 } })];
+    const s = summarize([shard(two)], PRICES, { span: "24h", nowMs: T0 + 24 * HOUR + 5 * MIN, tzOffsetMin: 0 });
+    expect(s.from).toBe(T0 + HOUR);
+    expect(s.total.requests).toBe(1);
+    expect(s.cacheRebuilds.map((r) => [r.sessionId, r.gapMs])).toEqual([["s", 15 * MIN]]);
   });
 
   test("session span reports that session only", () => {

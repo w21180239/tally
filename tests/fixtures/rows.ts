@@ -14,6 +14,7 @@ export type Req = {
   tools?: ToolUse[];
   sidechain?: boolean;
   agentType?: string;
+  agentId?: string;
   cwd?: string;
 };
 
@@ -33,6 +34,7 @@ export function req(s: Req): UsageRow {
   };
   if (s.cwd) row.cwd = s.cwd;
   if (s.agentType) row.agentType = s.agentType;
+  if (s.agentId) row.agentId = s.agentId;
   return row;
 }
 
@@ -44,5 +46,7 @@ export const result = (at: number, toolUseId: string, chars: number, session = "
   if (sidechain) row.sidechain = true;
   return row;
 };
+/** A row of the sub-agent transcript `agentId` (sidechain, with its id). */
+export const inAgent = <T extends UsageRow | UserRow>(row: T, agentId: string): T => ({ ...row, sidechain: true, agentId });
 export const read = (id: string, target: string, whole = true): ToolUse => ({ name: "Read", id, target, inputChars: 10, ...(whole ? { whole: true } : {}) });
 export const bash = (id: string, command: string): ToolUse => ({ name: "Bash", id, command, inputChars: 10 });

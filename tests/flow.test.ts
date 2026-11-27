@@ -2,13 +2,13 @@ import { describe, test, expect } from "claude-code/testing";
 import { analyzeFlow, PASTE_MIN_TOKENS, FLOW_ITEMS } from "../core/flow.ts";
 import { summarize } from "../core/summary.ts";
 import { PRICES } from "./fixtures/month.ts";
-import { READ_USD, T0, MIN, bash, notice, prompt, read, req, result, summary } from "./fixtures/rows.ts";
+import { READ_USD, T0, MIN, bash, inAgent, notice, prompt, read, req, result, summary } from "./fixtures/rows.ts";
 import type { Shard } from "../core/shard.ts";
 import type { CompactRow, UsageRow, UserRow } from "../core/types.ts";
 
 const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 const run = (rows: UsageRow[], users: UserRow[] = [], compacts: CompactRow[] = [], counted: (r: UsageRow) => boolean = () => true) =>
-  analyzeFlow({ rows, users, compacts, counted, countedUser: () => true, cacheReadUsd: () => READ_USD });
+  analyzeFlow({ rows, users, compacts, counted, cacheReadUsd: () => READ_USD });
 const item = (out: ReturnType<typeof run>, source: string, label: string) => out.flow.find((f) => f.source === source && f.label === label);
 
 // One main-thread session: a 100 token prompt, a 1000 token whole Read, a compaction, then two more requests.
@@ -118,13 +118,72 @@ describe("flow", () => {
     expect(item(out, "read", "/a.ts")?.tokens).toBe(0);
   });
 
-  test("sub-agent rows stay out of the main-thread flow", () => {
-    const out = run(
-      [req({ id: "a", at: 1, tokens: { input: 1000 } }), req({ id: "x", at: 2, sidechain: true, tokens: { input: 9000 } })],
-      [prompt(0, 400), { ...prompt(1, 40_000, "sub task"), sidechain: true }],
-    );
-    expect(item(out, "prompt", "sub task")).toBeUndefined();
+  const side = (id: string, at: number, agentId: string, tokens: Partial<UsageRow["tokens"]>, extra: Partial<Parameters<typeof req>[0]> = {}) =>
+    req({ id, at, tokens, agentType: "Explore", agentId, sidechain: true, ...extra });
+
+  test("a sub-agent transcript is a stream of its own, next to the main one", () => {
+    const rows = [
+      req({ id: "m1", at: 1, tokens: { input: 1000 } }),
+      req({ id: "m2", at: 20, tokens: { cacheRead: 1000 } }),
+      side("x1", 5, "a1", { input: 2000 }),
+      side("x2", 8, "a1", { cacheRead: 2000 }),
+      side("x3", 9, "a1", { cacheRead: 2000 }),
+    ];
+    const out = run(rows, [prompt(0, 400), inAgent(prompt(4, 4000, "sub task"), "a1")]);
+    expect(item(out, "prompt", "sub task")?.tokens).toBe(1000);
+    expect(near(item(out, "prompt", "sub task")?.rereadUsd ?? -1, 2000 * READ_USD)).toBe(true);
+    expect(item(out, "fixed", "fixed part (Explore)")?.tokens).toBe(1000);
+    expect(near(item(out, "fixed", "fixed part (Explore)")?.rereadUsd ?? -1, 2000 * READ_USD)).toBe(true);
+    // The main stream is untouched by the sub-agent's rows.
+    expect(item(out, "fixed", "fixed part")?.tokens).toBe(900);
     expect(item(out, "prompt", "hello")?.tokens).toBe(100);
+    expect(near(item(out, "prompt", "hello")?.rereadUsd ?? -1, 100 * READ_USD)).toBe(true);
+  });
+
+  test("two sub-agents of one type that run side by side each carry their own fixed part", () => {
+    const out = run([side("x1", 5, "a1", { input: 1000 }), side("y1", 6, "a2", { input: 1000 }), side("x2", 7, "a1", { cacheRead: 1000 })]);
+    expect(item(out, "fixed", "fixed part (Explore)")?.tokens).toBe(2000);
+  });
+
+  test("a sub-agent compaction releases only that sub-agent's parts", () => {
+    const rows = [
+      req({ id: "m1", at: 1, tokens: { input: 1000 }, tools: [read("t1", "/m.ts")] }),
+      side("x1", 3, "a1", { input: 500 }),
+      req({ id: "m2", at: 7, tokens: { cacheRead: 1000, input: 1000 } }),
+      req({ id: "m3", at: 9, tokens: { cacheRead: 2000 } }),
+    ];
+    const out = run(rows, [result(2, "t1", 4000)], [{ sessionId: "s", ts: T0 + 8, agentId: "a1" }]);
+    // The main-thread Read stays held through the sub-agent's compaction and is re-read by m3.
+    expect(near(item(out, "read", "/m.ts")?.rereadUsd ?? -1, 1000 * READ_USD)).toBe(true);
+  });
+
+  test("a resumed session's carried conversation is not booked as fixed part", () => {
+    const first = (id: string, session: string, prompt: number) => [
+      req({ id: `${id}1`, session, at: 1, tokens: { input: prompt } }),
+      req({ id: `${id}2`, session, at: 2, tokens: { cacheRead: prompt } }),
+    ];
+    // Fresh sessions start at 10k, 12k and 16k; the fourth is a trimmed one whose first retained request already holds 80k.
+    const out = run([...first("a", "a", 10_000), ...first("b", "b", 12_000), ...first("d", "d", 16_000), ...first("c", "c", 80_000)]);
+    // Fixed part is capped at twice the median (14k) of first requests: 28k for the trimmed session.
+    expect(item(out, "fixed", "fixed part")?.tokens).toBe(10_000 + 12_000 + 16_000 + 28_000);
+    const carried = item(out, "prompt", "carried over");
+    expect(carried?.tokens).toBe(52_000);
+    expect(near(carried?.rereadUsd ?? -1, 52_000 * READ_USD)).toBe(true);
+  });
+
+  test("a lone session keeps all of its first prompt as fixed part", () => {
+    const out = run([req({ id: "a", at: 1, tokens: { input: 90_000 } })]);
+    expect(item(out, "fixed", "fixed part")?.tokens).toBe(90_000);
+    expect(item(out, "prompt", "carried over")).toBeUndefined();
+  });
+
+  test("a prompt label is cut on a code point, never through a surrogate pair", () => {
+    const text = `${"x".repeat(59)}\u{1F600}tail`;
+    const out = run([req({ id: "a", at: 1, tokens: { input: 1000 } })], [prompt(0, 400, text)]);
+    expect(out.flow.some((f) => f.label === `${"x".repeat(59)}\u{1F600}`)).toBe(true);
+    const cmd = `${"y".repeat(79)}\u{1F600}tail`;
+    const b = run([req({ id: "a", at: 1, tokens: { input: 1000 }, tools: [bash("t1", cmd)] })], [result(0, "t1", 400)]);
+    expect(b.flow.some((f) => f.label === `${"y".repeat(79)}\u{1F600}`)).toBe(true);
   });
 });
 
@@ -155,17 +214,31 @@ describe("wholeReads", () => {
     expect(out.wholeReads).toEqual({ "/a.ts": 3, "/twice.ts": 2 });
   });
 
-  test("partial reads, uncounted requests and sub-agent reads do not count", () => {
+  test("partial reads and uncounted requests do not count", () => {
     const rows = [
       reads("a", 1, "/p.ts", false),
       reads("b", 2, "/p.ts", false),
       reads("c", 3, "/p.ts"),
-      reads("d", 4, "/p.ts", true, { sidechain: true }),
       reads("e", 5, "/p.ts"),
       reads("f", 6, "/p.ts"),
     ];
     expect(run(rows).wholeReads).toEqual({ "/p.ts": 3 });
     expect(run(rows, [], [], (r) => r.requestId !== "f").wholeReads).toEqual({ "/p.ts": 2 });
+  });
+
+  test("a sub-agent transcript is its own conversation", () => {
+    const agent = (id: string, at: number, target: string, agentId: string) => reads(id, at, target, true, { sidechain: true, agentId, agentType: "Explore" });
+    const rows = [
+      agent("a", 1, "/f.ts", "a1"),
+      agent("b", 2, "/f.ts", "a1"),
+      agent("c", 3, "/f.ts", "a2"),
+      reads("d", 4, "/f.ts"),
+      agent("e", 5, "/g.ts", "a1"),
+      agent("f", 6, "/g.ts", "a2"),
+      reads("g", 7, "/g.ts"),
+    ];
+    // /f.ts twice within a1; /g.ts once in each of three conversations is no repeat.
+    expect(run(rows).wholeReads).toEqual({ "/f.ts": 2 });
   });
 
   test("the count is per session: the most in one conversation", () => {
@@ -175,14 +248,37 @@ describe("wholeReads", () => {
 });
 
 describe("toolFill and peakContext", () => {
-  test("toolFill sums the tokens each tool put into context, sub-agent results included", () => {
+  test("toolFill sums the tokens each tool put into context", () => {
     const rows = [
       req({ id: "a", at: 1, tokens: { input: 1000 }, tools: [read("t1", "/a"), bash("t2", "ls"), read("t3", "/b")] }),
       req({ id: "b", at: 5, tokens: { cacheRead: 1000, input: 3100 } }),
-      req({ id: "x", at: 6, sidechain: true, tools: [bash("t4", "pwd")] }),
     ];
-    const users = [result(2, "t1", 4000), result(3, "t2", 400), result(4, "t3", 8000), result(7, "t4", 800, "s", true)];
-    expect(run(rows, users).toolFill).toEqual({ Read: 3000, Bash: 300 });
+    const users = [result(2, "t1", 4000), result(3, "t2", 400), result(4, "t3", 8000)];
+    expect(run(rows, users).toolFill).toEqual({ Read: 3000, Bash: 100 });
+  });
+
+  test("a sub-agent's results count at that sub-agent's own scale", () => {
+    const rows = [
+      req({ id: "x1", at: 1, agentId: "a1", sidechain: true, tokens: { input: 1000 }, tools: [bash("t1", "pwd")] }),
+      req({ id: "x2", at: 3, agentId: "a1", sidechain: true, tokens: { cacheRead: 1000, input: 600 } }),
+    ];
+    // 4000 chars = 1000 estimated tokens, but the prompt only grew by 600.
+    expect(run(rows, [inAgent(result(2, "t1", 4000), "a1")]).toolFill).toEqual({ Bash: 600 });
+  });
+
+  test("keys that are also Object.prototype members stay ordinary keys", () => {
+    const rows = [
+      req({ id: "a", at: 1, session: "constructor", tokens: { input: 1000 }, tools: [{ name: "constructor", id: "t1", inputChars: 1 }, read("t2", "constructor"), read("t3", "constructor")] }),
+      req({ id: "b", at: 5, session: "constructor", tokens: { cacheRead: 1000, input: 300 } }),
+      req({ id: "c", at: 6, session: "__proto__", tokens: { cacheRead: 7 } }),
+    ];
+    const out = run(rows, [result(2, "t1", 400, "constructor"), result(3, "t2", 400, "constructor"), result(4, "t3", 400, "constructor")]);
+    expect(Object.keys(out.peakContext).sort()).toEqual(["__proto__", "constructor"]);
+    expect(out.peakContext.constructor).toBe(1300);
+    expect(Object.keys(out.toolFill).sort()).toEqual(["Read", "constructor"]);
+    expect(out.toolFill.constructor).toBe(100);
+    expect(out.toolFill.Read).toBe(200);
+    expect(out.wholeReads).toEqual({ constructor: 2 });
   });
 
   test("toolFill counts only results a counted request took in", () => {
@@ -191,14 +287,14 @@ describe("toolFill and peakContext", () => {
     expect(run(rows, [result(2, "t1", 400)]).toolFill).toEqual({ Bash: 100 });
   });
 
-  test("peakContext is the largest main-thread prompt per session", () => {
+  test("peakContext is the largest prompt of any conversation in the session", () => {
     const rows = [
       req({ id: "a", at: 1, tokens: { input: 10, cacheRead: 100, cw5m: 5 } }),
       req({ id: "b", at: 2, tokens: { cacheRead: 300 } }),
       req({ id: "c", at: 3, session: "q", tokens: { cw1h: 50 } }),
       req({ id: "d", at: 4, sidechain: true, tokens: { cacheRead: 9999 } }),
     ];
-    expect(run(rows).peakContext).toEqual({ s: 300, q: 50 });
+    expect(run(rows).peakContext).toEqual({ s: 9999, q: 50 });
   });
 });
 

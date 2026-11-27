@@ -56,9 +56,20 @@ export function resolvePrice(model: string, table: PriceTable): { price: ModelPr
   return best ? { price: best.price, exact: false } : null;
 }
 
-export function costOf(row: UsageRow, table: PriceTable): { usd: number; exact: boolean; priced: boolean } {
+export type Resolver = (model: string) => ReturnType<typeof resolvePrice>;
+
+/** `resolvePrice` remembered per model, for loops over many rows of few models. */
+export function memoResolver(table: PriceTable): Resolver {
+  const seen = new Map<string, ReturnType<typeof resolvePrice>>();
+  return (model) => {
+    if (!seen.has(model)) seen.set(model, resolvePrice(model, table));
+    return seen.get(model) ?? null;
+  };
+}
+
+export function costOf(row: UsageRow, table: PriceTable, resolve: Resolver = (m) => resolvePrice(m, table)): { usd: number; exact: boolean; priced: boolean } {
   if (row.synthetic) return { usd: 0, exact: true, priced: true };
-  const r = resolvePrice(row.model, table);
+  const r = resolve(row.model);
   if (!r) return { usd: 0, exact: false, priced: false };
   const { price: p } = r;
   const t = row.tokens;
@@ -73,8 +84,8 @@ export function costOf(row: UsageRow, table: PriceTable): { usd: number; exact: 
 }
 
 /** USD per token of one request's cache read and cache writes, with the long-context and fast multipliers applied. */
-export function cacheUnitPrices(row: UsageRow, table: PriceTable): { read: number; cw5m: number; cw1h: number } {
-  const r = row.synthetic ? null : resolvePrice(row.model, table);
+export function cacheUnitPrices(row: UsageRow, table: PriceTable, resolve: Resolver = (m) => resolvePrice(m, table)): { read: number; cw5m: number; cw1h: number } {
+  const r = row.synthetic ? null : resolve(row.model);
   if (!r) return { read: 0, cw5m: 0, cw1h: 0 };
   const { price: p } = r;
   const t = row.tokens;

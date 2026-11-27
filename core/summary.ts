@@ -1,7 +1,8 @@
 // Pure aggregation of shard rows into the dimensions the History and Usage views render.
 import { DAY_MS, HOUR_MS, hourStart, localDayStart, localHourIndex } from "./time.ts";
 import { repoOf } from "./path.ts";
-import { cacheUnitPrices, costOf } from "./pricing.ts";
+import { bump, dict } from "./dict.ts";
+import { cacheUnitPrices, costOf, memoResolver } from "./pricing.ts";
 import type { PriceTable } from "./pricing.ts";
 import { findRebuilds } from "./cache-life.ts";
 import type { Rebuild } from "./cache-life.ts";
@@ -35,13 +36,17 @@ export type Summary = {
   unpriced: string[];
   /** Cache writes of 20k+ tokens after a pause longer than the cache lives, by time. */
   cacheRebuilds: Rebuild[];
-  /** Largest main-thread prompt per session. */
+  /** Largest prompt per session, across its main thread and sub-agents. */
   peakContext: Record<string, number>;
-  /** Main-thread context parts by re-read cost, top 40; a compaction releases the parts before it. */
+  /**
+   * Context parts by re-read cost, top 40, over the main thread and every sub-agent transcript; a compaction
+   * releases the parts before it. Parts merge by source and label across conversations; each sub-agent
+   * conversation has its own fixed part, labelled "fixed part (<agent type>)".
+   */
   flow: FlowItem[];
-  /** Prompts of 5000+ tokens by re-read cost, top 40. */
+  /** Prompts of 5000+ tokens by re-read cost, top 40; a sub-agent's task prompt counts too. */
   pastes: Paste[];
-  /** File to its whole-read count in one conversation; files read whole at least twice, top 40. */
+  /** File to its most whole reads within one conversation (the main thread or one sub-agent); files read whole at least twice, top 40. */
   wholeReads: Record<string, number>;
   /** Compactions per session. */
   compactions: Record<string, number>;
@@ -78,8 +83,9 @@ function add(m: Money, r: UsageRow, usd: number): void {
   t.cw1h += r.tokens.cw1h;
 }
 
+// For records made by `dict()`: keys come from data and may be "constructor".
 function slot<V>(rec: Record<string, V>, key: string, make: () => V): V {
-  if (!Object.prototype.hasOwnProperty.call(rec, key)) rec[key] = make();
+  if (!(key in rec)) rec[key] = make();
   return rec[key];
 }
 
@@ -89,6 +95,7 @@ const repoFor = (r: UsageRow): string => (r.cwd ? repoOf(r.cwd) || UNKNOWN_REPO 
 
 export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts): Summary {
   const { span, nowMs, tzOffsetMin } = opts;
+  const resolve = memoResolver(prices);
 
   // Synthetic rows are not API requests. Rows are priced once here.
   const unpriced = new Set<string>();
@@ -101,7 +108,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
       everyRow.push(r);
       const repo = repoFor(r);
       if (opts.repo !== undefined && repo !== opts.repo) continue;
-      const c = costOf(r, prices);
+      const c = costOf(r, prices, resolve);
       rows.push({ r, usd: c.usd, repo });
       if (!c.priced) unpriced.add(r.model);
     }
@@ -159,23 +166,23 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     main: zero(),
     sub: zero(),
     fast: zero(),
-    byModel: {},
-    byRepo: {},
-    bySubType: {},
-    bySkill: {},
-    byPlugin: {},
-    byMcp: {},
+    byModel: dict(),
+    byRepo: dict(),
+    bySubType: dict(),
+    bySkill: dict(),
+    byPlugin: dict(),
+    byMcp: dict(),
     timeline: { bucketMs, points: Array.from({ length: count }, zero) },
     hourBands: [0, 0, 0, 0, 0],
     topSessions: [],
     unpriced: [...unpriced].sort(),
     cacheRebuilds: [],
-    peakContext: {},
+    peakContext: dict(),
     flow: [],
     pastes: [],
-    wholeReads: {},
-    compactions: {},
-    toolFill: {},
+    wholeReads: dict(),
+    compactions: dict(),
+    toolFill: dict(),
   };
 
   type Acc = { usd: number; started: number; byRepo: Map<string, number> };
@@ -188,9 +195,9 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     add(slot(out.byModel, r.model, zero), r, usd);
     add(slot(out.byRepo, repo, zero), r, usd);
     if (r.sidechain) {
-      const m = slot(slot(out.bySubType, r.agentType ?? UNKNOWN_SUB, () => ({})), r.model, () => ({ ...zero(), tools: {} as Record<string, number> }));
+      const m = slot(slot(out.bySubType, r.agentType ?? UNKNOWN_SUB, () => dict<Money & { tools: Record<string, number> }>()), r.model, () => ({ ...zero(), tools: dict<number>() }));
       add(m, r, usd);
-      for (const t of r.tools) m.tools[t.name] = (m.tools[t.name] ?? 0) + 1;
+      for (const t of r.tools) bump(m.tools, t.name);
     }
     if (r.skill) add(slot(out.bySkill, r.skill, zero), r, usd);
     if (r.plugin) add(slot(out.byPlugin, r.plugin, zero), r, usd);
@@ -253,7 +260,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
   const compacts = shards.flatMap((s) => s.compacts);
   const inWindow = (ts: number) => span === "session" || (ts >= from && ts <= to);
   out.cacheRebuilds = findRebuilds(everyRow, (r) => counted.has(r), (r) => {
-    const u = cacheUnitPrices(r, prices);
+    const u = cacheUnitPrices(r, prices, resolve);
     return r.tokens.cw5m * u.cw5m + r.tokens.cw1h * u.cw1h;
   });
   const flow = analyzeFlow({
@@ -261,8 +268,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     users,
     compacts,
     counted: (r) => counted.has(r),
-    countedUser: (u) => sessions.has(u.sessionId) && inWindow(u.ts),
-    cacheReadUsd: (r) => cacheUnitPrices(r, prices).read,
+    cacheReadUsd: (r) => cacheUnitPrices(r, prices, resolve).read,
   });
   out.peakContext = flow.peakContext;
   out.flow = flow.flow;
@@ -270,7 +276,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
   out.wholeReads = flow.wholeReads;
   out.toolFill = flow.toolFill;
   for (const c of compacts) {
-    if (sessions.has(c.sessionId) && inWindow(c.ts)) out.compactions[c.sessionId] = (out.compactions[c.sessionId] ?? 0) + 1;
+    if (sessions.has(c.sessionId) && inWindow(c.ts)) bump(out.compactions, c.sessionId);
   }
   return out;
 }

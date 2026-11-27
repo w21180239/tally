@@ -1,4 +1,5 @@
 // Cache rebuilds: a large cache write after a pause longer than the cache lives.
+import { streamOf } from "./stream.ts";
 import { HOUR_MS } from "./time.ts";
 import type { UsageRow } from "./types.ts";
 
@@ -23,32 +24,24 @@ export function cacheLife(writes: { ts: number; cw5m: number; cw1h: number }[]):
   return h1 > m5 ? "1h" : "5m";
 }
 
-// One cache per conversation: the main thread, or a sub-agent type. Same-type sub-agents running at once share a key.
-const streamKey = (r: UsageRow): string => `${r.sessionId}\u0000${r.sidechain ? `s:${r.agentType ?? ""}` : "m"}`;
-
 /**
- * Rebuilds among `rows` (every non-synthetic request, any order). The gap is measured from the previous
- * request of the same stream whether or not it is `counted`; only counted rebuilds are returned, by time.
+ * Rebuilds among `rows` (every non-synthetic request, any order). A request is judged against the one
+ * before it in its own stream, counted or not; only counted rebuilds come back, oldest first.
  * `writeUsd` prices a request's cache writes.
  */
 export function findRebuilds(rows: UsageRow[], counted: (r: UsageRow) => boolean, writeUsd: (r: UsageRow) => number): Rebuild[] {
-  const streams = new Map<string, UsageRow[]>();
-  for (const r of rows) {
-    const list = streams.get(streamKey(r));
-    if (list) list.push(r);
-    else streams.set(streamKey(r), [r]);
-  }
+  const keyed = rows.map((r) => ({ r, key: streamOf(r) }));
+  keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.r.ts - b.r.ts || (a.r.requestId < b.r.requestId ? -1 : 1)));
   const out: Rebuild[] = [];
-  for (const list of streams.values()) {
-    list.sort((a, b) => a.ts - b.ts || (a.requestId < b.requestId ? -1 : 1));
-    for (let i = 1; i < list.length; i++) {
-      const r = list[i];
-      const tokens = r.tokens.cw5m + r.tokens.cw1h;
-      if (tokens < REBUILD_MIN_WRITE_TOKENS || !counted(r)) continue;
-      const gapMs = r.ts - list[i - 1].ts;
-      const ttl = cacheLife([{ ts: r.ts, cw5m: r.tokens.cw5m, cw1h: r.tokens.cw1h }]);
-      if (gapMs > (ttl === "1h" ? HOUR_MS : FIVE_MIN_MS)) out.push({ sessionId: r.sessionId, ts: r.ts, tokens, usd: writeUsd(r), gapMs, ttl });
-    }
+  for (let i = 1; i < keyed.length; i++) {
+    const { r, key } = keyed[i];
+    const before = keyed[i - 1];
+    if (before.key !== key) continue;
+    const tokens = r.tokens.cw5m + r.tokens.cw1h;
+    if (tokens < REBUILD_MIN_WRITE_TOKENS || !counted(r)) continue;
+    const gapMs = r.ts - before.r.ts;
+    const ttl = cacheLife([{ ts: r.ts, cw5m: r.tokens.cw5m, cw1h: r.tokens.cw1h }]);
+    if (gapMs > (ttl === "1h" ? HOUR_MS : FIVE_MIN_MS)) out.push({ sessionId: r.sessionId, ts: r.ts, tokens, usd: writeUsd(r), gapMs, ttl });
   }
   return out.sort((a, b) => a.ts - b.ts || (a.sessionId < b.sessionId ? -1 : 1));
 }
