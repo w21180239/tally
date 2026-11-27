@@ -18,26 +18,35 @@ const TOP_N = 5;
 
 const modRoot = () => `${herdr.appHome()}/mods/tally`;
 
-// null when the file is missing, undefined when its text does not parse.
+// null when the file is missing or cannot be read, undefined when its text does not parse (a write in progress).
 async function readJson(path) {
-  const text = await herdr.readTextFile(path);
+  let text;
+  try {
+    text = await herdr.readTextFile(path);
+  } catch {
+    return null;
+  }
   if (!text) return null;
   try {
-    const data = JSON.parse(text);
-    return data;
+    return JSON.parse(text);
   } catch {
     return undefined;
   }
 }
 
-// One span's snapshot as { report } or { error }.
+// One span's snapshot as { report } or { error }; never rejects. `torn` marks an unparsable file, which may be a write in progress.
 async function loadSpan(span) {
-  const source = await readJson(`${modRoot()}/.tally-source.json`);
-  if (!source || !source.reports) return { error: "This sidebar does not know where tally keeps its reports yet. Open a Claude Code window with tally and herdrSidebar on, and it will." };
-  const raw = await readJson(`${source.reports}/report-${span}.json`);
-  if (raw === null) return { error: `No ${span} report yet: tally writes one once a Claude Code window has finished a scan.` };
-  if (raw === undefined || typeof raw !== "object") return { error: `The ${span} report is unreadable.` };
-  return { report: raw };
+  try {
+    const source = await readJson(`${modRoot()}/.tally-source.json`);
+    if (!source || !source.reports) return { error: "This sidebar does not know where tally keeps its reports yet. Open a Claude Code window with tally and herdrSidebar on, and it will." };
+    const raw = await readJson(`${source.reports}/report-${span}.json`);
+    if (raw === null) return { error: `No ${span} report yet: tally writes one once a Claude Code window has finished a scan.` };
+    if (raw === undefined) return { error: `The ${span} report is unreadable.`, torn: true };
+    if (typeof raw !== "object") return { error: `The ${span} report is unreadable.` };
+    return { report: raw };
+  } catch (err) {
+    return { error: `The ${span} report could not be read: ${String((err && err.message) || err)}` };
+  }
 }
 
 const asNumber = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -202,7 +211,12 @@ export default class Tally extends kit.View {
 
   reload(ctx) {
     ctx.spawn(async (c) => {
-      for (const span of SPANS) this.snaps[span] = await loadSpan(span);
+      for (const span of SPANS) {
+        const next = await loadSpan(span);
+        const prev = this.snaps[span];
+        // tally writes the file in place, so a read can land mid-write; the last good report stays until the next read.
+        this.snaps[span] = next.torn && prev && prev.report ? prev : next;
+      }
       c.notify();
     });
   }

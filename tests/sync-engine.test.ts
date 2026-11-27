@@ -196,6 +196,14 @@ describe("names and salt", () => {
     expect(viaProcess.store.get("machineName")).toBe("mac-book.local");
   });
 
+  test("a name kept from an earlier session beats a fresh hostname, so a rename does not orphan the machine file; the setting still wins", async () => {
+    const renamed = fake({ HOSTNAME: "new-host" }, { stored: "old-host" });
+    expect(await machineNameOf(renamed.$, { machineName: "" })).toBe("old-host");
+    expect(renamed.store.get("machineName")).toBe("old-host");
+    expect(renamed.runs).toEqual([]);
+    expect(await machineNameOf(fake({ HOSTNAME: "new-host" }, { stored: "old-host" }).$, { machineName: "pinned" })).toBe("pinned");
+  });
+
   test("outside the CLI `hostname` is never run: the name kept by an earlier session is used, else a fixed one", async () => {
     const kept = fake({}, { stdout: "ignored", stored: "kept-name", surfaces: ["desktop"] });
     expect(await machineNameOf(kept.$, { machineName: "" })).toBe("kept-name");

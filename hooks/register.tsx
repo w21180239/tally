@@ -108,9 +108,10 @@ export const register: Register = (on, options) => {
   });
 
   on("session.end", async (_$, e, next) => {
-    // A /clear ends the session but the process goes on with no session.start: the scanner (and its lease
-    // heartbeat) and the redraw timers keep running, and a start still waiting on its delay stays valid.
-    if (e.reason !== "clear") {
+    // /clear and an in-process /resume end the session but the process goes on with no session.start: the scanner
+    // (and its lease heartbeat) and the redraw timers keep running, and a start still waiting on its delay stays
+    // valid. Only the reasons that end the process stop them.
+    if (e.reason === "prompt_input_exit" || e.reason === "other" || e.reason === "logout") {
       gen++;
       resetSync();
       stop?.();

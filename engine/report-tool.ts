@@ -151,6 +151,7 @@ async function writeSnapshots($: EngineInterface, now: number): Promise<void> {
     const report = await buildReport(inputOf(sh, "span", summary, ""), { days: span === "24h" ? 1 : MAX_DAYS, compare: false, unread }, tick);
     const json = snapshotJson(report);
     await tick();
+    // Written in place: the host fs has no rename, so the Herdr sidebar keeps its last good report when a read lands mid-write.
     if (json !== null) await $.fs.write(joinPath(loc.cfg, "tally", `report-${span}.json`), json);
   }
 }

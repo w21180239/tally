@@ -60,7 +60,7 @@ export function resetSync(): void {
 }
 
 // `$.process` exists only in the CLI, whose REPL draws on `terminal`; any other surface skips git and `hostname`.
-// Asked at each use: a module reload (an option change) does not repeat session.start.
+// Asked at each use, not once at session.start: clients attach and detach during a session, so the answer changes.
 async function isCli($: EngineInterface): Promise<boolean> {
   try {
     return (await $.session.surfaces()).includes("terminal");
@@ -77,9 +77,14 @@ export function safeMachineName(raw: string): string {
   return /^\.*$/.test(s) ? FALLBACK_NAME : s;
 }
 
-/** The setting, else `COMPUTERNAME`, `HOSTNAME`, then `hostname` (CLI only), else the name kept from an earlier session. */
+/**
+ * The setting, else the name kept from an earlier session (so a hostname change does not leave an orphan machine
+ * file that double-counts), else `COMPUTERNAME`, `HOSTNAME`, then `hostname` (CLI only), which is then kept.
+ */
 export async function machineNameOf($: EngineInterface, settings: Pick<Settings, "machineName">): Promise<string> {
   if (settings.machineName.trim() !== "") return safeMachineName(settings.machineName);
+  const kept = await $.store.get(NAME_KEY);
+  if (typeof kept === "string" && kept !== "") return kept;
   let found = (await $.env.get("COMPUTERNAME")) ?? "";
   if (found.trim() === "") found = (await $.env.get("HOSTNAME")) ?? "";
   if (found.trim() === "" && (await isCli($))) {
@@ -93,11 +98,10 @@ export async function machineNameOf($: EngineInterface, settings: Pick<Settings,
   if (found.trim() !== "") {
     const name = safeMachineName(found);
     // A surface without `hostname` reuses what the CLI found, so both name this computer alike.
-    if ((await $.store.get(NAME_KEY)) !== name) await $.store.set(NAME_KEY, name);
+    await $.store.set(NAME_KEY, name);
     return name;
   }
-  const kept = await $.store.get(NAME_KEY);
-  return typeof kept === "string" && kept !== "" ? kept : FALLBACK_NAME;
+  return FALLBACK_NAME;
 }
 
 type RandomSource = { getRandomValues?: (a: Uint8Array) => Uint8Array };

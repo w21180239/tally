@@ -430,6 +430,31 @@ describe("carried items", () => {
     expect(lease.sessionId).toBe("");
   });
 
+  test("an in-process resume keeps the scanner's lease and heartbeat like /clear", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.advance(1000);
+    await r.clock.settle();
+    const lease = () => JSON.parse(r.world.text(`${CFG}/tally/lease.json`) ?? "{}") as { sessionId?: string; beatMs?: number };
+    const beat = lease().beatMs ?? 0;
+    await $.session.end({ reason: "resume", sessionId: "s-1", resume: { id: "s-1" } } as never);
+    r.sid.v = "s-2";
+    await r.clock.advance(31_000);
+    expect(lease().sessionId).toBe("s-1");
+    expect(lease().beatMs ?? 0).toBeGreaterThan(beat);
+  });
+
+  test("leaving the prompt releases the lease", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.advance(1000);
+    await r.clock.settle();
+    await $.session.end({ reason: "prompt_input_exit", sessionId: "s-1", resume: { id: "s-1" } } as never);
+    await r.clock.advance(31_000);
+    const lease = JSON.parse(r.world.text(`${CFG}/tally/lease.json`) ?? "{}") as { sessionId?: string };
+    expect(lease.sessionId).toBe("");
+  });
+
   test("a live state that cannot be read does not fail the prompt", async () => {
     // The engine's own hooks are skipped when they throw, so the failing read is made on a stand-in `$`.
     const handlers = new Map<string, (...a: unknown[]) => Promise<unknown>>();
