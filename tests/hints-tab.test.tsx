@@ -17,7 +17,7 @@ import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { saveSnapshot } from "../engine/snapshot.ts";
 import { keyLine } from "../view/keys.ts";
 import { tableOf } from "../view/table.ts";
-import { drawHints } from "../view/tabs/hints.tsx";
+import { drawHints, hintRowKey } from "../view/tabs/hints.tsx";
 import { prompt, req } from "./fixtures/rows.ts";
 import { worldOf } from "./world.ts";
 import type { World } from "./world.ts";
@@ -506,6 +506,14 @@ describe("hints drawing", () => {
     const ui = await mountHost($);
     expect((await ui.findAll(TEXT(/^low confidence$/))).length).toBe(1);
     expect(await ui.find(TEXT(exact("Title of a")))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("the Action label keeps its width beside a long action, so it never wraps to Actio / n", async ($, on) => {
+    hintsHost(on, { span: [hintOf("a", 3, { action: "A long action that wraps over several lines in a narrow pane. ".repeat(4) })] });
+    const ui = await mountHost($);
+    const label = await ui.find({ key: `${hintRowKey("span", "a")}-action-label` });
+    expect(label?.props.flexShrink).toBe(0);
     await ui.unmount();
   });
 
