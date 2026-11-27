@@ -52,6 +52,7 @@ const SAVE_MS = 300_000;
 const TEXT_KEEP = 200;
 const PROMPT_PREVIEW = 120;
 const SKIPPED = "audit.jsonl";
+const LIST_WAVE = 16;
 
 // One UTC day of a project: file states bucketed by mtime, user and compact rows by ts, meta rows by the
 // mtime of the file they were last read from. Usage rows live in the ledger (cross-file dedupe) and are
@@ -200,20 +201,27 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
       const tag = rootTag(i);
       const stack: { dir: string; project: string | null }[] = [{ dir: opts.roots[i], project: null }];
       while (stack.length) {
-        const { dir, project } = stack.pop()!;
-        let entries: Entry[];
-        try {
-          entries = await $.fs.list(dir);
-        } catch {
-          continue;
-        }
+        // A wave of folders is listed at once: each call is a round trip to the host, so one at a time dominates a warm start.
+        const wave = stack.splice(-LIST_WAVE);
+        const lists = await Promise.all(wave.map(async (w) => {
+          try {
+            return await $.fs.list(w.dir);
+          } catch {
+            return null;
+          }
+        }));
         await slicer.check();
-        for (const e of entries) {
-          if (e.isLink) continue;
-          const path = joinPath(dir, e.name);
-          if (e.kind === "dir") stack.push({ dir: path, project: project ?? tag + e.name });
-          else if (e.kind === "file" && e.name.endsWith(".jsonl") && e.name !== SKIPPED) {
-            out.push({ project: project ?? `${tag}_`, path, size: e.size, mtimeMs: e.mtimeMs });
+        for (let k = 0; k < wave.length; k++) {
+          const entries = lists[k];
+          if (entries === null || entries === undefined) continue;
+          const { dir, project } = wave[k]!;
+          for (const e of entries) {
+            if (e.isLink) continue;
+            const path = joinPath(dir, e.name);
+            if (e.kind === "dir") stack.push({ dir: path, project: project ?? tag + e.name });
+            else if (e.kind === "file" && e.name.endsWith(".jsonl") && e.name !== SKIPPED) {
+              out.push({ project: project ?? `${tag}_`, path, size: e.size, mtimeMs: e.mtimeMs });
+            }
           }
         }
       }

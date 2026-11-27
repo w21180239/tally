@@ -166,6 +166,34 @@ describe("scanner", () => {
     a.s.stop();
   });
 
+  test("folders are listed in waves of at most 16, and every nested transcript is still found", async () => {
+    const w = worldOf();
+    for (let i = 0; i < 40; i++) {
+      file(w, `-p${i}`, "main.jsonl", [`m${i}`], HOUR);
+      file(w, `-p${i}`, `s${i}/subagents/a.jsonl`, [`a${i}`], HOUR);
+    }
+    const base = w.view();
+    let open = 0;
+    let peak = 0;
+    const list = (async (p: string) => {
+      open++;
+      peak = Math.max(peak, open);
+      try {
+        await tick();
+        return await base.$.fs.list(p);
+      } finally {
+        open--;
+      }
+    }) as typeof base.$.fs.list;
+    const seen: ScanProgress[] = [];
+    const s = startScanner({ ...base.$, fs: { ...base.$.fs, list } }, { sessionId: "a", currentProject: "-p0", cfg: CFG, roots: [ROOT], onProgress: (p) => seen.push(p) });
+    await pump(w, () => seen[seen.length - 1]?.phase === "done");
+    expect(seen[seen.length - 1]!.filesTotal).toBe(80);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(16);
+    s.stop();
+  });
+
   test("each slice stays inside the CPU budget", async () => {
     const w = worldOf();
     seed(w);
