@@ -28,6 +28,7 @@ export interface TallyLive {
   main: TallyTokens & { usd: number };
   agents: Record<string, TallyAgentLive>;
   other: { usd: number; tokens: TallyTokens; requests: number };
+  stepped: Record<string, { usd: number; tokens: TallyTokens; requests: number }>;
   messageCount: number;
   compactions: number;
   lastWrite?: { ts: number; ttl: "5m" | "1h" };

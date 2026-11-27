@@ -2,7 +2,7 @@
 // keep one LiveState atom current for the views. Every handler is O(1) beside awaited, sliced index reads.
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, On } from "claude-code";
-import { applyEarlier, addAgent, addTool, applyStep, earlierSteps, emptyLive, stepRow, stepTokens, ttlFor } from "../core/live-state.ts";
+import { addAgent, addTool, applyEarlier, applyStep, earlierSteps, emptyLive, lifeFor, resultChars, stepRow, stepTokens } from "../core/live-state.ts";
 import type { LiveState } from "../core/live-state.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
 import { costOf, memoResolver } from "../core/pricing.ts";
@@ -29,7 +29,6 @@ export type LiveDeps = {
 // share is module state, set by `wireLive`.
 let prices: PriceTable = BUILTIN_PRICES;
 let resolve = memoResolver(prices);
-let cwd = "";
 let pending: { id: string; done: Promise<void> } | undefined;
 let ledgerAt = 0;
 
@@ -51,7 +50,8 @@ async function idOf($: EngineInterface): Promise<string> {
 // The session's live state and the index's part of it, read for `id` and applied when still current.
 async function refresh($: EngineInterface, id: string): Promise<void> {
   const at = (await read($, liveAtom)).startedAt;
-  const where = cwd !== "" ? cwd : await $.session.cwd();
+  // Asked each time: a /resume can move the session to another project.
+  const where = await $.session.cwd();
   const loc = await locate($);
   const now = await $.clock.now();
   const slicer = makeSlicer($);
@@ -92,13 +92,18 @@ async function ensure($: EngineInterface): Promise<LiveState> {
   }
   const done = begin($, id);
   pending = { id, done };
-  await done;
+  try {
+    await done;
+  } catch (err) {
+    // A failed start must not stay queued: the next call begins afresh instead of rejoining the failure.
+    if (pending?.done === done) pending = undefined;
+    throw err;
+  }
   return read($, liveAtom);
 }
 
 /** Sets the live state up for the session that just started; `session.start`'s own handler calls it after `next`. */
-export async function startLive($: EngineInterface, e: { cwd: string }): Promise<void> {
-  cwd = e.cwd;
+export async function startLive($: EngineInterface, _e?: { cwd: string }): Promise<void> {
   await ensure($);
   inBackground($, () => noteLimits($));
 }
@@ -132,7 +137,7 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
     let chars = 0;
     try {
       const ran = await next(e);
-      chars = ran.text?.length ?? (ran.result === undefined ? 0 : JSON.stringify(ran.result).length);
+      chars = resultChars(ran.text, ran.result);
       return ran;
     } finally {
       await ensure($).catch(() => undefined);
@@ -140,7 +145,7 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
     }
   });
 
-  // A background subagent's steps can land after the main turn ended: each counts as it arrives.
+  // A background subagent may still be stepping after the main turn ends; every step is tallied on arrival.
   on("turn.step", async function* ($, e, next) {
     const result = yield* next(e);
     const u = result.usage;
@@ -148,7 +153,7 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
       try {
         const live = await ensure($);
         const ts = await $.clock.now();
-        const { tokens, seen } = stepTokens(u, ttlFor(live, e.agentId), ts);
+        const { tokens, seen } = stepTokens(u, lifeFor(live, e.agentId), ts);
         const usd = costOf(stepRow(live.sessionId, ts, e.agentId, u.model, tokens), prices, resolve).usd;
         await update($, liveAtom, (s) => applyStep(s, { agentId: e.agentId, ts, messageCount: e.messageCount, model: u.model, tokens, usd, ...(seen && { seen }) }));
       } catch {

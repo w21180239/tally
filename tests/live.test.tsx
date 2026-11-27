@@ -1,8 +1,9 @@
 import type { On, SessionRateLimit, TurnStepInput, TurnStepResult, TurnUsage } from "claude-code";
 import type { Engine } from "claude-code/testing";
 import { describe, expect, mock, test } from "claude-code/testing";
-import { addAgent, addTool, applyEarlier, applyStep, earlierSteps, emptyLive, stepTokens } from "../core/live-state.ts";
+import { CHARS_CAP, addAgent, addTool, applyEarlier, applyStep, earlierSteps, emptyLive, resultChars, stepTokens } from "../core/live-state.ts";
 import type { Earlier, LiveState } from "../core/live-state.ts";
+import type { TallyLive } from "../types/index.d.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { drain } from "../core/steps.ts";
 import type { Shard } from "../core/shard.ts";
@@ -19,6 +20,11 @@ const PROJECT = "-work-demo";
 const CFG = "/home/u/.claude";
 const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
+// Compile-time: the plugin-contract mirror in types/index.d.ts and LiveState must stay assignable both ways.
+type Mirrored<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const _mirror: Mirrored<LiveState, TallyLive> = true;
+void _mirror;
+
 // Opus 5.5: $4 in, $0.2 read, $8 1h write, $5 5m write, $20 out per MTok.
 const STEP = { input: 1000, output: 500, cacheRead: 100_000, cw: 10_000 };
 const STEP_USD = (1000 * 4 + 100_000 * 0.2 + 10_000 * 8 + 500 * 20) / 1e6;
@@ -33,7 +39,7 @@ async function step($: Engine, input: Omit<TurnStepInput, "turnId" | "index" | "
   await stream.result;
 }
 
-type Rig = { world: World; clock: ReturnType<typeof mock.clock>; sid: { v: string }; limits: { v: SessionRateLimit[] }; stored: Map<string, unknown>; live: () => LiveState };
+type Rig = { cwd: { v: string }; tool: { v: (e: { tool: unknown }) => { result?: unknown; text?: string } }; failSet: { n: number }; world: World; clock: ReturnType<typeof mock.clock>; sid: { v: string }; limits: { v: SessionRateLimit[] }; stored: Map<string, unknown>; live: () => LiveState };
 
 /** The engine beneath tally (the plugin under test loads on its own): clock, env, store, the session's id and usage, the step answers, and an index in memory. */
 function rig(on: On, usages: (e: TurnStepInput) => TurnUsage | null = (e) => usageOf(e.agentId === undefined ? OPUS : SONNET)): Rig {
@@ -43,6 +49,9 @@ function rig(on: On, usages: (e: TurnStepInput) => TurnUsage | null = (e) => usa
   const clock = mock.clock(on, { now: NOW });
   mock.env(on, { HOME: "/home/u" });
   const stored = new Map<string, unknown>();
+  const cwd = { v: CWD };
+  const failSet = { n: 0 };
+  const tool: Rig["tool"] = { v: (e) => ({ result: {}, text: e.tool === "Read" ? "x".repeat(4_000) : "y".repeat(100) }) };
   on("store.get", (_, e) => ({ value: stored.get(e.key) }));
   on("store.set", (_, e) => {
     stored.set(e.key, e.value);
@@ -51,6 +60,10 @@ function rig(on: On, usages: (e: TurnStepInput) => TurnUsage | null = (e) => usa
   // The atom's cell as last written: `{ shape, value }`.
   let cell: LiveState | undefined;
   on("state.set", async (_, e, next) => {
+    if (failSet.n > 0 && e.key === "live") {
+      failSet.n--;
+      return { deny: "state unavailable" };
+    }
     if (e.key === "live") cell = (e.value as { value: LiveState }).value;
     return next(e);
   });
@@ -59,7 +72,7 @@ function rig(on: On, usages: (e: TurnStepInput) => TurnUsage | null = (e) => usa
   on("turn.complete", (_, e) => ({ text: e.answer }));
   on("prompt.submit", (_, e) => ({ text: e.text }));
   on("session.id", () => ({ value: sid.v }));
-  on("session.cwd", () => ({ value: CWD }));
+  on("session.cwd", () => ({ value: cwd.v }));
   on("session.usage", () => ({ value: { startedAt: NOW, context: { window: 1_000_000 }, rateLimits: limits.v, cost: { usd: 0 } } }));
   on("fs.read", async (_, e) => ({ value: await world.$.fs.read(e.path, { as: e.as, offset: e.offset, length: e.length } as never) }));
   on("fs.write", async (_, e) => ({ value: await world.$.fs.write(e.path, e.text) }));
@@ -70,25 +83,25 @@ function rig(on: On, usages: (e: TurnStepInput) => TurnUsage | null = (e) => usa
   on("turn.step", async function* (_, e) {
     return { turnId: e.turnId, index: e.index, answer: "", toolUses: [], stopReason: "end_turn", usage: usages(e) } as TurnStepResult;
   });
-  on("tool.call", (_, e) => ({ result: {}, text: e.tool === "Read" ? "x".repeat(4_000) : "y".repeat(100) }));
+  on("tool.call", (_, e) => tool.v(e));
   on("agent.spawn", () => ({ model: SONNET, agentId: "a1" }));
-  return { world, clock, sid, limits, stored, live: () => cell ?? emptyLive("", 0) };
+  return { cwd, tool, failSet, world, clock, sid, limits, stored, live: () => cell ?? emptyLive("", 0) };
 }
 
 const at = (row: ReturnType<typeof req>, offsetMs: number) => ({ ...row, ts: NOW + offsetMs });
 const start = ($: Engine) => $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
 
-async function seedIndex(w: World, rows: ReturnType<typeof req>[], metas: Shard["metas"] = []): Promise<void> {
+async function seedIndex(w: World, rows: ReturnType<typeof req>[], metas: Shard["metas"] = [], project = PROJECT): Promise<void> {
   const byDay = new Map<number, Shard>();
   for (const r of rows) {
     const d = dayIdx(r.ts);
-    const sh = byDay.get(d) ?? { v: 1, project: PROJECT, files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [] };
+    const sh = byDay.get(d) ?? { v: 1, project, files: {}, usage: [], users: [], metas: [], compacts: [], snapshots: [] };
     sh.usage.push(r);
     byDay.set(d, sh);
   }
   const first = byDay.values().next().value as Shard;
   first.metas.push(...metas);
-  await saveBuckets(w.$, CFG, PROJECT, { days: byDay }, {}, NOW);
+  await saveBuckets(w.$, CFG, project, { days: byDay }, {}, NOW);
 }
 
 describe("live tally: main thread", () => {
@@ -180,6 +193,33 @@ describe("live tally: subagents and tools", () => {
   });
 });
 
+describe("live tally: results that cannot be serialised", () => {
+  test("a circular or bigint result still returns normally, counted by the bounded estimate", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const loop: Record<string, unknown> = { name: "abc", big: 12345678901234567890n };
+    loop.self = loop;
+    r.tool.v = () => ({ result: loop });
+    const ran = await $.tool.call({ tool: "Grep", pattern: "x" });
+    expect((ran.result as { name: string }).name).toBe("abc");
+    const s = r.live();
+    expect(s.toolCalls).toEqual({ Grep: 1 });
+    expect(s.toolChars.Grep > 0).toBe(true);
+  });
+
+  test("resultChars prefers text, stays bounded on huge values and never throws", () => {
+    expect(resultChars("abcd", { ignored: true })).toBe(4);
+    expect(resultChars(undefined, undefined)).toBe(0);
+    expect(resultChars(undefined, { a: "xyz" })).toBeGreaterThan(3);
+    expect(resultChars(undefined, 10n)).toBe(2);
+    const huge = Array.from({ length: 2_000_000 }, () => "s".repeat(100));
+    expect(resultChars(undefined, huge)).toBeLessThanOrEqual(CHARS_CAP);
+    const trap = new Proxy({}, { ownKeys: () => { throw new Error("no"); } });
+    expect(resultChars(undefined, trap)).toBe(0);
+  });
+});
+
 describe("live tally: session switches and the index", () => {
   test("a new session id zeroes the state; restoredUsd is what the index holds before this launch", async ($, on) => {
     const r = rig(on);
@@ -243,6 +283,69 @@ describe("live tally: session switches and the index", () => {
     expect(near(s.other.usd, 0.5 - STEP_USD)).toBe(true);
   });
 
+  test("other tokens and requests are the ledger's per-model counts beyond the restored rows and live steps", async ($, on) => {
+    const r = rig(on);
+    await seedIndex(
+      r.world,
+      // Earlier launch of the session: 200 input and 10 cache-write tokens on Opus.
+      [at(req({ id: "p1", session: "s-1", at: 0, tokens: { input: 200, cw1h: 10 } }), -5 * 60_000)],
+      [
+        {
+          sessionId: "s-1",
+          key: "cost-state",
+          value: {
+            startTime: NOW - 5_000,
+            totalCostUSD: 0.5,
+            modelUsage: {
+              [OPUS]: { inputTokens: 200 + 1000 + 300, outputTokens: 500 + 50, cacheReadInputTokens: 100_000, cacheCreationInputTokens: 10 + 10_000 + 40 },
+              [SONNET]: { inputTokens: 70, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+            },
+          },
+        },
+      ],
+    );
+    await start($);
+    await r.clock.settle();
+    await step($, { messageCount: 2 });
+    await r.clock.set(NOW + 120_000);
+    await r.clock.settle();
+    await $.turn.complete({ turnId: "t1", answer: "", durationMs: 1, isAborted: false } as never);
+    await r.clock.settle();
+    const o = r.live().other;
+    expect(o.tokens).toEqual({ input: 370, output: 70, cacheRead: 0, cw5m: 40, cw1h: 0 });
+    expect(o.requests).toBe(2);
+    expect(o.usd > 0).toBe(true);
+  });
+
+  test("restored rows are resolved against the session's current cwd, not the one it started in", async ($, on) => {
+    const r = rig(on);
+    await seedIndex(r.world, [at(req({ id: "m1", session: "s-2", at: 0, tokens: { input: 1_000_000 } }), -20 * 60_000)], [], "-work-moved");
+    await start($);
+    await r.clock.settle();
+    await step($, { messageCount: 2 });
+    // /resume into a session of another project: cwd and id both change.
+    r.sid.v = "s-2";
+    r.cwd.v = "/work/moved";
+    await $.prompt.submit({ text: "go on", wait: false, origin: { kind: "composer" } } as never);
+    await r.clock.settle();
+    expect(r.live().sessionId).toBe("s-2");
+    expect(near(r.live().restoredUsd, 4)).toBe(true);
+  });
+
+  test("a start that fails is not remembered: the next call begins again and the tally works", async ($, on) => {
+    const r = rig(on);
+    r.failSet.n = 1;
+    await start($);
+    await r.clock.settle();
+    expect(r.failSet.n).toBe(0);
+    expect(r.live().sessionId).toBe("");
+    await step($, { messageCount: 2 });
+    await step($, { messageCount: 4 });
+    const s = r.live();
+    expect(s.sessionId).toBe("s-1");
+    expect(near(s.main.usd, 2 * STEP_USD)).toBe(true);
+  });
+
   test("rate limits are stored as lastLimits when the engine reports them", async ($, on) => {
     const r = rig(on);
     await start($);
@@ -296,7 +399,7 @@ describe("live-state reducers", () => {
   });
 
   test("applyEarlier ignores an earlier launch's ledger line and clamps rounding to zero", () => {
-    const s = { ...emptyLive("s", 1_000_000), main: { ...tok(), usd: 1 } };
+    const s = { ...emptyLive("s", 1_000_000), main: { ...tok(), usd: 1 }, stepped: { [OPUS]: { usd: 1, tokens: tok(), requests: 1 } } };
     const old: Earlier = { restoredUsd: 2, ledger: { startTime: 1_000_000 - 300_000, totalCostUSD: 9 } };
     expect(applyEarlier(s, old).other.usd).toBe(0);
     expect(applyEarlier(s, old).restoredUsd).toBe(2);

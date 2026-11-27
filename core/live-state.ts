@@ -30,8 +30,10 @@ export type LiveState = {
   restoredUsd: number;
   main: Tokens & { usd: number };
   agents: Record<string, AgentLive>;
-  /** Spend the ledger shows beyond the steps seen (titles, permission checks, ...). */
+  /** What the cost ledger holds beyond the requests tallied here (titles, permission checks, ...). `requests` is a lower bound. */
   other: Money;
+  /** This launch's tallied requests by model, main thread and subagents together. */
+  stepped: Record<string, Money>;
   messageCount: number;
   compactions: number;
   /** The main thread's latest cache write and the life it had. */
@@ -44,10 +46,14 @@ export type LiveState = {
 export const ZERO_TOKENS: Tokens = { input: 0, output: 0, cacheRead: 0, cw5m: 0, cw1h: 0 };
 export const MAX_AGENTS = 200;
 export const TEXT_MAX = 200;
-/** A ledger gap under this many dollars is rounding, not a request. */
-export const LEDGER_MIN = 0.0001;
-/** A launch's cost-state line starts at or a little before session start. */
-export const LAUNCH_SLACK_MS = 120_000;
+/** Ledger differences below this many dollars are float noise and count as nothing. */
+export const NOISE_USD = 0.0001;
+/** A launch's ledger line may be stamped up to this long before the tally's own start. */
+export const LEDGER_LEAD_MS = 120_000;
+/** Most characters one tool result is counted as, whatever its real size. */
+export const CHARS_CAP = 4_000_000;
+const SIZE_NODES = 5_000;
+const SIZE_DEPTH = 24;
 
 export function emptyLive(sessionId: string, startedAt: number, restoredUsd = 0): LiveState {
   return {
@@ -57,6 +63,7 @@ export function emptyLive(sessionId: string, startedAt: number, restoredUsd = 0)
     main: { ...ZERO_TOKENS, usd: 0 },
     agents: {},
     other: { usd: 0, tokens: { ...ZERO_TOKENS }, requests: 0 },
+    stepped: {},
     messageCount: 0,
     compactions: 0,
     toolCalls: {},
@@ -77,14 +84,14 @@ export type StepUsage = {
   model: string;
 };
 
-/** The life a cache write is priced at when its request names none: the loop's known life, else 1h for main and 5m for a subagent. */
-export function ttlFor(s: LiveState, agentId: string | undefined): CacheLife {
+/** Cache life to price an unlabelled write at: what the main thread last showed (1h before any); a subagent gets 5m. */
+export function lifeFor(s: LiveState, agentId: string | undefined): CacheLife {
   return agentId === undefined ? (s.lastWrite?.ttl ?? "1h") : "5m";
 }
 
 /**
- * The step's tokens with the cache write split by life. A request that names the split is taken as
- * reported (the rest, as /cost does, is 5m) and `seen` is the life it shows; one that does not goes whole under `ttl`.
+ * A request's tokens with its cache write divided by life. A reported split stands (any remainder counts as 5m,
+ * like /cost) and `seen` is the life it reveals; an unlabelled write goes whole to `ttl`.
  */
 export function stepTokens(u: StepUsage, ttl: CacheLife, ts: number): { tokens: Tokens; seen?: CacheLife } {
   const n = u.cache_creation_input_tokens;
@@ -102,6 +109,47 @@ export function stepRow(sessionId: string, ts: number, agentId: string | undefin
   return { requestId: "live", sessionId, ts, model, tokens, fast: false, sidechain: agentId !== undefined, synthetic: false, thinkingChars: 0, replyChars: 0, tools: [] };
 }
 
+/**
+ * Characters a tool result feeds back. A result's own text decides when there is one; otherwise the value is
+ * sized by a walk bounded in nodes, depth and total (cycles and bigints included), and any failure reads as 0.
+ * Never throws.
+ */
+export function resultChars(text: string | undefined, result: unknown): number {
+  try {
+    if (typeof text === "string") return text.length;
+    return result === undefined ? 0 : Math.min(CHARS_CAP, roughSize(result));
+  } catch {
+    return 0;
+  }
+}
+
+function roughSize(root: unknown): number {
+  let total = 0;
+  let visited = 0;
+  const seen = new WeakSet<object>();
+  const todo: [unknown, number][] = [[root, 0]];
+  while (todo.length > 0 && visited < SIZE_NODES && total < CHARS_CAP) {
+    const [v, depth] = todo.pop()!;
+    visited++;
+    if (typeof v === "string") total += v.length + 2;
+    else if (typeof v === "number" || typeof v === "bigint" || typeof v === "boolean") total += String(v).length;
+    else if (typeof v === "object" && v !== null) {
+      if (seen.has(v) || depth >= SIZE_DEPTH) continue;
+      seen.add(v);
+      if (Array.isArray(v)) {
+        for (let i = 0; i < v.length && todo.length < SIZE_NODES; i++) todo.push([v[i], depth + 1]);
+      } else {
+        for (const k in v) {
+          if (todo.length >= SIZE_NODES) break;
+          total += k.length + 3;
+          todo.push([(v as Record<string, unknown>)[k], depth + 1]);
+        }
+      }
+    } else total += 4;
+  }
+  return total;
+}
+
 export type Step = { agentId?: string; ts: number; messageCount: number; model: string; tokens: Tokens; usd: number; seen?: CacheLife };
 
 const addTokens = (a: Tokens, b: Tokens): Tokens => ({
@@ -116,21 +164,27 @@ function withAgent(s: LiveState, id: string, patch: (a: AgentLive) => AgentLive,
   const cur = s.agents[id] ?? { id, type: "unknown", description: "", model: "", context: 0, peak: 0, firstPrompt: "", tools: {}, usd: 0, ...seed };
   const agents = { ...s.agents, [id]: patch(cur) };
   const ids = Object.keys(agents);
-  // Oldest entries (insertion order) go first once the cap is passed.
+  // Past the cap the earliest-inserted entries are dropped.
   for (let i = 0; i < ids.length - MAX_AGENTS; i++) delete agents[ids[i]!];
   return { ...s, agents };
 }
 
+function noteModel(s: LiveState, st: Step): LiveState {
+  const cur = s.stepped[st.model] ?? { usd: 0, tokens: { ...ZERO_TOKENS }, requests: 0 };
+  return { ...s, stepped: { ...s.stepped, [st.model]: { usd: cur.usd + st.usd, tokens: addTokens(cur.tokens, st.tokens), requests: cur.requests + 1 } } };
+}
+
 /** One request's tokens and cost into the main thread or the subagent that made it. */
-export function applyStep(s: LiveState, st: Step): LiveState {
+export function applyStep(s0: LiveState, st: Step): LiveState {
+  const s = noteModel(s0, st);
   const t = st.tokens;
   if (st.agentId !== undefined) {
     const prompt = t.input + t.cacheRead + t.cw5m + t.cw1h;
     return withAgent(s, st.agentId, (a) => ({ ...a, model: st.model, context: prompt, peak: Math.max(a.peak, prompt), usd: a.usd + st.usd }));
   }
   const written = t.cw5m + t.cw1h > 0;
-  const ttl = st.seen ?? s.lastWrite?.ttl;
-  const lastWrite = written && ttl !== undefined ? { ts: st.ts, ttl } : s.lastWrite;
+  const life = st.seen ?? s.lastWrite?.ttl;
+  const lastWrite = written && life !== undefined ? { ts: st.ts, ttl: life } : s.lastWrite;
   const dropped = s.messageCount > 0 && st.messageCount < s.messageCount;
   return {
     ...s,
@@ -155,48 +209,96 @@ export function addTool(s: LiveState, agentId: string | undefined, tool: string,
   return agentId === undefined ? out : withAgent(out, agentId, (a) => ({ ...a, tools: { ...a.tools, [tool]: (a.tools[tool] ?? 0) + 1 } }));
 }
 
-/** What the index knows of the session: the ledger line and the cost and cache write from before this launch. */
+/** What the index knows of the session: its ledger line, and the cost, tokens and cache write from before this launch. */
 export type Earlier = {
   restoredUsd: number;
+  /** Tokens and request counts by model from before this launch. */
+  restored?: Record<string, { tokens: Tokens; requests: number }>;
   lastWrite?: { ts: number; ttl: CacheLife };
-  ledger?: { startTime: number; totalCostUSD: number };
+  /** The ledger's total and its per-model token counts (`modelUsage`). */
+  ledger?: { startTime: number; totalCostUSD: number; models?: Record<string, Tokens> };
 };
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+// modelUsage as the ledger writes it: per model input, output, cache-read and cache-creation counts. The ledger
+// does not split a cache write by life, so it is carried whole in cw5m and compared by sum.
+function ledgerModels(v: unknown): Record<string, Tokens> {
+  const out: Record<string, Tokens> = {};
+  if (typeof v !== "object" || v === null) return out;
+  for (const [model, u] of Object.entries(v)) {
+    if (typeof u !== "object" || u === null) continue;
+    const x = u as Record<string, unknown>;
+    out[model] = { input: num(x.inputTokens), output: num(x.outputTokens), cacheRead: num(x.cacheReadInputTokens), cw5m: num(x.cacheCreationInputTokens), cw1h: 0 };
+  }
+  return out;
+}
 
 /** `Earlier` for `sessionId` from its project's shard; `beforeMs` is this launch's start. */
 export function* earlierSteps(shard: Shard, sessionId: string, beforeMs: number, prices: PriceTable): Steps<Earlier> {
   const resolve = memoResolver(prices);
   let usd = 0;
+  const restored: Record<string, { tokens: Tokens; requests: number }> = {};
   let write: { ts: number; cw5m: number; cw1h: number } | undefined;
   for (let i = 0; i < shard.usage.length; i++) {
     if (i % STEP_ROWS === STEP_ROWS - 1) yield;
     const r = shard.usage[i]!;
     if (r.sessionId !== sessionId) continue;
-    if (r.ts < beforeMs) usd += costOf(r, prices, resolve).usd;
+    if (r.ts < beforeMs) {
+      usd += costOf(r, prices, resolve).usd;
+      const m = restored[r.model] ?? { tokens: { ...ZERO_TOKENS }, requests: 0 };
+      restored[r.model] = { tokens: addTokens(m.tokens, r.tokens), requests: m.requests + 1 };
+    }
     if (!r.sidechain && !r.synthetic && r.tokens.cw5m + r.tokens.cw1h > 0 && (!write || r.ts > write.ts)) write = { ts: r.ts, cw5m: r.tokens.cw5m, cw1h: r.tokens.cw1h };
   }
-  const out: Earlier = { restoredUsd: usd };
+  const out: Earlier = { restoredUsd: usd, restored };
   if (write) out.lastWrite = { ts: write.ts, ttl: cacheLife([write]) };
   for (const m of shard.metas) {
     if (m.sessionId !== sessionId || m.key !== "cost-state") continue;
-    const v = m.value as { startTime?: unknown; totalCostUSD?: unknown } | null;
-    if (v && typeof v.startTime === "number" && typeof v.totalCostUSD === "number") out.ledger = { startTime: v.startTime, totalCostUSD: v.totalCostUSD };
+    const v = m.value as { startTime?: unknown; totalCostUSD?: unknown; modelUsage?: unknown } | null;
+    if (v && typeof v.startTime === "number" && typeof v.totalCostUSD === "number") out.ledger = { startTime: v.startTime, totalCostUSD: v.totalCostUSD, models: ledgerModels(v.modelUsage) };
   }
   return out;
 }
 
+// Per model, the ledger's counts less those already explained (restored rows, live requests), floored at 0.
+function unexplained(ledger: Record<string, Tokens>, restored: NonNullable<Earlier["restored"]>, stepped: LiveState["stepped"]): { tokens: Tokens; requests: number } {
+  const sum: Tokens = { ...ZERO_TOKENS };
+  let requests = 0;
+  const left = (l: number, a: number, b: number) => Math.max(0, l - a - b);
+  for (const [model, l] of Object.entries(ledger)) {
+    const r = restored[model]?.tokens ?? ZERO_TOKENS;
+    const t = stepped[model]?.tokens ?? ZERO_TOKENS;
+    const d: Tokens = {
+      input: left(l.input, r.input, t.input),
+      output: left(l.output, r.output, t.output),
+      cacheRead: left(l.cacheRead, r.cacheRead, t.cacheRead),
+      cw5m: left(l.cw5m + l.cw1h, r.cw5m + r.cw1h, t.cw5m + t.cw1h),
+      cw1h: 0,
+    };
+    if (d.input + d.output + d.cacheRead + d.cw5m === 0) continue;
+    // One request at least stands behind a model's leftover tokens; how many more is not recorded.
+    requests++;
+    Object.assign(sum, addTokens(sum, d));
+  }
+  return { tokens: sum, requests };
+}
+
 /**
- * Folds what the index knows into the state. `other` is this launch's ledger total less what the steps and the
- * earlier launches priced; a ledger line from an earlier launch leaves it as it was.
+ * Folds what the index knows into the state. `other` is this launch's ledger less what the earlier launches and the
+ * live requests account for, in dollars and (per model) in tokens; a ledger line from an earlier launch leaves it as it was.
  */
 export function applyEarlier(s: LiveState, e: Earlier): LiveState {
   let out: LiveState = { ...s, restoredUsd: e.restoredUsd };
   // The index's latest write is older than the live ones, or the only one before any request of this launch.
   if (e.lastWrite && (!s.lastWrite || e.lastWrite.ts > s.lastWrite.ts)) out = { ...out, lastWrite: e.lastWrite };
   const l = e.ledger;
-  if (l && l.startTime >= s.startedAt - LAUNCH_SLACK_MS) {
-    const priced = e.restoredUsd + s.main.usd + Object.values(s.agents).reduce((a, g) => a + g.usd, 0);
-    const gap = l.totalCostUSD - priced;
-    out = { ...out, other: { ...s.other, usd: gap >= LEDGER_MIN ? gap : 0 } };
+  if (l && l.startTime >= s.startedAt - LEDGER_LEAD_MS) {
+    const accounted = e.restoredUsd + Object.values(s.stepped).reduce((a, m) => a + m.usd, 0);
+    const gap = l.totalCostUSD - accounted;
+    const usd = gap >= NOISE_USD ? gap : 0;
+    const extra = usd > 0 ? unexplained(l.models ?? {}, e.restored ?? {}, s.stepped) : { tokens: { ...ZERO_TOKENS }, requests: 0 };
+    out = { ...out, other: { usd, tokens: extra.tokens, requests: usd > 0 ? Math.max(1, extra.requests) : 0 } };
   }
   return out;
 }
