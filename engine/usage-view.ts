@@ -33,6 +33,8 @@ export type UsageData = {
   by: Record<string, UsageSection[]>;
   /** The breakdown snapshot the fixed part's split rests on; `proxy` when it was taken in another session. */
   snapshot: { ts: number; proxy: boolean } | null;
+  /** Set when the last build for `key` failed and none has worked since; the tab shows it instead of waiting. */
+  failure?: { key: string; why: string };
 };
 
 export const EMPTY_USAGE: UsageData = { key: "", at: 0, requests: 0, agents: [], by: {}, snapshot: null };
@@ -43,6 +45,8 @@ export const USAGE_INTERVAL_MS = { session: 60_000, "24h": 300_000, "30d": 300_0
 export const USAGE_RETRY_MS = 30_000;
 /** Agents with figures of their own (the costliest). */
 export const AGENT_SECTIONS = 12;
+/** A failure's reason is shown cut to this many characters. */
+const FAILURE_CHARS = 80;
 
 const usageAtom = atom({ plugin: "tally", key: "usage" } as const, EMPTY_USAGE, { shape: "usage-1" });
 
@@ -50,7 +54,7 @@ export function readUsage($: EngineInterface): Promise<UsageData> {
   return read($, usageAtom);
 }
 
-export type UsageWant = { span: Span; sessionId: string; startedAt?: number };
+export type UsageWant = { span: Span; sessionId: string };
 
 export const usageKeyOf = (w: Pick<UsageWant, "span" | "sessionId">): string => `${w.span}:${w.span === "session" ? w.sessionId : ""}`;
 
@@ -164,9 +168,16 @@ export async function refreshUsage($: EngineInterface, want: UsageWant, force = 
         builtAt = now;
         failedKey = "";
       })
-      .catch(() => {
+      .catch(async (err: unknown) => {
         failedKey = key;
         failedAt = now;
+        const why = (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0]!.slice(0, FAILURE_CHARS);
+        try {
+          $.ui.log(`tally: usage build failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`, { to: "debug" });
+          await update($, usageAtom, (d) => ({ ...d, failure: { key, why } }));
+        } catch {
+          /* nothing to log to */
+        }
       })
       .finally(() => {
         running = undefined;

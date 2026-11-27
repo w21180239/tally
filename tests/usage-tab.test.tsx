@@ -2,6 +2,7 @@ import type { On, RenderInput, TurnStepInput, TurnStepResult, TurnUsage } from "
 import type { Engine } from "claude-code/testing";
 import { describe, expect, mock, test } from "claude-code/testing";
 import type { Shard } from "../core/shard.ts";
+import type { ToolUse } from "../core/types.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { needsUsage } from "../engine/usage-view.ts";
 import { keyLine } from "../view/keys.ts";
@@ -25,13 +26,13 @@ const PANE: Omit<RenderInput<"Pane">, "surface"> = {
 };
 const TEXT = (re: RegExp) => ({ type: "Text" as const, text: re });
 
-type Rig = { world: World; clock: ReturnType<typeof mock.clock>; stored: Map<string, unknown>; copied: string[]; copyOk: { v: boolean }; toasts: string[] };
+type Rig = { world: World; clock: ReturnType<typeof mock.clock>; stored: Map<string, unknown>; copied: string[]; copyOk: { v: boolean }; toasts: string[]; logs: string[]; failList: { v: boolean } };
 
 const usageOf = (): TurnUsage => ({ input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 100_000, cache_creation_input_tokens: 10_000, model: OPUS, ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 10_000 });
 
 function rig(on: On): Rig {
   const world = worldOf();
-  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), stored: new Map(), copied: [], copyOk: { v: true }, toasts: [] };
+  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), stored: new Map(), copied: [], copyOk: { v: true }, toasts: [], logs: [], failList: { v: false } };
   mock.env(on, { HOME: "/home/u" });
   on("store.get", (_, e) => ({ value: r.stored.get(e.key) }));
   on("store.set", (_, e) => {
@@ -48,7 +49,10 @@ function rig(on: On): Rig {
     r.toasts.push(String((e as { text?: string }).text ?? ""));
     return { value: undefined };
   });
-  on("ui.log", () => ({ value: undefined }));
+  on("ui.log", (_, e) => {
+    r.logs.push(String((e as { text?: string }).text ?? ""));
+    return { value: undefined };
+  });
   on("ui.invalidate", () => ({ value: undefined }));
   on("ui.panes", () => ({ value: [] }));
   on("ui.copy", (_, e) => {
@@ -56,7 +60,8 @@ function rig(on: On): Rig {
     return { value: r.copyOk.v ? { isCopied: true } : { isCopied: false, reason: "no clipboard" } } as never;
   });
   on("session.id", () => ({ value: "s-1" }));
-  on("session.cwd", () => ({ value: CWD }));
+    // A cwd that is not text makes the build throw, as a broken host call would.
+  on("session.cwd", () => ({ value: r.failList.v ? (null as never) : CWD }));
   on("session.model", () => ({ value: OPUS }));
   on("session.info", () => ({ value: { platform: "linux" } }));
   on("session.usage", (_, e) => ({ value: { startedAt: NOW, context: { tokens: 236_000, window: 1_000_000, percent: 24 }, rateLimits: [], cost: { usd: 0 } } as never }));
@@ -81,10 +86,10 @@ const ago = (min: number): number => NOW - min * 60_000;
 const LONG = `echo ${"x".repeat(100)}`;
 
 // One session: a first write, a tool result, a long pause, and an Explore sub-agent. Priced at opus 5.5 list.
-async function seed(w: World): Promise<void> {
+async function seed(w: World, extra: ToolUse[] = []): Promise<void> {
   const at = <T extends { ts: number }>(row: T, min: number): T => ({ ...row, ts: ago(min) });
   const usage = [
-    { ...at(req({ id: "a", session: "s-1", tokens: { input: 100, output: 500, cw5m: 20_000 }, tools: [{ ...bash("tb", LONG), inputChars: 400 }, bash("t2", "ls a"), bash("t3", "ls b"), bash("t4", "ls c"), { name: "Write", id: "tw", target: "/src/a.ts", inputChars: 800 }] }), 50), replyChars: 400 },
+    { ...at(req({ id: "a", session: "s-1", tokens: { input: 100, output: 500, cw5m: 20_000 }, tools: [{ ...bash("tb", LONG), inputChars: 400 }, bash("t2", "ls a"), bash("t3", "ls b"), bash("t4", "ls c"), { name: "Write", id: "tw", target: "/src/a.ts", inputChars: 800 }, ...extra] }), 50), replyChars: 400 },
     at(req({ id: "b", session: "s-1", tokens: { cacheRead: 20_000, cw5m: 5000 } }), 49),
     at(req({ id: "c", session: "s-1", tokens: { cacheRead: 25_000, cw5m: 30_000 } }), 20),
     at(inAgent(req({ id: "x", session: "s-1", tokens: { cw5m: 4000 }, agentType: "Explore" }), "ag1"), 10),
@@ -104,8 +109,8 @@ async function seed(w: World): Promise<void> {
   w.put(`${CFG}/projects/${PROJECT}/s-1.jsonl`, "");
 }
 
-async function open($: Engine, r: Rig) {
-  await seed(r.world);
+async function open($: Engine, r: Rig, extra: ToolUse[] = []) {
+  await seed(r.world, extra);
   await start($);
   await r.clock.settle();
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
@@ -190,7 +195,7 @@ describe("usage tab", () => {
     const r = rig(on);
     const ui = await open($, r);
     // A command cut in its label opens to its whole text when its row is pressed.
-    const rows = (await ui.findAll({ type: "Button" })).map((b) => b.props.key).filter((k) => typeof k === "string" && k.startsWith("open-output-"));
+    const rows = (await ui.findAll({ type: "Button" })).map((b) => b.props.key).filter((k) => typeof k === "string" && k.startsWith("open-output|"));
     expect(rows.length).toBeGreaterThan(0);
     const whole = TEXT(new RegExp(`^${LONG}$`));
     expect(await ui.find(whole)).toBeUndefined();
@@ -206,6 +211,46 @@ describe("usage tab", () => {
     await ui.press({ key: rows[0]! });
     await r.clock.settle();
     expect(await ui.find(whole)).toBeUndefined();
+    await ui.unmount();
+  });
+
+  test("an opened row stays the same row when m unfolds the lists above it", async ($, on) => {
+    const r = rig(on);
+    // Four writes put a hidden item in the Write group, which sits above Shell commands: m shifts every later row.
+    const more = ["b", "c", "d"].map((n): ToolUse => ({ name: "Write", id: `w-${n}`, target: `/src/${n}.ts`, inputChars: 40 }));
+    const ui = await open($, r, more);
+    const dRow = TEXT(/^\s+\/src\/d\.ts$/);
+    expect(await ui.find(dRow)).toBeUndefined();
+    const opens = async () => (await ui.findAll({ type: "Button" })).map((b) => b.props.key).filter((k): k is string => typeof k === "string" && k.startsWith("open-output|"));
+    const before = await opens();
+    expect(before).toHaveLength(1);
+    const whole = TEXT(new RegExp(`^${LONG}$`));
+    await ui.press({ key: before[0]! });
+    await r.clock.settle();
+    expect(await ui.find(whole)).toBeDefined();
+    await ui.press({ key: "lists-more" });
+    await r.clock.settle();
+    expect(await ui.find(dRow)).toBeDefined();
+    expect(await opens()).toEqual(before);
+    expect(await ui.find(whole)).toBeDefined();
+    await ui.press({ key: "lists-more" });
+    await r.clock.settle();
+    expect(await ui.find(whole)).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("a failed build is logged and the tab says so instead of waiting", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world);
+    await start($);
+    await r.clock.settle();
+    r.failList.v = true;
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/^Could not read the index: .*cwd\.replace/))).toBeDefined();
+    expect(await ui.find(TEXT(/Reading the index/))).toBeUndefined();
+    expect(r.logs.some((l) => l.includes("usage build failed") && l.includes("cwd.replace"))).toBe(true);
     await ui.unmount();
   });
 

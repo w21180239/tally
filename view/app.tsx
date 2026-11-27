@@ -188,7 +188,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     const [live, data] = await Promise.all([readLive($), readUsage($)]);
     const want = { span, sessionId: live.sessionId };
     // Figures of another span, or old ones, are rebuilt off the draw; the tab shows what it has meanwhile.
-    if (needsUsage(data, want, d.now)) inBackground($, () => refreshUsage($, { ...want, startedAt: live.startedAt }));
+    if (needsUsage(data, want, d.now)) inBackground($, () => refreshUsage($, want));
     const drawn = drawUsage(t, {
       d,
       data,

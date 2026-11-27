@@ -65,6 +65,26 @@ describe("parseLine usage", () => {
     expect(r.tools[2].target).toBe("/x/y.ts");
     expect(r.tools[1].inputChars).toBe(JSON.stringify({ command: "ls -l" }).length);
   });
+  test("an Agent or Task call keeps its prompt, cut at the text cap; other tools keep none", () => {
+    const long = "p".repeat(5000);
+    const r = usage(
+      parseLine(
+        assistant({
+          content: [
+            { type: "tool_use", id: "a1", name: "Agent", input: { description: "d", prompt: "Survey the cache layer", subagent_type: "Explore" } },
+            { type: "tool_use", id: "a2", name: "Task", input: { prompt: long } },
+            { type: "tool_use", id: "a3", name: "Agent", input: { description: "no prompt" } },
+            { type: "tool_use", id: "a4", name: "Bash", input: { command: "ls", prompt: "not an agent" } },
+          ],
+        }),
+        ctx,
+      ),
+    );
+    expect(r.tools[0].prompt).toBe("Survey the cache layer");
+    expect(r.tools[1].prompt).toBe(long.slice(0, 4000));
+    expect(r.tools[2].prompt).toBeUndefined();
+    expect(r.tools[3].prompt).toBeUndefined();
+  });
   test("tool ids and whole reads: a Read without offset, limit or pages is whole", () => {
     const r = usage(
       parseLine(

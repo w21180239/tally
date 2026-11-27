@@ -56,16 +56,20 @@ export function stepAgent(order: string[], current: string, step: 1 | -1): strin
 
 const agentName = (data: UsageData, key: string): string => (key === "" ? "All agents" : (data.agents.find((a) => a.key === key)?.label ?? key));
 
-type Cut = { rows: DetailRow[]; hidden: number };
+type Cut = { rows: Array<{ row: DetailRow; key: string }>; hidden: number };
 
-// A section's rows with each group's items cut to ITEM_ROWS (or all of them when `more`).
-function cutRows(rows: DetailRow[], more: boolean): Cut {
-  if (more) return { rows, hidden: 0 };
-  const out: DetailRow[] = [];
+// A section's rows with each group's items cut to ITEM_ROWS (or all of them when `more`). A row's key names it by
+// kind, group and label (a big write by agent and time), so an opened row stays the same row when the lists fold,
+// unfold or are rebuilt in another order.
+function cutRows(kind: string, rows: DetailRow[], more: boolean): Cut {
+  const out: Cut["rows"] = [];
   let run = 0;
+  let group = "";
   for (const r of rows) {
-    run = isItem(r) ? run + 1 : 0;
-    if (run <= ITEM_ROWS) out.push(r);
+    const item = isItem(r);
+    run = item ? run + 1 : 0;
+    if (!item) group = r.label;
+    if (more || run <= ITEM_ROWS) out.push({ row: r, key: r.id !== undefined ? `${kind}|${r.id}` : `${kind}|${item ? group : ""}|${r.label}` });
   }
   return { rows: out, hidden: rows.length - out.length };
 }
@@ -83,7 +87,11 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   const blank = (key: string): RenderElement => <Text key={`gap-${key}`}> </Text>;
 
   if (i.span === "session" && i.sessionId === "") return { rows: [<Text key="none" dimColor>No session yet.</Text>], ctx };
-  if (data.key !== usageKeyOf({ span: i.span, sessionId: i.sessionId })) return { rows: [<Text key="loading" dimColor>Reading the index...</Text>], ctx };
+  if (data.key !== usageKeyOf({ span: i.span, sessionId: i.sessionId })) {
+    const want = usageKeyOf({ span: i.span, sessionId: i.sessionId });
+    if (data.failure?.key === want) return { rows: [<Text key="failed" dimColor wrap="truncate-end">{`Could not read the index: ${data.failure.why}`}</Text>], ctx };
+    return { rows: [<Text key="loading" dimColor>Reading the index...</Text>], ctx };
+  }
   if (data.requests === 0) return { rows: [<Text key="empty" dimColor>{`No requests in ${SPAN_WORDS[i.span]}.`}</Text>], ctx };
 
   const agent = data.by[view.agent] === undefined ? "" : view.agent;
@@ -205,11 +213,11 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
         </Box>
       </Box>,
     );
-    const cut = cutRows(s.rows, view.more);
+    const cut = cutRows(s.kind, s.rows, view.more);
     hidden += cut.hidden;
-    const top = cut.rows.reduce((n, r) => (isItem(r) ? n : Math.max(n, r.usd)), 0);
+    const top = cut.rows.reduce((n, { row: r }) => (isItem(r) ? n : Math.max(n, r.usd)), 0);
     if (cut.rows.length === 0 && (s.largest ?? []).length === 0) out.push(<Text key={`none-${s.kind}`} dimColor>Nothing in this span.</Text>);
-    for (const [n, r] of cut.rows.entries()) out.push(...amountRow(`${s.kind}-${n}`, r, isItem(r) || top <= 0 ? null : r.usd / top));
+    for (const { row: r, key } of cut.rows) out.push(...amountRow(key, r, isItem(r) || top <= 0 ? null : r.usd / top));
     const largest = s.largest ?? [];
     if (largest.length > 0) {
       out.push(
@@ -220,7 +228,7 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
       const shown = view.more ? largest : largest.slice(0, ITEM_ROWS);
       hidden += largest.length - shown.length;
       const topWrite = shown.reduce((n, r) => Math.max(n, r.usd), 0);
-      for (const [n, r] of shown.entries()) out.push(...amountRow(`${s.kind}-big-${n}`, { ...r, label: `  ${r.label}` }, topWrite > 0 ? r.usd / topWrite : null));
+      for (const r of shown) out.push(...amountRow(`${s.kind}|${r.id ?? r.label}`, { ...r, label: `  ${r.label}` }, topWrite > 0 ? r.usd / topWrite : null));
     }
     out.push(blank(s.kind));
   }
@@ -255,7 +263,7 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   );
   out.push(
     <Text key="usage-note" dimColor wrap="truncate-end">
-      {data.snapshot?.proxy === true ? "~ estimated from text length; startup split from another session's snapshot" : "~ estimated from text length, scaled to each request's tokens"}
+      {data.snapshot?.proxy === true ? "~ estimated from text length; startup split from another session's snapshot" : "~ estimated from text length, then fitted to what each request reported"}
     </Text>,
   );
   return { rows: out, ctx };

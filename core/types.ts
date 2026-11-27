@@ -16,6 +16,8 @@ export type ToolUse = {
   mcpServer?: string;
   target?: string;
   command?: string;
+  /** The Agent tool's prompt, cut at the text cap. Absent in shards written before it existed (they list no sub-agent briefs until rescanned). */
+  prompt?: string;
   inputChars: number;
   /** tool_use id: pairs the call with its tool_result row. Absent in shards written before it existed. */
   id?: string;

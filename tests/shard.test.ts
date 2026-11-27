@@ -19,7 +19,7 @@ const usage = (i: number, ts = 1_000_000 + i): UsageRow => ({
   synthetic: i % 5 === 0,
   thinkingChars: 6,
   replyChars: 7,
-  tools: i % 4 === 0 ? [{ name: "Bash", command: "ls", inputChars: 2, id: "toolu_1" }, { name: "Read", target: "/p/a/x", inputChars: 3, whole: true }] : [],
+  tools: i % 4 === 0 ? [{ name: "Bash", command: "ls", inputChars: 2, id: "toolu_1" }, { name: "Read", target: "/p/a/x", inputChars: 3, whole: true }, { name: "Agent", id: "toolu_2", inputChars: 30, prompt: "Survey the \u00e9 layer" }] : [],
   ...(i % 2 ? { cwd: "/p/a", skill: "sk" } : { plugin: "pl", effort: "high" }),
 });
 const shard = (n = 3): Shard => ({

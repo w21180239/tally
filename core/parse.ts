@@ -9,6 +9,7 @@ const nonEmpty = (v: unknown): string | undefined => (typeof v === "string" && v
 
 const NOTICE_PREFIXES = ["<task-notification", "<system-reminder", "<local-command-", "<command-", "<teammate-message", "<agent-message", "<channel"];
 const TEXT_CAP = 4000;
+const AGENT_TOOLS: ReadonlySet<string> = new Set(["Agent", "Task"]);
 const TARGET_FIELDS = ["file_path", "notebook_path", "path", "pattern", "url", "query"];
 
 const META: Record<string, (l: Rec) => unknown> = {
@@ -44,6 +45,10 @@ function toolOf(block: Rec): ToolUse {
   if (target) t.target = target;
   const command = nonEmpty(input.command);
   if (command) t.command = command;
+  if (AGENT_TOOLS.has(name)) {
+    const prompt = nonEmpty(input.prompt);
+    if (prompt) t.prompt = prompt.slice(0, TEXT_CAP);
+  }
   return t;
 }
 

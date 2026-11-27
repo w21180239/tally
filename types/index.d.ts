@@ -80,6 +80,7 @@ export interface TallyDetailRow {
   usd: number;
   estimated: boolean;
   full?: string;
+  id?: string;
 }
 
 export interface TallyUsageSection {
@@ -96,6 +97,7 @@ export interface TallyUsage {
   agents: Array<{ key: string; label: string; usd: number }>;
   by: Record<string, TallyUsageSection[]>;
   snapshot: { ts: number; proxy: boolean } | null;
+  failure?: { key: string; why: string };
 }
 
 export interface TallyChart {

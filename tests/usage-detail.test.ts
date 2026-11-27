@@ -127,6 +127,29 @@ describe("usage detail: input and output", () => {
     expect(item!.label.endsWith("\u{2026}")).toBe(true);
   });
 
+  test("an Agent call lists under Sub-agent briefs; its prompt is the item and opens in full, and a call without one has no item", () => {
+    const body = `Survey the cache layer.\n${"detail ".repeat(40)}`;
+    const sh = shardOf([
+      req({ id: "a", at: 0, tokens: { output: 1000 }, tools: [{ name: "Agent", id: "t1", inputChars: 400, prompt: body }, { name: "Task", id: "t2", inputChars: 40 }] }),
+    ]);
+    const rows = usageDetail(run(sh), "output");
+    const at = rows.findIndex((r) => r.label === "Sub-agent briefs");
+    expect(at).toBeGreaterThanOrEqual(0);
+    const items = rows.slice(at + 1).filter((r) => r.label.startsWith("  "));
+    const brief = items.find((r) => r.label === "  Survey the cache layer.");
+    expect(brief?.full).toBe(body);
+    expect(close(brief?.tokens, 100)).toBe(true);
+    // A call whose prompt the index never kept shows by its tool name, with nothing behind it.
+    const bare = items.find((r) => r.label === "  Task");
+    expect(bare).toBeDefined();
+    expect(bare?.full).toBeUndefined();
+  });
+
+  test("a big write carries a stable id of its agent and time", () => {
+    const rows = writeParts(run(shardOf([req({ id: "a", at: 0, tokens: { cw5m: 5000 } })])), undefined).largest;
+    expect(rows[0]!.id).toBe(`main@${T0}`);
+  });
+
   test("written parts larger than the reported output are scaled down to it", () => {
     const sh = shardOf([{ ...req({ id: "a", at: 0, tokens: { output: 100 } }), replyChars: 4000 }]);
     const rows = usageDetail(run(sh), "output");

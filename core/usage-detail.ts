@@ -15,7 +15,15 @@ export type UsageKind = "input" | "output" | "cacheRead" | "cacheWrite";
 export const USAGE_KINDS: readonly UsageKind[] = ["input", "output", "cacheRead", "cacheWrite"];
 
 /** One line of a section; an item under a group has its label indented by two spaces. `full` is the whole text a label cut short. */
-export type DetailRow = { label: string; tokens: number; usd: number; estimated: boolean; full?: string };
+export type DetailRow = {
+  label: string;
+  tokens: number;
+  usd: number;
+  estimated: boolean;
+  full?: string;
+  /** Stable identity where the label is not unique or not steady (a big write: agent and time). */
+  id?: string;
+};
 
 export type Amount = { tokens: number; usd: number };
 
@@ -150,7 +158,7 @@ function outputParts(r: UsageRow): OutPart[] {
     const tokens = t.inputChars / CHARS_PER_TOKEN;
     if (WRITE_TOOLS.has(t.name)) parts.push({ key: "write", tokens, item: { label: t.target ?? t.name, ...(t.target !== undefined && { full: t.target }) } });
     else if (t.name === "Bash") parts.push({ key: "command", tokens, item: { label: clip(t.command ?? "", ITEM_LABEL) || "Bash", ...(t.command !== undefined && { full: t.command }) } });
-    else if (AGENT_TOOLS.has(t.name)) parts.push({ key: "agent", tokens });
+    else if (AGENT_TOOLS.has(t.name)) parts.push({ key: "agent", tokens, item: { label: clip(t.prompt ?? "", ITEM_LABEL) || t.name, ...(t.prompt !== undefined && { full: t.prompt }) } });
     else parts.push({ key: "other", tokens, item: { label: t.name } });
   }
   return parts;
@@ -447,6 +455,7 @@ export function writeParts(src: Pick<Summary, "usage">, agent: string | undefine
         tokens: b.tokens,
         usd: b.usd,
         estimated: false,
+        id: `${b.agent}@${b.ts}`,
         ...(b.detail !== undefined && { full: b.detail.length > FULL_CAP ? b.detail.slice(0, FULL_CAP) : b.detail }),
       };
     });
