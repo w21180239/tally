@@ -20,12 +20,12 @@ export const bigPaste: HintRule = {
     return [
       {
         rule: "big-paste",
-        title: "Pasted prompts that linger in context",
+        title: "Large pastes carried through the session",
         usd,
-        summary: `${heavy.length} big ${heavy.length === 1 ? "prompt" : "prompts"} sat in the conversation and ${heavy.length === 1 ? "was" : "were"} read again on each following request, ${usdText(usd)} in all.`,
-        action: "Put logs, diffs and documents in a file and give Claude its path, or paste only the lines that matter.",
+        summary: `Every later request paid to read ${heavy.length} large ${heavy.length === 1 ? "prompt" : "prompts"} again, because ${heavy.length === 1 ? "it" : "they"} stayed in the conversation: ${usdText(usd)} in all.`,
+        action: "Keep bulky material out of the prompt: write logs, diffs and documents into a file, then give Claude its path, or paste just the relevant lines.",
         evidence,
-        short: `${heavy.length} big ${heavy.length === 1 ? "paste" : "pastes"} re-read ${usdText(usd)}`,
+        short: `${heavy.length} large ${heavy.length === 1 ? "paste" : "pastes"} cost ${usdText(usd)} to re-read`,
       },
     ];
   },

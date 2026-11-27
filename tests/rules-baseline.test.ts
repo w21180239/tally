@@ -95,17 +95,27 @@ describe("near-limit", () => {
     expect(h.rule).toBe("near-limit");
     expect(h.usd).toBe(0);
     expect(h.urgent).toBe(true);
-    expect(h.short).toBe("5h limit 80%");
-    expect(h.evidence.map((e) => e.detail)).toEqual(["80% used, resets in 2h 00m"]);
+    expect(h.short).toBe("5h cap at 80%");
+    expect(h.evidence.map((e) => e.detail)).toEqual(["80% consumed; 2h 00m until reset"]);
   });
   test("stays quiet at 80 percent, with no limits, and once the window has reset", () => {
     expect(rule("near-limit").run(inputOf({ limits: { fiveHour: win(80), sevenDay: win(12) } }))).toEqual([]);
     expect(rule("near-limit").run(inputOf())).toEqual([]);
     expect(rule("near-limit").run(inputOf({ limits: { fiveHour: win(95, NOW - 1) } }))).toEqual([]);
   });
+  test("a window with no reset time still fires, shows no reset and is never expired by the clock", () => {
+    const h = only(rule("near-limit").run(inputOf({ limits: { fiveHour: { percentUsed: 95 } } })));
+    expect(h.short).toBe("5h cap at 95%");
+    expect(h.evidence.map((e) => e.detail)).toEqual(["95% consumed"]);
+    expect(rule("near-limit").run(inputOf({ limits: { fiveHour: { percentUsed: 80 } } }))).toEqual([]);
+  });
+  test("a window with no reset time sits beside one with a reset time", () => {
+    const h = only(rule("near-limit").run(inputOf({ limits: { fiveHour: { percentUsed: 90 }, sevenDay: win(85) } })));
+    expect(h.evidence.map((e) => e.detail)).toEqual(["90% consumed", "85% consumed; 2h 00m until reset"]);
+  });
   test("two windows over the line give two evidence rows, with days for the longer wait", () => {
     const h = only(rule("near-limit").run(inputOf({ limits: { fiveHour: win(91), sevenDay: win(85, NOW + 3 * DAY + 5 * HOUR) } })));
-    expect(h.evidence.map((e) => `${e.label}|${e.detail}`)).toEqual(["5-hour window|91% used, resets in 2h 00m", "7-day window|85% used, resets in 3d 5h"]);
+    expect(h.evidence.map((e) => `${e.label}|${e.detail}`)).toEqual(["5-hour window|91% consumed; 2h 00m until reset", "7-day window|85% consumed; 3d 5h until reset"]);
   });
 });
 
@@ -152,11 +162,18 @@ describe("subagent-model", () => {
     const only1m = { Search: { [FABLE]: { ...money(8, 3, { ...noTokens, input: 1_000_000 }), tools: { Glob: 3 } } } };
     expect(Math.round((only(fire("subagent-model", { bySubType: only1m })).usd) * 1e9) / 1e9).toBe(6);
   });
-  test("a type that writes, calls an MCP tool, runs on sonnet or calls nothing is left alone", () => {
+  test("a type that writes, calls an MCP tool or runs on sonnet is left alone", () => {
     expect(fire("subagent-model", { bySubType: sub(OPUS, { Read: 5, Edit: 1 }) })).toEqual([]);
     expect(fire("subagent-model", { bySubType: sub(OPUS, { Read: 5, mcp__x__y: 1 }) })).toEqual([]);
     expect(fire("subagent-model", { bySubType: sub(SONNET, { Read: 5 }, 5.25) })).toEqual([]);
-    expect(fire("subagent-model", { bySubType: sub(OPUS, {}) })).toEqual([]);
+  });
+  test("a type with no tool calls at all is trivially read-only and fires", () => {
+    const h = only(fire("subagent-model", { bySubType: sub(OPUS, {}) }));
+    expect(Math.round(h.usd * 1e9) / 1e9).toBe(5.25);
+    expect(h.evidence.map((e) => e.label)).toEqual(["Explore"]);
+  });
+  test("a type that calls only hand-back tools counts as having no tool calls and fires", () => {
+    expect(fire("subagent-model", { bySubType: sub(OPUS, { SubagentHandback: 2 }) }).length).toBe(1);
   });
   test("the catch-all unknown type is skipped", () => {
     expect(fire("subagent-model", { bySubType: { unknown: sub(OPUS, { Read: 5 }).Explore } })).toEqual([]);
@@ -231,6 +248,11 @@ describe("whole-reads", () => {
     expect(h.projected).toBe(true);
     expect(h.evidence.map((e) => `${e.kind}|${e.detail}`)).toEqual(["path|/w/a.ts", "text|3 whole reads in one conversation"]);
   });
+  test("title, summary, action and short carry the count only, never a path", () => {
+    const h = only(fire("whole-reads", { wholeReads: { "/w/a.ts": 3, "/w/b.ts": 4 }, flow }));
+    expect(h.short).toBe("2 files re-opened in full 3+ times");
+    for (const text of [h.title, h.summary, h.action, h.short]) expect(text).not.toMatch(/a\.ts|b\.ts|\/w\//);
+  });
   test("two whole reads are not enough", () => {
     expect(fire("whole-reads", { wholeReads: { "/w/a.ts": 2 }, flow })).toEqual([]);
   });
@@ -264,17 +286,16 @@ describe("tool-output", () => {
     expect(h.usd).toBe(4);
     expect(h.evidence[0]!.detail).toBe("mcp__x__dump");
   });
-  test("the advice follows the source", () => {
+  test("the advice follows the tool name, then the source, then a default", () => {
     const base = { usage: usageOf(10) };
-    const read = only(fire("tool-output", { ...base, flow: [item("read", "/w/big.ts", 5)] }));
-    const mcp = only(fire("tool-output", { ...base, flow: [item("mcp", "mcp__x__dump", 5)] }));
-    const other = only(fire("tool-output", { ...base, flow: [item("tool", "Notebook", 5)] }));
-    const search = only(fire("tool-output", { ...base, flow: [item("tool", "Glob", 5)] }));
-    const web = only(fire("tool-output", { ...base, flow: [item("tool", "WebFetch", 5)] }));
-    const answer = only(fire("tool-output", { ...base, flow: [item("tool", "Agent", 5)] }));
-    expect(new Set([read.action, mcp.action, other.action, search.action, web.action, answer.action]).size).toBe(6);
-    expect(read.action).toContain("offset");
-    expect(read.evidence[0]!.kind).toBe("path");
+    const adviceOf = (source: "read" | "mcp" | "tool", label: string) => only(fire("tool-output", { ...base, flow: [item(source, label, 5)] })).action;
+    const cases: Array<["read" | "mcp" | "tool", string]> = [["read", "/w/big.ts"], ["mcp", "mcp__x__dump"], ["tool", "Notebook"], ["tool", "Grep"], ["tool", "Glob"], ["tool", "WebSearch"], ["tool", "WebFetch"], ["tool", "Agent"]];
+    expect(new Set(cases.map(([s, l]) => adviceOf(s, l))).size).toBe(cases.length);
+    expect(adviceOf("tool", "grep")).toBe(adviceOf("tool", "Grep"));
+    expect(adviceOf("tool", "Task")).toBe(adviceOf("tool", "Agent"));
+    expect(adviceOf("tool", "constructor")).toBe(adviceOf("tool", "Notebook"));
+    expect(adviceOf("read", "/w/big.ts")).toContain("offset");
+    expect(only(fire("tool-output", { ...base, flow: [item("read", "/w/big.ts", 5)] })).evidence[0]!.kind).toBe("path");
   });
   test("30 percent exactly, or under 1 dollar, stays quiet", () => {
     expect(fire("tool-output", { usage: usageOf(10), flow: [item("tool", "Grep", 3)] })).toEqual([]);
@@ -286,7 +307,7 @@ describe("thinking-output", () => {
   test("past 60 percent of output spend and at least 1 dollar fires; the amount is the thinking spend", () => {
     const h = only(fire("thinking-output", { usage: usageOf(0, [group("thinking", 6.01), group("reply", 3.99)]) }));
     expect(Math.round((h.usd) * 1e9) / 1e9).toBe(6.01);
-    expect(h.evidence[0]!.detail).toBe("60% of the $10.00 output");
+    expect(h.evidence[0]!.detail).toBe("$6.01 of $10.00 output");
   });
   test("60 percent exactly stays quiet", () => {
     expect(fire("thinking-output", { usage: usageOf(0, [group("thinking", 6), group("reply", 4)]) })).toEqual([]);

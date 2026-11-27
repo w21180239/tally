@@ -25,7 +25,8 @@ export const subagentModel: HintRule = {
       for (const [model, m] of Object.entries(byModel)) {
         if (!BIG.test(model)) continue;
         const tools = Object.keys(m.tools).map((n) => n.toLowerCase()).filter((n) => !HANDBACK.has(n));
-        if (tools.length === 0 || !tools.every((n) => LOOKING.has(n))) continue;
+        // A type with no tool calls at all changes nothing, so it counts as read-only.
+        if (!tools.every((n) => LOOKING.has(n))) continue;
         const onSonnet = m.usd - priced(m.tokens, sonnet);
         if (onSonnet <= 0) continue;
         found.push({ type, model, usd: m.usd, onSonnet, onHaiku: haiku === undefined ? null : m.usd - priced(m.tokens, haiku) });
@@ -42,13 +43,13 @@ export const subagentModel: HintRule = {
     return [
       {
         rule: "subagent-model",
-        title: "Read-only sub-agents on a flagship model",
+        title: "Read-only agents paying flagship rates",
         usd,
         projected: true,
-        summary: `${found.length} sub-agent ${found.length === 1 ? "type" : "types"} ran only read-only tools on a top-tier model; at Sonnet rates the identical tokens come to ${usdText(usd)} less.`,
-        action: "Set `model: sonnet` (or haiku) in those agent definitions, or export CLAUDE_CODE_SUBAGENT_MODEL to change the default.",
+        summary: `${found.length} sub-agent ${found.length === 1 ? "type called" : "types called"} nothing beyond look-up tools, yet ran on a top-tier model. Priced at Sonnet rates, identical usage would cost ${usdText(usd)} less.`,
+        action: "Pin a cheaper model for these agents: add `model: sonnet` (or haiku) to each definition, or change the default via the CLAUDE_CODE_SUBAGENT_MODEL variable.",
         evidence,
-        short: `${found.length} read-only ${found.length === 1 ? "agent" : "agents"} on a big model`,
+        short: `${found.length} look-up ${found.length === 1 ? "agent" : "agents"} could use a cheaper model`,
       },
     ];
   },

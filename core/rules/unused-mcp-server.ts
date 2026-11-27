@@ -22,12 +22,12 @@ export const unusedMcpServer: HintRule = {
     return [
       {
         rule: "unused-mcp-server",
-        title: "MCP servers nobody called",
+        title: "Idle MCP servers occupying context",
         usd,
-        summary: `${idle.length} MCP ${idle.length === 1 ? "server made" : "servers made"} no calls, yet ${idle.length === 1 ? "its" : "their"} tool schemas were in every request's context, ${usdText(usd)} in all.`,
-        action: "Disconnect them in /mcp, or enable deferred tool loading so a schema reaches the context only once Claude looks the tool up.",
+        summary: `${idle.length} MCP ${idle.length === 1 ? "server was" : "servers were"} never called, but ${idle.length === 1 ? "its" : "their"} tool schemas rode along in every request's context: ${usdText(usd)} in all.`,
+        action: "Disconnect them via /mcp, or turn on deferred tool loading so a schema enters the context only when Claude searches for that tool.",
         evidence,
-        short: `${idle.length} unused MCP ${idle.length === 1 ? "server" : "servers"}`,
+        short: `${idle.length} idle MCP ${idle.length === 1 ? "server" : "servers"}`,
       },
     ];
   },

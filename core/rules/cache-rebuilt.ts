@@ -21,12 +21,12 @@ export const cacheRebuilt: HintRule = {
     return [
       {
         rule: "cache-rebuilt",
-        title: "Cache rewritten after idle gaps",
+        title: "Idle gaps forced cache rewrites",
         usd,
-        summary: `${rebuilds.length} ${rebuilds.length === 1 ? "request" : "requests"} rewrote ${tokensText(tokens)} tokens because the cache had lapsed, ${usdText(usd)} in all.`,
-        action: "Stay in a session while its work is live, or close it with /clear rather than returning after a long gap; a 1-hour cache outlasts most breaks.",
+        summary: `After a long idle gap, ${rebuilds.length} ${rebuilds.length === 1 ? "request" : "requests"} had to write ${tokensText(tokens)} tokens of context into the cache afresh, ${usdText(usd)} in all.`,
+        action: "Finish a task while its cache is warm, or /clear before walking away; a 1-hour cache outlasts most breaks.",
         evidence: worst.map((r) => ({ label: "Rebuild", detail: `${dayText(r.ts)}, ${tokensText(r.tokens)} tokens after ${durationText(r.gapMs)} idle, ${usdText(r.usd)}`, kind: "text" as const })),
-        short: `${rebuilds.length} cache ${rebuilds.length === 1 ? "rebuild" : "rebuilds"}`,
+        short: `${rebuilds.length} idle-gap cache ${rebuilds.length === 1 ? "rewrite" : "rewrites"}`,
         metric: { name: "rebuild share of cost", value: rebuildShare(i) },
       },
     ];

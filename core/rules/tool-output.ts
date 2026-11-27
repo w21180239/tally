@@ -5,25 +5,22 @@ import { OUTPUT_MIN_USD, OUTPUT_SHARE } from "./command-output.ts";
 
 const LISTED_PARTS = 3;
 
-// What to change depends on where the output came from.
-const ADVICE = {
-  search: "Make the pattern or path filter more specific and cap the results; listing file names alone is often enough.",
-  web: "Pull less from the web: request only the section you need, or look for a more specific page.",
-  answer: "Tell the agent in its prompt to return conclusions only, not a dump of everything it looked at.",
-  read: "Load slices with the offset and limit parameters, or find the lines with Grep first, instead of pulling in complete files.",
-  mcp: "Request a smaller payload from the MCP server (filters, page sizes, field lists) or pick a narrower tool, so results are short before they reach the conversation.",
-  tool: "Scope the call more tightly, or save the output to a log and open just the relevant slice.",
+// Advice by tool name (lower-case). A tool missing here falls back to the advice for its source, then to the default.
+const BY_TOOL: ReadonlyMap<string, string> = new Map([
+  ["grep", "Tighten the pattern or directory, and list matching file names before pulling any lines."],
+  ["glob", "Use a more specific glob, or point it at the subfolder you need rather than the whole tree."],
+  ["websearch", "Word the query more precisely and restrict it to the domains that matter, so fewer results come back."],
+  ["webfetch", "Say in the fetch prompt which section you want, or choose a smaller page."],
+  ["agent", "End the delegation prompt with a request for findings only; the agent's whole write-up otherwise stays in this context."],
+  ["task", "End the delegation prompt with a request for findings only; the agent's whole write-up otherwise stays in this context."],
+]);
+const BY_SOURCE: Partial<Record<FlowItem["source"], string>> = {
+  read: "Open slices rather than whole files: locate the lines with Grep first, then pass offset and limit.",
+  mcp: "Trim what the server sends back: select fewer fields, lower the page size or filter server-side; failing that, use a narrower tool.",
 };
+const DEFAULT_ADVICE = "Redirect bulky results to a scratch file and open just the slice that matters, or scope the call more tightly.";
 
-// A source is `read`, `mcp` or `tool`; a tool's own name picks the closest advice.
-function adviceFor(f: FlowItem): string {
-  if (f.source === "read" || f.source === "mcp") return ADVICE[f.source];
-  const name = f.label.toLowerCase();
-  if (name === "grep" || name === "glob") return ADVICE.search;
-  if (name === "webfetch" || name === "websearch") return ADVICE.web;
-  if (name === "agent" || name === "task") return ADVICE.answer;
-  return ADVICE.tool;
-}
+const adviceFor = (f: FlowItem): string => BY_TOOL.get(f.label.toLowerCase()) ?? BY_SOURCE[f.source] ?? DEFAULT_ADVICE;
 
 export const toolOutput: HintRule = {
   id: "tool-output",
@@ -40,12 +37,12 @@ export const toolOutput: HintRule = {
     return [
       {
         rule: "tool-output",
-        title: "Bulky tool results keep being re-read",
+        title: "Bulky tool results weigh on later requests",
         usd,
-        summary: `${heavy.length === 1 ? "One source returned" : `${heavy.length} sources returned`} results that remained in the conversation; later requests re-read them for ${usdText(usd)}.`,
+        summary: `${heavy.length === 1 ? "One source" : `${heavy.length} sources`} returned results that stayed in the conversation, and later requests paid ${usdText(usd)} to re-read them.`,
         action: adviceFor(top),
         evidence,
-        short: `tool results re-read ${usdText(usd)}`,
+        short: `tool results cost ${usdText(usd)} to re-read`,
       },
     ];
   },

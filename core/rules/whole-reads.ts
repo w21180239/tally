@@ -1,5 +1,4 @@
 import type { Evidence, HintRule } from "../hint.ts";
-import { baseName } from "../path.ts";
 import { usdText } from "./shared.ts";
 
 /** Number of full reads of the same file in a single conversation that triggers a report. */
@@ -22,17 +21,16 @@ export const wholeReads: HintRule = {
     for (const f of files.slice(0, FILES_LISTED)) {
       evidence.push({ label: "File", detail: f.path, kind: "path" }, { label: "Whole reads", detail: `${f.n} whole reads in one conversation`, kind: "text" });
     }
-    const top = files[0]!;
     return [
       {
         rule: "whole-reads",
         title: "Repeated full-file reads",
         usd,
         projected: true,
-        summary: `${files.length} ${files.length === 1 ? "file was" : "files were"} opened in full at least ${WHOLE_READS_MIN} times by one conversation; each copy stays in context and is billed again on every following request (${usdText(usd)} for the extra copies).`,
-        action: "Read each file once and keep working from that copy; when you need less, use offset and limit. After an edit, rely on the edit result instead of re-reading the file.",
+        summary: `${files.length} ${files.length === 1 ? "file was" : "files were"} loaded in full ${WHOLE_READS_MIN}+ times within a single conversation. Every extra copy stays in context and is charged again on each later request (${usdText(usd)} for the extras).`,
+        action: "Load each file once and work from that copy. When only part is needed, pass offset and limit; after an edit, trust the edit's own output rather than reading the file again.",
         evidence,
-        short: `${baseName(top.path)} read whole ${top.n}x`,
+        short: `${files.length} ${files.length === 1 ? "file" : "files"} re-opened in full ${WHOLE_READS_MIN}+ times`,
       },
     ];
   },

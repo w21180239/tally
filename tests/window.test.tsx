@@ -731,7 +731,7 @@ async function seedFast(w: World): Promise<void> {
 }
 
 describe("window: the leading hint", () => {
-  const HINT = "\u{25b2} fast mode 100% of spend \u{b7} ~$2.02";
+  const HINT = "\u{25b2} fast requests carry 100% of spend \u{b7} ~$2.02";
 
   test("fold line and Session tab carry the live session's leading hint and its estimated saving", async ($, on) => {
     const world = worldOf();

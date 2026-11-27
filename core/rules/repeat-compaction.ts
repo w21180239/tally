@@ -22,12 +22,12 @@ export const repeatCompaction: HintRule = {
     return [
       {
         rule: "repeat-compaction",
-        title: "Long sessions keep compacting",
+        title: "Compaction loops in long sessions",
         usd,
-        summary: `${repeated.length} ${repeated.length === 1 ? "session was" : "sessions were"} compacted at least ${REPEAT_MIN} times. Every compaction drops detail, rewrites the cache and leaves a recap that later requests re-read${usd > 0 ? `; these sessions cost ${usdText(usd)}` : ""}.`,
-        action: "Wrap up at a clean stopping point and open a new session with a short brief, or give the long task to sub-agents that begin with empty contexts.",
+        summary: `${repeated.length} ${repeated.length === 1 ? "session hit" : "sessions hit"} ${REPEAT_MIN}+ compactions. Each one discards detail, invalidates the cache and leaves a recap that every later request re-reads${usd > 0 ? ` (${usdText(usd)} for ${repeated.length === 1 ? "that session" : "those sessions"})` : ""}.`,
+        action: "Stop at a natural endpoint and begin a fresh session from a brief note, or delegate the long task to sub-agents, each starting with an empty context.",
         evidence,
-        short: `${repeated.length} ${repeated.length === 1 ? "session" : "sessions"} compacted ${REPEAT_MIN}+ times`,
+        short: `${repeated.length} ${repeated.length === 1 ? "session" : "sessions"} with ${REPEAT_MIN}+ compactions`,
       },
     ];
   },

@@ -14,12 +14,12 @@ export const thinkingOutput: HintRule = {
     return [
       {
         rule: "thinking-output",
-        title: "Thinking dominates the output bill",
+        title: "Reasoning tokens dominate output spend",
         usd: thinking,
-        summary: `${percentText(thinking / total)} of the ${usdText(total)} spent on output, ${usdText(thinking)}, went to thinking tokens, which bill like any other output.`,
-        action: "Use a lower /effort setting day to day and raise it only for the hard problems.",
-        evidence: [{ label: "Thinking", detail: `${percentText(thinking / total)} of the ${usdText(total)} output`, kind: "text" }],
-        short: `thinking is ${percentText(thinking / total)} of output`,
+        summary: `Output cost ${usdText(total)} in this span, and thinking tokens (priced as output) took ${usdText(thinking)}, or ${percentText(thinking / total)}, of it.`,
+        action: "Run at a reduced /effort by default and raise it only for hard problems.",
+        evidence: [{ label: "Thinking", detail: `${usdText(thinking)} of ${usdText(total)} output`, kind: "text" }],
+        short: `${percentText(thinking / total)} of output spend is thinking`,
       },
     ];
   },

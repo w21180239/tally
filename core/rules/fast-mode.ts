@@ -19,13 +19,13 @@ export const fastMode: HintRule = {
     return [
       {
         rule: "fast-mode",
-        title: "Fast mode drives a big part of the bill",
+        title: "Fast mode premium adds up",
         usd: saving,
         projected: true,
-        summary: `Fast-mode requests account for ${usdText(fast.usd)}, ${percentText(fastShare(i))} of the span, and bill at ${mul}x the normal rate; the same work at the normal rate would cost ${usdText(saving)} less.`,
-        action: "Switch /fast off by default and turn it on only when a quicker answer is worth the premium.",
-        evidence: [{ label: "Fast requests", detail: `${fast.requests} ${fast.requests === 1 ? "request" : "requests"}, ${usdText(fast.usd)}`, kind: "text" }],
-        short: `fast mode ${percentText(fastShare(i))} of spend`,
+        summary: `${usdText(fast.usd)} (${percentText(fastShare(i))}) of this span's spend went through fast mode. Those requests bill at ${mul}x, so standard speed would have saved ${usdText(saving)}.`,
+        action: "Keep /fast off as the default and enable it only for stretches where waiting on a reply costs you more than the premium.",
+        evidence: [{ label: "Fast requests", detail: `${usdText(fast.usd)} across ${fast.requests} ${fast.requests === 1 ? "request" : "requests"}`, kind: "text" }],
+        short: `fast requests carry ${percentText(fastShare(i))} of spend`,
         metric: { name: "fast share of cost", value: fastShare(i) },
       },
     ];

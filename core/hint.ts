@@ -33,8 +33,8 @@ export type Hint = {
   metric?: { name: string; value: number };
 };
 
-/** One rate-limit window: percent used (0 to 100) and the reset time (epoch ms). */
-export type LimitWindow = { percentUsed: number; resetsAt: number };
+/** One rate-limit window: percent used (0 to 100) and, when the host reports it, the reset time (epoch ms). */
+export type LimitWindow = { percentUsed: number; resetsAt?: number };
 export type RuleLimits = { fiveHour?: LimitWindow; sevenDay?: LimitWindow };
 
 /**

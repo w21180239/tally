@@ -20,12 +20,12 @@ export const commandOutput: HintRule = {
     return [
       {
         rule: "command-output",
-        title: "Noisy command output keeps being re-read",
+        title: "Chatty commands inflate the context",
         usd,
-        summary: `${heavy.length === 1 ? "One command printed" : `${heavy.length} commands printed`} output that remained in the conversation; later requests re-read it for ${usdText(usd)}, over ${percentText(OUTPUT_SHARE)} of all re-reading.`,
-        action: "Cut it down where it is produced: filter with head, tail or grep, use a quiet flag, or redirect the full log into a file and open only the failing lines.",
+        summary: `Output from ${heavy.length === 1 ? "one command" : `${heavy.length} commands`} stayed in the conversation, and later requests paid ${usdText(usd)} to re-read it: more than ${percentText(OUTPUT_SHARE)} of all re-reading.`,
+        action: "Trim at the source: add a quiet flag, pipe into grep or a line limiter, or store the full log in a scratch file and open only the failing lines.",
         evidence,
-        short: `command output re-read ${usdText(usd)}`,
+        short: `commands cost ${usdText(usd)} in re-reads`,
       },
     ];
   },

@@ -110,8 +110,13 @@ describe("limitsFrom", () => {
       sevenDay: { percentUsed: 12, resetsAt: NOW + 3_600_000 },
     });
   });
-  test("a window without a figure or a reset time, an unknown kind and a bad record read as nothing", () => {
-    expect(limitsFrom({ limits: [{ kind: "five_hour", percentUsed: 91 }, { kind: "other", percentUsed: 5, resetsAt: at }, { kind: "seven_day", percentUsed: "x", resetsAt: at }, null] })).toBeUndefined();
+  test("a window with no reset time keeps its percent and leaves the reset unset", () => {
+    const got = limitsFrom({ limits: [{ kind: "five_hour", percentUsed: 95 }, { kind: "seven_day", percentUsed: 40, resetsAt: "not a date" }] });
+    expect(got).toEqual({ fiveHour: { percentUsed: 95 }, sevenDay: { percentUsed: 40 } });
+    expect(got?.fiveHour && "resetsAt" in got.fiveHour).toBe(false);
+  });
+  test("a window without a figure, an unknown kind and a bad record read as nothing", () => {
+    expect(limitsFrom({ limits: [{ kind: "five_hour", resetsAt: at }, { kind: "other", percentUsed: 5, resetsAt: at }, { kind: "seven_day", percentUsed: "x", resetsAt: at }, null] })).toBeUndefined();
     expect(limitsFrom(undefined)).toBeUndefined();
     expect(limitsFrom({ limits: "no" })).toBeUndefined();
   });

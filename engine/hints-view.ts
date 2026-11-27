@@ -68,16 +68,17 @@ export function needsHints(data: Pick<HintsData, "key" | "at" | "failure">, want
 
 let running: Promise<void> | undefined;
 
-/** The last rate limits tally saw, as the rules read them: a window with a time in the past or no figures is left out. */
+/** The last rate limits tally saw, as the rules read them: windows without a percent are dropped, and a reset time that is absent or unparsable stays unset. */
 export function limitsFrom(stored: unknown): RuleLimits | undefined {
   const list = (stored as { limits?: unknown } | null | undefined)?.limits;
   if (!Array.isArray(list)) return undefined;
   const out: RuleLimits = {};
   for (const l of list as Array<{ kind?: unknown; percentUsed?: unknown; resetsAt?: unknown }>) {
-    const resetsAt = typeof l?.resetsAt === "string" ? Date.parse(l.resetsAt) : NaN;
-    if (typeof l?.percentUsed !== "number" || !Number.isFinite(l.percentUsed) || !Number.isFinite(resetsAt)) continue;
-    if (l.kind === "five_hour") out.fiveHour = { percentUsed: l.percentUsed, resetsAt };
-    else if (l.kind === "seven_day") out.sevenDay = { percentUsed: l.percentUsed, resetsAt };
+    if (typeof l?.percentUsed !== "number" || !Number.isFinite(l.percentUsed)) continue;
+    const parsed = typeof l.resetsAt === "string" ? Date.parse(l.resetsAt) : NaN;
+    const window = { percentUsed: l.percentUsed, ...(Number.isFinite(parsed) && { resetsAt: parsed }) };
+    if (l.kind === "five_hour") out.fiveHour = window;
+    else if (l.kind === "seven_day") out.sevenDay = window;
   }
   return out.fiveHour === undefined && out.sevenDay === undefined ? undefined : out;
 }

@@ -327,10 +327,10 @@ describe("hints tab", () => {
     expect(Math.round(usdOf(demoRows().usage.slice(0, 1)) * 1e6) / 1e6).toBe(FAST_USD);
     expect((await ui.findAll(TEXT(exact(`~${money(FAST_SAVING)}`)))).length).toBe(2);
     expect(await ui.find(TEXT(exact(money(REBUILD_USD))))).toBeDefined();
-    expect((await ui.findAll(TEXT(exact("Fast mode drives a big part of the bill")))).length).toBe(2);
-    expect(await ui.find(TEXT(exact("Cache rewritten after idle gaps")))).toBeDefined();
-    expect((await ui.findAll(TEXT(/^Fast-mode requests account for /))).length).toBe(2);
-    expect((await ui.findAll(TEXT(/^Switch \/fast off by default/))).length).toBe(2);
+    expect((await ui.findAll(TEXT(exact("Fast mode premium adds up")))).length).toBe(2);
+    expect(await ui.find(TEXT(exact("Idle gaps forced cache rewrites")))).toBeDefined();
+    expect((await ui.findAll(TEXT(/ of this span's spend went through fast mode\./))).length).toBe(2);
+    expect((await ui.findAll(TEXT(/^Keep \/fast off as the default/))).length).toBe(2);
     await ui.unmount();
   });
 
@@ -380,16 +380,16 @@ describe("hints tab", () => {
     expect((await ui.findAll({ type: "Button" })).filter((b) => String(b.props.key).startsWith("open-hint|")).map((b) => b.props.label)).toEqual(["show evidence (1)", "show evidence (1)", "show evidence (1)"]);
     await ui.press({ key: "open-hint|span|fast-mode" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Fast requests \u{b7} 1 request, $4.05")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Fast requests \u{b7} $4.05 across 1 request")))).toBeDefined();
     expect((await ui.find({ key: "open-hint|span|fast-mode" }))?.props.label).toBe("hide evidence (1)");
     // The session block's row of the same rule is its own row and stays folded.
     expect((await ui.findAll(TEXT(/^Fast requests \u{b7} /u))).length).toBe(1);
     await ui.press({ key: "span-24h" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Fast requests \u{b7} 1 request, $4.05")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Fast requests \u{b7} $4.05 across 1 request")))).toBeDefined();
     await ui.press({ key: "repo-only" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Fast requests \u{b7} 1 request, $4.05")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Fast requests \u{b7} $4.05 across 1 request")))).toBeDefined();
     await ui.press({ key: "open-hint|span|fast-mode" });
     await r.clock.settle();
     expect(await ui.find(TEXT(/^Fast requests \u{b7} /u))).toBeUndefined();
@@ -411,7 +411,7 @@ describe("hints tab", () => {
     await ui.press({ key: "open-hint|span|long-session" });
     await r.clock.settle();
     expect(await ui.find(TEXT(exact("Session \u{b7} Fix the widget")))).toBeDefined();
-    expect(await ui.find(TEXT(exact("Peak context \u{b7} 750k of 1M tokens (75%)")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Peak context \u{b7} 75% full: 750k tokens in a 1M window")))).toBeDefined();
     await ui.unmount();
   });
 
@@ -421,7 +421,7 @@ describe("hints tab", () => {
     await ui.press({ key: "open-hint|span|long-session" });
     await r.clock.settle();
     expect(await ui.find(TEXT(exact("Session")))).toBeDefined();
-    expect(await ui.find(TEXT(exact("Peak context \u{b7} 750k of 1M tokens (75%)")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Peak context \u{b7} 75% full: 750k tokens in a 1M window")))).toBeDefined();
     expect(await ui.find(TEXT(/Fix the widget/))).toBeUndefined();
     await ui.unmount();
   });
@@ -436,10 +436,10 @@ describe("hints tab", () => {
     expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|near-limit", "title-hint|session|fast-mode", "title-hint|session|unused-plugin"]);
     // The span block carries no limit hint: the limits belong to the live session.
     expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode", "title-hint|span|cache-rebuilt", "title-hint|span|unused-plugin"]);
-    expect(await ui.find(TEXT(exact("Usage limit running low")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Usage cap nearly reached")))).toBeDefined();
     await ui.press({ key: "open-hint|session|near-limit" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("5-hour window \u{b7} 91% used, resets in 1h 00m")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("5-hour window \u{b7} 91% consumed; 1h 00m until reset")))).toBeDefined();
     await ui.unmount();
   });
 
