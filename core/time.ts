@@ -30,12 +30,17 @@ export function hourStart(ms: number): number {
   return Math.floor(ms / HOUR_MS) * HOUR_MS;
 }
 
+/** Index of the local clock hour containing ms (hours since the epoch, shifted by the zone offset). */
+export function localHourIndex(ms: number, tzOffsetMin: number): number {
+  return Math.floor((ms + tzOffsetMin * 60_000) / HOUR_MS);
+}
+
 /**
- * Active hours: the number of distinct UTC clock hours that contain at least one timestamp.
- * A request counts in the hour of its timestamp; idle hours do not count.
+ * Active hours: the number of distinct local clock hours (UTC when tzOffsetMin is 0 or omitted)
+ * that contain at least one timestamp. A request counts in the hour of its timestamp; idle hours do not.
  */
-export function activeHours(tsList: number[]): number {
+export function activeHours(tsList: number[], tzOffsetMin = 0): number {
   const hours = new Set<number>();
-  for (const ts of tsList) hours.add(Math.floor(ts / HOUR_MS));
+  for (const ts of tsList) hours.add(localHourIndex(ts, tzOffsetMin));
   return hours.size;
 }

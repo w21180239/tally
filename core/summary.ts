@@ -1,5 +1,5 @@
 // Pure aggregation of shard rows into the dimensions the History and Usage views render.
-import { DAY_MS, HOUR_MS, hourStart, localDayStart, localHour } from "./time.ts";
+import { DAY_MS, HOUR_MS, hourStart, localDayStart, localHourIndex } from "./time.ts";
 import { repoOf } from "./path.ts";
 import { costOf } from "./pricing.ts";
 import type { PriceTable } from "./pricing.ts";
@@ -25,7 +25,7 @@ export type Summary = {
   /** Spend of the requests that called the server, so entries overlap when one request calls several. */
   byMcp: Record<string, Money & { calls: number }>;
   timeline: { bucketMs: number; points: Money[] };
-  /** USD per local hour of day (index 0-23) over the span. */
+  /** Nearest-rank [p30, p50, p70, p90, max] of token totals per local clock hour, over hours with a request. */
   hourBands: number[];
   topSessions: TopSession[];
   unpriced: string[];
@@ -109,8 +109,14 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
       for (const x of rows) if (x.r.ts > latest) ((latest = x.r.ts), (id = x.r.sessionId));
     }
     rows = rows.filter((x) => x.r.sessionId === id);
-    from = rows.length ? Math.min(...rows.map((x) => x.r.ts)) : nowMs;
-    to = rows.length ? Math.max(...rows.map((x) => x.r.ts)) : nowMs;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const x of rows) {
+      if (x.r.ts < lo) lo = x.r.ts;
+      if (x.r.ts > hi) hi = x.r.ts;
+    }
+    from = rows.length ? lo : nowMs;
+    to = rows.length ? hi : nowMs;
     const hours = (hourStart(to) - hourStart(from)) / HOUR_MS + 1;
     if (hours <= SESSION_HOURLY_MAX) {
       bucketMs = HOUR_MS;
@@ -139,13 +145,14 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     byPlugin: {},
     byMcp: {},
     timeline: { bucketMs, points: Array.from({ length: count }, zero) },
-    hourBands: new Array<number>(24).fill(0),
+    hourBands: [0, 0, 0, 0, 0],
     topSessions: [],
     unpriced: [...unpriced].sort(),
   };
 
   type Acc = { usd: number; started: number; byRepo: Map<string, number> };
   const sessions = new Map<string, Acc>();
+  const hourTokens = new Map<number, number>();
   for (const { r, usd, repo } of rows) {
     add(out.total, r, usd);
     add(r.sidechain ? out.sub : out.main, r, usd);
@@ -168,13 +175,20 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     }
     const i = Math.floor((r.ts - start) / bucketMs);
     if (i >= 0 && i < count) add(out.timeline.points[i], r, usd);
-    out.hourBands[localHour(r.ts, tzOffsetMin)] += usd;
+    const h = localHourIndex(r.ts, tzOffsetMin);
+    hourTokens.set(h, (hourTokens.get(h) ?? 0) + r.tokens.input + r.tokens.output + r.tokens.cacheRead + r.tokens.cw5m + r.tokens.cw1h);
 
     let a = sessions.get(r.sessionId);
     if (!a) sessions.set(r.sessionId, (a = { usd: 0, started: r.ts, byRepo: new Map() }));
     a.usd += usd;
     a.started = Math.min(a.started, r.ts);
     a.byRepo.set(repo, (a.byRepo.get(repo) ?? 0) + usd);
+  }
+
+  if (hourTokens.size) {
+    const sorted = [...hourTokens.values()].sort((a, b) => a - b);
+    const rank = (pct: number) => sorted[Math.max(1, Math.ceil((pct / 100) * sorted.length)) - 1];
+    out.hourBands = [rank(30), rank(50), rank(70), rank(90), sorted[sorted.length - 1]];
   }
 
   // Titles and PR links: metas are already the latest per session and key.

@@ -15,7 +15,14 @@ export class Ledger {
     const larger = row.tokens.output > cur.row.tokens.output;
     const takeOwner = isSub && !cur.isSub && fileKey !== cur.file;
     if (!larger && !takeOwner) return "dup";
-    if (larger) cur.row = row;
+    if (larger) {
+      // Ownership follows the sub-agent file: a larger main-file row inherits its sidechain flag and type.
+      if (cur.isSub && !isSub) {
+        row.sidechain = true;
+        if (cur.row.agentType !== undefined) row.agentType = cur.row.agentType;
+      }
+      cur.row = row;
+    }
     if (takeOwner) {
       cur.file = fileKey;
       cur.isSub = true;

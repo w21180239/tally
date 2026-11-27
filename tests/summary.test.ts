@@ -86,12 +86,24 @@ describe("30d span", () => {
     expect(t.points.reduce((a, p) => a + p.requests, 0)).toBe(s.total.requests);
   });
 
-  test("hourBands: usd per local hour of day", () => {
-    expect(s.hourBands.length).toBe(24);
-    const nz: Record<number, number> = {};
-    s.hourBands.forEach((v, h) => v && (nz[h] = usd({ usd: v })));
-    expect(nz).toEqual({ 0: 1, 1: 3.5, 9: 16, 11: 9.5, 15: 7, 16: 1, 21: 15, 23: 5 });
-    expect(near(s.hourBands.reduce((a, b) => a + b, 0), s.total.usd)).toBe(true);
+  test("hourBands: nearest-rank p30/p50/p70/p90/max of tokens per local clock hour", () => {
+    // Tokens per request unit: opus 1.16M, sonnet 1.19M. Nine local hours with a request, ascending:
+    // 1.16 (r13), 1.16 (r11), 1.19 (r17), 1.19 (r15), 2.32 (r1), 4.70 (r8+r9), 5.83 (r5-r7), 5.95 (r10), 8.30 (r2-r4).
+    // ranks: p30 = 3rd, p50 = 5th, p70 = 7th, p90 = 9th.
+    expect(s.hourBands).toEqual([1_190_000, 2_320_000, 5_830_000, 8_300_000, 8_300_000]);
+  });
+
+  test("hourBands: an empty span is all zeros", () => {
+    expect(run({ repo: "nope" }).hourBands).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  test("hourBands: hours follow the zone offset, requests in one local hour add up", () => {
+    // +330: 00:00Z and 00:29Z are both local 05:xx; 00:30Z is local 06:00.
+    const mk = (id: string, ts: string, k: number) => usage({ id, session: "z", ts, model: SONNET, k, cwd: "/w/r" });
+    const rows = [mk("h1", "2026-11-20T00:00:00Z", 1), mk("h2", "2026-11-20T00:29:00Z", 1), mk("h3", "2026-11-20T00:30:00Z", 1)];
+    const sh: Shard = { v: 1, project: "q", files: {}, usage: rows, users: [], metas: [], compacts: [], snapshots: [] };
+    expect(run({ tzOffsetMin: 330 }, [sh]).hourBands).toEqual([1_190_000, 1_190_000, 2_380_000, 2_380_000, 2_380_000]);
+    expect(run({ tzOffsetMin: 0 }, [sh]).hourBands).toEqual([3_570_000, 3_570_000, 3_570_000, 3_570_000, 3_570_000]);
   });
 
   test("topSessions: usd descending, titles, PR, resume command", () => {
@@ -196,7 +208,7 @@ describe("repo filter", () => {
     expect(s.fast.requests).toBe(0);
     expect(s.topSessions.map((t) => t.sessionId)).toEqual(["s1", "s4", "s6"]);
     expect(s.unpriced).toEqual([]);
-    expect(near(s.hourBands.reduce((a, b) => a + b, 0), 26)).toBe(true);
+    expect(s.hourBands[4]).toBe(8_300_000);
   });
 
   test("unknown repo gives an empty summary", () => {
@@ -232,5 +244,12 @@ describe("time helpers", () => {
     const base = Date.UTC(2026, 0, 1);
     expect(activeHours([])).toBe(0);
     expect(activeHours([base, base + 59 * 60_000, base + h, base + 5 * h + 1, base + 5 * h + 2])).toBe(3);
+  });
+
+  test("activeHours with a half-hour zone counts local clock hours", () => {
+    const base = Date.UTC(2026, 0, 1);
+    const ts = [base, base + 29 * 60_000, base + 30 * 60_000, base + 59 * 60_000];
+    expect(activeHours(ts)).toBe(1);
+    expect(activeHours(ts, 330)).toBe(2);
   });
 });
