@@ -12,12 +12,12 @@ export const unusedPlugin: HintRule = {
     return [
       {
         rule: "unused-plugin",
-        title: "Plugins loaded but unused",
+        title: "Plugins adding context without being used",
         usd,
-        summary: `${rows.length} installed ${rows.length === 1 ? "plugin stayed" : "plugins stayed"} idle throughout, while ${rows.length === 1 ? "its" : "their"} skill, agent and MCP listings rode along in every request: ${usdText(usd)} in all.`,
-        action: "Turn them off in /plugin and switch them back on only in the projects that need them.",
+        summary: `${usdText(usd)} went to carrying the skill, agent and MCP listings of ${rows.length} installed ${rows.length === 1 ? "plugin" : "plugins"} that never got used.`,
+        action: "Open /plugin to switch these off; a plugin that only one project needs can be enabled in that project alone.",
         evidence: rows.slice(0, LISTED).map((r) => ({ label: r.p.name, detail: `${tokensText(r.p.tokensPerRequest)} tokens per request, ${usdText(r.usd)}`, kind: "text" as const })),
-        short: `${rows.length} idle ${rows.length === 1 ? "plugin" : "plugins"} loaded`,
+        short: `${rows.length} installed ${rows.length === 1 ? "plugin" : "plugins"} never used`,
       },
     ];
   },

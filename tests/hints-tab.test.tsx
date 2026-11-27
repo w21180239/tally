@@ -327,10 +327,10 @@ describe("hints tab", () => {
     expect(Math.round(usdOf(demoRows().usage.slice(0, 1)) * 1e6) / 1e6).toBe(FAST_USD);
     expect((await ui.findAll(TEXT(exact(`~${money(FAST_SAVING)}`)))).length).toBe(2);
     expect(await ui.find(TEXT(exact(money(REBUILD_USD))))).toBeDefined();
-    expect((await ui.findAll(TEXT(exact("Fast mode premium adds up")))).length).toBe(2);
-    expect(await ui.find(TEXT(exact("Idle gaps forced cache rewrites")))).toBeDefined();
-    expect((await ui.findAll(TEXT(/ of this span's spend went through fast mode\./))).length).toBe(2);
-    expect((await ui.findAll(TEXT(/^Keep \/fast off as the default/))).length).toBe(2);
+    expect((await ui.findAll(TEXT(exact("Fast-mode surcharge")))).length).toBe(2);
+    expect(await ui.find(TEXT(exact("Cache expired while idle")))).toBeDefined();
+    expect((await ui.findAll(TEXT(/ pricing; the same requests at standard speed would have cost /))).length).toBe(2);
+    expect((await ui.findAll(TEXT(/^Toggle it with \/fast/))).length).toBe(2);
     await ui.unmount();
   });
 
@@ -401,7 +401,7 @@ describe("hints tab", () => {
     const ui = await open($, r);
     await ui.press({ key: "open-hint|span|cache-rebuilt" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Rebuild \u{b7} 2026-11-24, 150k tokens after 2h 00m idle, $1.20")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Rebuild \u{b7} 2026-11-24: 150k tokens written after 2h 00m idle ($1.20)")))).toBeDefined();
     await ui.unmount();
   });
 
@@ -436,7 +436,7 @@ describe("hints tab", () => {
     expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|near-limit", "title-hint|session|fast-mode", "title-hint|session|unused-plugin"]);
     // The span block carries no limit hint: the limits belong to the live session.
     expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode", "title-hint|span|cache-rebuilt", "title-hint|span|unused-plugin"]);
-    expect(await ui.find(TEXT(exact("Usage cap nearly reached")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Rate-limit window almost spent")))).toBeDefined();
     await ui.press({ key: "open-hint|session|near-limit" });
     await r.clock.settle();
     expect(await ui.find(TEXT(exact("5-hour window \u{b7} 91% consumed; 1h 00m until reset")))).toBeDefined();

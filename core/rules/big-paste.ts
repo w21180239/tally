@@ -2,7 +2,7 @@ import { PASTE_MIN_TOKENS } from "../flow.ts";
 import type { Evidence, HintRule } from "../hint.ts";
 import { LISTED, titleOf, tokensText, usdText } from "./shared.ts";
 
-/** Smallest re-read cost, in dollars, that makes a pasted prompt worth reporting (the token floor applies too). */
+/** Dollar floor on a paste's re-read cost; the token floor from flow.ts applies as well. */
 export const PASTE_MIN_USD = 1;
 
 export const bigPaste: HintRule = {
@@ -20,12 +20,12 @@ export const bigPaste: HintRule = {
     return [
       {
         rule: "big-paste",
-        title: "Large pastes carried through the session",
+        title: "Oversized prompts pasted into chat",
         usd,
-        summary: `Every later request paid to read ${heavy.length} large ${heavy.length === 1 ? "prompt" : "prompts"} again, because ${heavy.length === 1 ? "it" : "they"} stayed in the conversation: ${usdText(usd)} in all.`,
-        action: "Keep bulky material out of the prompt: write logs, diffs and documents into a file, then give Claude its path, or paste just the relevant lines.",
+        summary: `${usdText(usd)} in cache reads went to carrying ${heavy.length} pasted ${heavy.length === 1 ? "prompt" : "prompts"} of ${tokensText(PASTE_MIN_TOKENS)}+ tokens through the rest of the session.`,
+        action: "Trim the paste to the lines that matter, or store the whole thing in a file and reference its path in the prompt.",
         evidence,
-        short: `${heavy.length} large ${heavy.length === 1 ? "paste" : "pastes"} cost ${usdText(usd)} to re-read`,
+        short: `${heavy.length} pasted ${heavy.length === 1 ? "prompt" : "prompts"} re-read for ${usdText(usd)}`,
       },
     ];
   },

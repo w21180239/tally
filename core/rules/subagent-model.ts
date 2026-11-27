@@ -4,9 +4,9 @@ import type { ModelPrice } from "../pricing.ts";
 import type { Tokens } from "../types.ts";
 import { LISTED, usdText } from "./shared.ts";
 
-// Read-only tool names, lower-cased. An agent type that calls only these seldom needs a flagship model.
+// Inspection-only tools: a type restricted to them is a cheaper-model candidate.
 const LOOKING: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch", "bash"]);
-// Result-return tools every type uses; they reveal nothing about what the agent did.
+// Tools that carry results back to the parent; ignored when judging what a type does.
 const HANDBACK: ReadonlySet<string> = new Set(["subagenthandback", "structuredoutput"]);
 const BIG = /(opus|fable)/i;
 
@@ -25,7 +25,7 @@ export const subagentModel: HintRule = {
       for (const [model, m] of Object.entries(byModel)) {
         if (!BIG.test(model)) continue;
         const tools = Object.keys(m.tools).map((n) => n.toLowerCase()).filter((n) => !HANDBACK.has(n));
-        // A type with no tool calls at all changes nothing, so it counts as read-only.
+        // A type that called no tools passes this check vacuously, which is intended.
         if (!tools.every((n) => LOOKING.has(n))) continue;
         const onSonnet = m.usd - priced(m.tokens, sonnet);
         if (onSonnet <= 0) continue;
@@ -43,13 +43,13 @@ export const subagentModel: HintRule = {
     return [
       {
         rule: "subagent-model",
-        title: "Read-only agents paying flagship rates",
+        title: "Flagship models on lookup-only sub-agents",
         usd,
         projected: true,
-        summary: `${found.length} sub-agent ${found.length === 1 ? "type called" : "types called"} nothing beyond look-up tools, yet ran on a top-tier model. Priced at Sonnet rates, identical usage would cost ${usdText(usd)} less.`,
-        action: "Pin a cheaper model for these agents: add `model: sonnet` (or haiku) to each definition, or change the default via the CLAUDE_CODE_SUBAGENT_MODEL variable.",
+        summary: `${found.length} sub-agent ${found.length === 1 ? "type" : "types"} used only read and search tools (or none) but ran on a top-tier model. The same token usage at Sonnet prices would be ${usdText(usd)} cheaper.`,
+        action: "Add a `model:` line (sonnet or haiku) to those agent definitions, or set CLAUDE_CODE_SUBAGENT_MODEL to move every sub-agent at once.",
         evidence,
-        short: `${found.length} look-up ${found.length === 1 ? "agent" : "agents"} could use a cheaper model`,
+        short: `${found.length} lookup-only ${found.length === 1 ? "agent" : "agents"} on a flagship model`,
       },
     ];
   },

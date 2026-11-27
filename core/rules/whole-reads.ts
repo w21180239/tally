@@ -1,7 +1,7 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { usdText } from "./shared.ts";
 
-/** Number of full reads of the same file in a single conversation that triggers a report. */
+/** Complete reads of the same file, inside a session, needed before it is reported. */
 export const WHOLE_READS_MIN = 3;
 const FILES_LISTED = 4;
 
@@ -10,7 +10,7 @@ export const wholeReads: HintRule = {
   run: ({ summary }) => {
     const costOf = new Map<string, number>();
     for (const f of summary.flow) if (f.source === "read") costOf.set(f.label, (costOf.get(f.label) ?? 0) + f.rereadUsd);
-    // The first read is needed; what the extra copies cost in cache reads is the possible saving.
+    // The first read is necessary; the saving is what the extra copies cost in cache reads.
     const files = Object.entries(summary.wholeReads)
       .filter(([, n]) => n >= WHOLE_READS_MIN)
       .map(([path, n]) => ({ path, n, usd: ((costOf.get(path) ?? 0) * (n - 1)) / n }))
@@ -19,18 +19,18 @@ export const wholeReads: HintRule = {
     const usd = files.reduce((n, f) => n + f.usd, 0);
     const evidence: Evidence[] = [];
     for (const f of files.slice(0, FILES_LISTED)) {
-      evidence.push({ label: "File", detail: f.path, kind: "path" }, { label: "Whole reads", detail: `${f.n} whole reads in one conversation`, kind: "text" });
+      evidence.push({ label: "File", detail: f.path, kind: "path" }, { label: "Full reads", detail: `${f.n} complete Read calls`, kind: "text" });
     }
     return [
       {
         rule: "whole-reads",
-        title: "Repeated full-file reads",
+        title: "Duplicate Read calls on the same file",
         usd,
         projected: true,
-        summary: `${files.length} ${files.length === 1 ? "file was" : "files were"} loaded in full ${WHOLE_READS_MIN}+ times within a single conversation. Every extra copy stays in context and is charged again on each later request (${usdText(usd)} for the extras).`,
-        action: "Load each file once and work from that copy. When only part is needed, pass offset and limit; after an edit, trust the edit's own output rather than reading the file again.",
+        summary: `Within one session, ${files.length} ${files.length === 1 ? "file" : "files"} got ${WHOLE_READS_MIN}+ complete Read calls. The duplicates stay in context and are re-billed every turn, roughly ${usdText(usd)} across the extras.`,
+        action: "After an edit no re-read is needed; for big files pass offset and limit, and otherwise Read once and refer back to that copy.",
         evidence,
-        short: `${files.length} ${files.length === 1 ? "file" : "files"} re-opened in full ${WHOLE_READS_MIN}+ times`,
+        short: `${files.length} ${files.length === 1 ? "file" : "files"} with ${WHOLE_READS_MIN}+ full-file Reads`,
       },
     ];
   },

@@ -1,7 +1,7 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { DEFAULT_WINDOW, LISTED, percentText, sessionsUsd, titleOf, tokensText } from "./shared.ts";
 
-/** Fraction of the context window that marks a session as long, judged by its largest prompt. */
+/** A session counts as long when its largest prompt exceeds this fraction of the window. */
 export const FULL_SHARE = 0.7;
 
 export const longSession: HintRule = {
@@ -21,12 +21,12 @@ export const longSession: HintRule = {
     return [
       {
         rule: "long-session",
-        title: "Context windows filling up",
+        title: "Sessions close to the context limit",
         usd: sessionsUsd(summary, long.map(([id]) => id)),
-        summary: `${long.length} ${long.length === 1 ? "session" : "sessions"} peaked beyond ${percentText(FULL_SHARE)} of the context size. Each request re-sends the full context, and answer quality drops as it fills.`,
-        action: "Run /compact at a natural break before the window is full, or start a fresh session seeded with a brief summary.",
+        summary: `${long.length} ${long.length === 1 ? "session" : "sessions"} peaked at a prompt size over ${percentText(FULL_SHARE)} of the context limit. Each request carried that entire prompt, and answers tend to get worse as the window fills.`,
+        action: "Begin a new session from a brief hand-off note, or run /compact at a task boundary, before the window fills.",
         evidence,
-        short: `${long.length} ${long.length === 1 ? "session" : "sessions"} past ${percentText(FULL_SHARE)} context`,
+        short: `${long.length} ${long.length === 1 ? "session" : "sessions"} over ${percentText(FULL_SHARE)} of context capacity`,
       },
     ];
   },

@@ -1,12 +1,12 @@
 import type { HintInput, HintRule } from "../hint.ts";
 import { dayText, durationText, LISTED, tokensText, usdText } from "./shared.ts";
 
-/** Smallest combined rebuild cost, in dollars, that is reported. */
+/** Combined rewrite cost, in dollars, below which nothing is reported. */
 export const REBUILD_MIN_USD = 1;
 
 const rebuildUsd = (i: HintInput): number => i.summary.cacheRebuilds.reduce((n, r) => n + r.usd, 0);
 
-// Rebuild cost as a fraction of total spend: stays comparable between spans of different length.
+// Rewrite cost relative to total spend, so spans of any length compare.
 const rebuildShare = (i: HintInput): number => (i.summary.total.usd > 0 ? rebuildUsd(i) / i.summary.total.usd : 0);
 
 export const cacheRebuilt: HintRule = {
@@ -21,12 +21,12 @@ export const cacheRebuilt: HintRule = {
     return [
       {
         rule: "cache-rebuilt",
-        title: "Idle gaps forced cache rewrites",
+        title: "Cache expired while idle",
         usd,
-        summary: `After a long idle gap, ${rebuilds.length} ${rebuilds.length === 1 ? "request" : "requests"} had to write ${tokensText(tokens)} tokens of context into the cache afresh, ${usdText(usd)} in all.`,
-        action: "Finish a task while its cache is warm, or /clear before walking away; a 1-hour cache outlasts most breaks.",
-        evidence: worst.map((r) => ({ label: "Rebuild", detail: `${dayText(r.ts)}, ${tokensText(r.tokens)} tokens after ${durationText(r.gapMs)} idle, ${usdText(r.usd)}`, kind: "text" as const })),
-        short: `${rebuilds.length} idle-gap cache ${rebuilds.length === 1 ? "rewrite" : "rewrites"}`,
+        summary: `${usdText(usd)} was spent writing ${tokensText(tokens)} tokens back into the cache, across ${rebuilds.length} ${rebuilds.length === 1 ? "request" : "requests"} that arrived after a gap which outlived the cache.`,
+        action: "Before stepping away from finished work, run /clear so the next task starts small; mid-task, come back inside the cache lifetime (1 hour at the longest setting).",
+        evidence: worst.map((r) => ({ label: "Rebuild", detail: `${dayText(r.ts)}: ${tokensText(r.tokens)} tokens written after ${durationText(r.gapMs)} idle (${usdText(r.usd)})`, kind: "text" as const })),
+        short: `${rebuilds.length} cache ${rebuilds.length === 1 ? "rewrite" : "rewrites"} after idle time`,
         metric: { name: "rebuild share of cost", value: rebuildShare(i) },
       },
     ];

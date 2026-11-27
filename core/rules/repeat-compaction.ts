@@ -1,7 +1,7 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { LISTED, sessionsUsd, titleOf, usdText } from "./shared.ts";
 
-/** Compactions of one session within the span from which it is reported. */
+/** A session needs at least this many compactions to be reported. */
 export const REPEAT_MIN = 3;
 
 export const repeatCompaction: HintRule = {
@@ -11,7 +11,7 @@ export const repeatCompaction: HintRule = {
       .filter(([, n]) => n >= REPEAT_MIN)
       .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
     if (repeated.length === 0) return [];
-    // The sessions' own spend: what compacting over and over sat on top of.
+    // Spend of those sessions: the base the repeated compactions sat on.
     const usd = sessionsUsd(summary, repeated.map(([id]) => id));
     const evidence: Evidence[] = [];
     for (const [id, n] of repeated.slice(0, LISTED)) {
@@ -22,12 +22,12 @@ export const repeatCompaction: HintRule = {
     return [
       {
         rule: "repeat-compaction",
-        title: "Compaction loops in long sessions",
+        title: "Repeated compaction within sessions",
         usd,
-        summary: `${repeated.length} ${repeated.length === 1 ? "session hit" : "sessions hit"} ${REPEAT_MIN}+ compactions. Each one discards detail, invalidates the cache and leaves a recap that every later request re-reads${usd > 0 ? ` (${usdText(usd)} for ${repeated.length === 1 ? "that session" : "those sessions"})` : ""}.`,
-        action: "Stop at a natural endpoint and begin a fresh session from a brief note, or delegate the long task to sub-agents, each starting with an empty context.",
+        summary: `${repeated.length} ${repeated.length === 1 ? "session went" : "sessions went"} through ${REPEAT_MIN}+ compactions. Each drops detail and restarts the cache, and the recap it leaves is read back on every later request${usd > 0 ? ` (${usdText(usd)} spent in ${repeated.length === 1 ? "that session" : "those sessions"})` : ""}.`,
+        action: "Break the job up: wrap up once a task finishes and open the next session from a short note, or give the long tasks to sub-agents, which each begin with an empty context.",
         evidence,
-        short: `${repeated.length} ${repeated.length === 1 ? "session" : "sessions"} with ${REPEAT_MIN}+ compactions`,
+        short: `${repeated.length} ${repeated.length === 1 ? "session" : "sessions"} compacted ${REPEAT_MIN}+ times`,
       },
     ];
   },

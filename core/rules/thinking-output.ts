@@ -1,7 +1,7 @@
 import type { HintRule } from "../hint.ts";
 import { outputSpend, percentText, usdText } from "./shared.ts";
 
-/** Thinking is reported above this fraction of output spend, and only from this many dollars. */
+/** Cutoffs on thinking spend: its portion of output cost, and an absolute dollar floor. */
 export const THINKING_SHARE = 0.6;
 export const THINKING_MIN_USD = 1;
 
@@ -14,12 +14,12 @@ export const thinkingOutput: HintRule = {
     return [
       {
         rule: "thinking-output",
-        title: "Reasoning tokens dominate output spend",
+        title: `Thinking tokens above ${percentText(THINKING_SHARE)} of output cost`,
         usd: thinking,
-        summary: `Output cost ${usdText(total)} in this span, and thinking tokens (priced as output) took ${usdText(thinking)}, or ${percentText(thinking / total)}, of it.`,
-        action: "Run at a reduced /effort by default and raise it only for hard problems.",
+        summary: `${usdText(thinking)} of this span's ${usdText(total)} output cost (${percentText(thinking / total)}) went to thinking tokens, which bill at the output rate.`,
+        action: "Thinking length scales with /effort; moving the default down one level cuts this line directly, and /effort high stays available per task.",
         evidence: [{ label: "Thinking", detail: `${usdText(thinking)} of ${usdText(total)} output`, kind: "text" }],
-        short: `${percentText(thinking / total)} of output spend is thinking`,
+        short: `thinking: ${percentText(thinking / total)} of output cost`,
       },
     ];
   },

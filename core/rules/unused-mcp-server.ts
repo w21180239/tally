@@ -17,17 +17,17 @@ export const unusedMcpServer: HintRule = {
       .sort((a, b) => b.usd - a.usd || (a.server < b.server ? -1 : 1));
     if (idle.length === 0) return [];
     const usd = idle.reduce((n, s) => n + s.usd, 0);
-    const evidence: Evidence[] = idle.slice(0, LISTED).map((s) => ({ label: s.server, detail: `${tokensText(s.tokens)} tokens of tool schemas per request, ${usdText(s.usd)}`, kind: "text" }));
-    if (near.proxy) evidence.push({ label: "Estimate", detail: `from the context snapshot of ${dayText(near.snap.ts)}`, kind: "text" });
+    const evidence: Evidence[] = idle.slice(0, LISTED).map((s) => ({ label: s.server, detail: `${tokensText(s.tokens)} schema tokens per request, ${usdText(s.usd)}`, kind: "text" }));
+    if (near.proxy) evidence.push({ label: "Estimate", detail: `based on the context snapshot from ${dayText(near.snap.ts)}`, kind: "text" });
     return [
       {
         rule: "unused-mcp-server",
-        title: "Idle MCP servers occupying context",
+        title: "Unused MCP tool schemas in context",
         usd,
-        summary: `${idle.length} MCP ${idle.length === 1 ? "server was" : "servers were"} never called, but ${idle.length === 1 ? "its" : "their"} tool schemas rode along in every request's context: ${usdText(usd)} in all.`,
-        action: "Disconnect them via /mcp, or turn on deferred tool loading so a schema enters the context only when Claude searches for that tool.",
+        summary: `${usdText(usd)} went to carrying the tool schemas of ${idle.length} MCP ${idle.length === 1 ? "server" : "servers"} that made no calls in this span.`,
+        action: "Drop these servers through /mcp when the work does not need them, or enable tool search so their schemas load on demand.",
         evidence,
-        short: `${idle.length} idle MCP ${idle.length === 1 ? "server" : "servers"}`,
+        short: `${idle.length} MCP ${idle.length === 1 ? "server" : "servers"} with zero calls`,
       },
     ];
   },

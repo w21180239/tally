@@ -95,7 +95,7 @@ describe("near-limit", () => {
     expect(h.rule).toBe("near-limit");
     expect(h.usd).toBe(0);
     expect(h.urgent).toBe(true);
-    expect(h.short).toBe("5h cap at 80%");
+    expect(h.short).toBe("5h window 80% used");
     expect(h.evidence.map((e) => e.detail)).toEqual(["80% consumed; 2h 00m until reset"]);
   });
   test("stays quiet at 80 percent, with no limits, and once the window has reset", () => {
@@ -105,7 +105,7 @@ describe("near-limit", () => {
   });
   test("a window with no reset time still fires, shows no reset and is never expired by the clock", () => {
     const h = only(rule("near-limit").run(inputOf({ limits: { fiveHour: { percentUsed: 95 } } })));
-    expect(h.short).toBe("5h cap at 95%");
+    expect(h.short).toBe("5h window 95% used");
     expect(h.evidence.map((e) => e.detail)).toEqual(["95% consumed"]);
     expect(rule("near-limit").run(inputOf({ limits: { fiveHour: { percentUsed: 80 } } }))).toEqual([]);
   });
@@ -246,11 +246,11 @@ describe("whole-reads", () => {
     const h = only(fire("whole-reads", { wholeReads: { "/w/a.ts": 3, "/w/b.ts": 2 }, flow }));
     expect(Math.round((h.usd) * 1e9) / 1e9).toBe(2);
     expect(h.projected).toBe(true);
-    expect(h.evidence.map((e) => `${e.kind}|${e.detail}`)).toEqual(["path|/w/a.ts", "text|3 whole reads in one conversation"]);
+    expect(h.evidence.map((e) => `${e.kind}|${e.detail}`)).toEqual(["path|/w/a.ts", "text|3 complete Read calls"]);
   });
   test("title, summary, action and short carry the count only, never a path", () => {
     const h = only(fire("whole-reads", { wholeReads: { "/w/a.ts": 3, "/w/b.ts": 4 }, flow }));
-    expect(h.short).toBe("2 files re-opened in full 3+ times");
+    expect(h.short).toBe("2 files with 3+ full-file Reads");
     for (const text of [h.title, h.summary, h.action, h.short]) expect(text).not.toMatch(/a\.ts|b\.ts|\/w\//);
   });
   test("two whole reads are not enough", () => {

@@ -5,20 +5,20 @@ import { OUTPUT_MIN_USD, OUTPUT_SHARE } from "./command-output.ts";
 
 const LISTED_PARTS = 3;
 
-// Advice by tool name (lower-case). A tool missing here falls back to the advice for its source, then to the default.
+// Advice by lower-cased tool name; a tool not listed falls to its source's advice, then to the default.
 const BY_TOOL: ReadonlyMap<string, string> = new Map([
-  ["grep", "Tighten the pattern or directory, and list matching file names before pulling any lines."],
-  ["glob", "Use a more specific glob, or point it at the subfolder you need rather than the whole tree."],
-  ["websearch", "Word the query more precisely and restrict it to the domains that matter, so fewer results come back."],
-  ["webfetch", "Say in the fetch prompt which section you want, or choose a smaller page."],
-  ["agent", "End the delegation prompt with a request for findings only; the agent's whole write-up otherwise stays in this context."],
-  ["task", "End the delegation prompt with a request for findings only; the agent's whole write-up otherwise stays in this context."],
+  ["grep", "Search a smaller directory with a more exact pattern, and ask for file names only before pulling matching lines."],
+  ["glob", "Replace a broad glob with one scoped to the right subdirectory."],
+  ["websearch", "Make queries specific and limit them to relevant domains, which returns fewer results."],
+  ["webfetch", "Pick a smaller page where possible, and word the fetch prompt around the one section required."],
+  ["agent", "Tell the sub-agent to return a findings list; its full write-up is otherwise appended to this context."],
+  ["task", "Tell the sub-agent to return a findings list; its full write-up is otherwise appended to this context."],
 ]);
 const BY_SOURCE: Partial<Record<FlowItem["source"], string>> = {
-  read: "Open slices rather than whole files: locate the lines with Grep first, then pass offset and limit.",
-  mcp: "Trim what the server sends back: select fewer fields, lower the page size or filter server-side; failing that, use a narrower tool.",
+  read: "Locate lines with Grep, then Read with offset and limit instead of loading the whole file.",
+  mcp: "Filter on the server side where the tool allows it; failing that, shrink the page size or request fewer fields.",
 };
-const DEFAULT_ADVICE = "Redirect bulky results to a scratch file and open just the slice that matters, or scope the call more tightly.";
+const DEFAULT_ADVICE = "Make the call more targeted; if the result stays large, redirect it to a scratch file and read just the relevant part.";
 
 const adviceFor = (f: FlowItem): string => BY_TOOL.get(f.label.toLowerCase()) ?? BY_SOURCE[f.source] ?? DEFAULT_ADVICE;
 
@@ -37,12 +37,12 @@ export const toolOutput: HintRule = {
     return [
       {
         rule: "tool-output",
-        title: "Bulky tool results weigh on later requests",
+        title: `Tool output: over ${percentText(OUTPUT_SHARE)} of re-read spend`,
         usd,
-        summary: `${heavy.length === 1 ? "One source" : `${heavy.length} sources`} returned results that stayed in the conversation, and later requests paid ${usdText(usd)} to re-read them.`,
+        summary: `${heavy.length === 1 ? "One source" : `${heavy.length} sources`} returned output that remained in context and cost ${usdText(usd)} in cache reads, over ${percentText(OUTPUT_SHARE)} of all cache-read spend.`,
         action: adviceFor(top),
         evidence,
-        short: `tool results cost ${usdText(usd)} to re-read`,
+        short: `tool output re-read: ${usdText(usd)}`,
       },
     ];
   },

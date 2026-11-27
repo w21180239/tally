@@ -1,7 +1,7 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { heavyParts, percentText, rereadTotal, usdText } from "./shared.ts";
 
-/** Fraction of all re-reading, and minimum dollars, at which one output source is reported. */
+/** Share of re-read spend, and dollar floor, that an output source must clear to be reported. */
 export const OUTPUT_SHARE = 0.3;
 export const OUTPUT_MIN_USD = 1;
 const COMMANDS_LISTED = 3;
@@ -20,12 +20,12 @@ export const commandOutput: HintRule = {
     return [
       {
         rule: "command-output",
-        title: "Chatty commands inflate the context",
+        title: `Bash output: over ${percentText(OUTPUT_SHARE)} of re-read spend`,
         usd,
-        summary: `Output from ${heavy.length === 1 ? "one command" : `${heavy.length} commands`} stayed in the conversation, and later requests paid ${usdText(usd)} to re-read it: more than ${percentText(OUTPUT_SHARE)} of all re-reading.`,
-        action: "Trim at the source: add a quiet flag, pipe into grep or a line limiter, or store the full log in a scratch file and open only the failing lines.",
+        summary: `Bash results from ${heavy.length === 1 ? "one command" : `${heavy.length} commands`} account for ${usdText(usd)} of cache-read spend, over ${percentText(OUTPUT_SHARE)} of all cache-read spend.`,
+        action: "Redirect the full output to a scratch file and open just the failing part, or limit it up front with a quiet flag or `| head`.",
         evidence,
-        short: `commands cost ${usdText(usd)} in re-reads`,
+        short: `shell output re-read: ${usdText(usd)}`,
       },
     ];
   },
