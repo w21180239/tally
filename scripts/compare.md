@@ -1,7 +1,6 @@
 # Accuracy cross-check: tally vs ccusage
 
-Compares the 30-day spend of two tools on one machine. Compare whole local days only: the two tools
-cut their windows differently (see "Windows" below), and today's transcripts keep growing during the run.
+Compares the 30-day spend of tally and [ccusage](https://github.com/ryoppippi/ccusage) on one machine. Compare whole local days only: the two tools cut their windows differently (see "Windows" below), and today's transcripts keep growing during the run.
 
 ## 1. Collect
 
@@ -12,9 +11,7 @@ tally (a cold index needs about 90 s to scan; poll `/tally debug` until `"phase"
     printf '%s\n' '{"type":"user","message":{"role":"user","content":"/tally debug"}}' \
       | claude -p --plugin-dir <tally> --input-format stream-json --output-format stream-json --verbose
 
-The JSON reply (`/tally debug --json`) carries `total`, `byModel` and `byDay` (local calendar days, 30 buckets
-ending today). Save the `result` text of that reply as `tally.json`.
-
+The JSON reply (`/tally debug --json`) carries `total`, `byModel` and `byDay` (local calendar days, 30 buckets ending today). Save the `result` text of that reply as `tally.json`.
 
 ccusage:
 
@@ -25,10 +22,8 @@ ccusage:
 ## 2. Compare
 
 1. Take the 30 local days tally reports (`byDay[].day`). Sum each tool over exactly those days.
-2. Pairwise difference = (a - b) / b. Target: at most 1% for every pair.
-3. When over 1%, list days where any pair differs by more than 0.3%, then compare `byModel` over the same days.
-   A cause in tally's parsing, dedupe or pricing is fixed with a test. A definitional difference
-   (window edge, dedupe rule, a model's price, fast mode, ccusage's own pricing) goes into the accuracy notes with numbers.
+2. Difference = (tally - ccusage) / ccusage. Target: at most 1%.
+3. When over 1%, list the days that differ by more than 0.3%, then compare `byModel` over the same days. A cause in tally's parsing, dedupe or pricing is fixed with a test. A definitional difference (window edge, dedupe rule, a model's price, fast mode, rows ccusage reads from other agents) is written down with its numbers.
 
 ## Windows
 

@@ -8,6 +8,8 @@
 
 **How do I install on Windows?** Install Claude Code (`irm https://claude.ai/install.ps1 | iex` in PowerShell), then run the same two `claude plugin` commands as on any other platform.
 
+**Is Windows supported?** Windows is covered by CI; manual testing on a real Windows machine is pending.
+
 **How do I remove it?** `claude plugin uninstall tally@tally` and `claude plugin marketplace remove tally`. tally's own data is in `<config>/tally/`, where `<config>` is `$CLAUDE_CONFIG_DIR` or `~/.claude`. Delete that folder to remove it. If you used `syncDir`, the `tally/` folder inside it is yours to delete too.
 
 ## Numbers
@@ -36,7 +38,7 @@
 
 **How do I set up sync?** On each machine set `syncDir` to a folder that something already syncs (a private git repository, OneDrive, iCloud, Syncthing) and give each machine a different `machineName`. Press `t` on History or Hints to switch between this machine and all machines.
 
-**What leaves my machine?** At the default `shareDetail` of `numbers`: hourly totals by model with token counts and cost, and repositories only as irreversible aliases. `repos` adds names; `full` adds session titles and hint evidence. Keep a work machine at `numbers`.
+**What leaves my machine?** At the default `shareDetail` of `numbers`: hourly totals by model with token counts and cost, and repositories only as irreversible aliases. `repos` adds names; `full` adds session titles and hint evidence. Keep any machine whose repository names or titles are private at `numbers`.
 
 **Git sync does nothing in the desktop app.** `$.process` is available only in the CLI, so the git step is skipped elsewhere. The next CLI session pushes.
 

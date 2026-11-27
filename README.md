@@ -4,7 +4,7 @@
 
 # tally
 
-**A Claude Code plugin that shows what your sessions cost in API-equivalent dollars, what fills the context, and how to spend less, on Windows, macOS and Linux with no dependencies.**
+**A Claude Code plugin that shows what your sessions cost in API-equivalent dollars, what the context is made of, and where you can spend less, on Windows, macOS and Linux with no dependencies.**
 
 [Quick start](#quick-start) · [What you see](#what-you-see) · [Settings](#settings) · [Privacy](#privacy) · [Docs](./docs/README.md) · English | [简体中文](./README.zh-cn.md)
 
@@ -19,17 +19,17 @@ tally reads the transcripts Claude Code already keeps on your disk and turns the
 
 ## Why
 
-A Claude Code session spends money in places you do not see. A large `CLAUDE.md`, a long skill list or an unused MCP server is re-read on every request. A cache that expires during a pause is rebuilt at a higher price. A subagent on the largest model may only be reading files. The numbers are in your transcripts, but nobody reads 8 GB of JSONL by hand.
+Some of what a Claude Code session spends goes where you cannot see it. A large `CLAUDE.md`, a long skill list or an unused MCP server is re-read on every request. A cache that expires during a pause is rebuilt at a higher price. A subagent on the largest model may only be reading files. The numbers are in your transcripts, but nobody reads 8 GB of JSONL by hand.
 
 tally does the reading. It is built for people who use Claude Code every day and want to see where the money goes without leaving the session, installing a runtime or sending a transcript anywhere.
 
-tally runs inside Claude Code's own plugin engine, so there is no Node, Bun, Python or binary to install. One code base serves Windows, macOS and Linux, and CI runs the test suite on all three.
+tally lives in Claude Code's plugin engine, so there is no Node, Bun, Python or binary to install. One code base serves Windows, macOS and Linux, and CI runs the test suite on all three.
 
 A built-in price table covers every Claude model, including cache write for 5 minutes and 1 hour, fast mode and the long-context tier. It refreshes weekly from the official pricing page.
 
 To get one total across several machines, point `syncDir` at a folder you already sync (a private git repository, OneDrive, iCloud, Syncthing). Each machine shares only its totals.
 
-Nothing is written to transcripts. The one network call is the price page, and you can turn it off.
+tally never writes to a transcript. Its one network call fetches the price page, and you can turn that off.
 
 ## How it works
 
@@ -37,7 +37,7 @@ Nothing is written to transcripts. The one network call is the price page, and y
 
 1. When a session starts, a background scan reads transcripts in chunks of at most 4 MiB, stopping at whole lines. It handles the current project first, then the last 24 hours, then 30 days, and the window shows progress while the numbers grow.
 2. The scan runs in slices of about 50 ms of CPU with a yield between slices, so typing and prompts are never held up.
-3. Results are saved as an index of day buckets under `<config>/tally/index/`. The next start reads only what changed.
+3. Results are saved as an index of day buckets under `<config>/tally/index/`. A later start reads just the files that changed.
 4. If several Claude Code sessions run on one machine, one of them holds a lease and scans; the others read the index.
 5. The window, the `/tally report` command and the optional Herdr sidebar all read from that index and from the live session.
 
@@ -83,22 +83,22 @@ The first scan of a large history takes a minute or two (see [Performance](#perf
 
 ## What you see
 
-`/tally` opens a window with six tabs. The keys `1` to `5` and `0` switch tabs; `Esc` folds the window to a line above the prompt, and `ctrl+x` then `tab` hands it the keyboard.
+`/tally` opens a window with six tabs. The keys `1` to `5` and `0` switch tabs; `Esc` shrinks the window to a single line over the prompt, and `ctrl+x` then `tab` hands it the keyboard.
 
 | Tab | Key | What it shows |
 | --- | --- | --- |
-| Session | `1` | Total cost of this session (including the launches before a resume), cost per active hour, a bar per model, the four token kinds, cache time left and rebuild cost for each conversation, where the money went (main, each subagent, other requests), cost by skill and MCP server, and the top hint |
+| Session | `1` | Total cost of this session (including the launches before a resume), cost per active hour, a bar per model, the four token kinds, cache time left and rebuild cost for each conversation, where the money went (main, each subagent, other requests), cost by skill and MCP server, and the best hint |
 | Usage | `2` | Session, 24 hours or 30 days, for all agents or one: input by source, output (thinking, replies, writes, commands, agent prompts), cache read by content, cache write by agent and model with the biggest single write and why it happened |
 | Context | `3` | What each request carries: system, tools, messages, skills, MCP tools, agents, memory files, with unused and deferred items marked; subagent detail; a transcript view of any agent |
 | History | `4` | 30 days: total, token kinds, by day, by model, main versus subagent, subagent type by model, by repository, top sessions with the `claude --resume` command, context fill by tool |
 | Hints | `5` | Hints for this session and for the past 24 hours or 30 days: title, amount, summary, action and evidence |
 | Help | `0` | Data sources, color legend, keys, settings, version, price source and date, unpriced models |
 
-The foot of the window shows cache timers with the cost to refill them, a context bar with the compact threshold, and your 5-hour and 7-day limits with reset times. A toast appears once per session when a limit passes 80%.
+The foot of the window shows cache timers with the cost to refill them, a context bar with the compact threshold, and your 5-hour and 7-day limits with reset times. Each session gets one toast when a limit goes above 80%.
 
 ### Layouts
 
-The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. When the window is folded, one line above the prompt shows the top hint with its saving, a character chart of the last 8 hours, cost, context and cache timer, dropping parts as the terminal narrows. The desktop app gets a quiet info row above the prompt, and VS Code gets a bar without keys. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock.
+The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. Folded, the window leaves one line over the prompt: the best hint and its saving, a character chart of the past 8 hours, cost, context and cache timer, with parts dropped as the terminal narrows. The desktop app adds a low-key summary strip, and VS Code gets a bar without keys. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock.
 
 ### Hints
 
@@ -121,7 +121,7 @@ With `syncDir` set, each machine writes its totals to `<syncDir>/tally/<machineN
 
 ### Report and Herdr
 
-`/tally report [days] [repo]` writes a markdown spend report you can read or hand to someone. Claude can call the same report through the `tally_report` tool, and the bundled `spend-optimize` skill walks through it, applies changes you pick and saves a baseline to compare against 14 days later. With `herdrSidebar` on, tally also writes a sidebar for the Herdr app from report snapshots (24 hours and 30 days). Turning it off removes what tally wrote.
+`/tally report [days] [repo]` writes a markdown spend report you can read or hand to someone. Claude can call the same report through the `tally_report` tool, and the bundled `spend-optimize` skill walks through it, applies the changes you choose, and stores a baseline for a comparison 14 days on. With `herdrSidebar` on, tally also writes a sidebar for the Herdr app from report snapshots (24 hours and 30 days). Turning it off removes what tally wrote.
 
 ## Settings
 
@@ -138,7 +138,7 @@ Set the options through the plugin settings (`userConfig` in `plugin.json`), for
 | `open` | before-first-message | `before-first-message` opens at session start and folds on your first message; `always` keeps it open; `never` opens it only on `/tally`. |
 | `money` | cents-and-dollars | `cents-and-dollars` shows cents under $1 and dollars above; `cents` and `dollars` use one unit throughout. |
 | `decimals` | auto | `auto` trims trailing zeros; `0` to `4` fixes the decimals on every amount. |
-| `desktopRow` | true | A quiet summary row above the prompt in the desktop app. |
+| `desktopRow` | true | A one-line summary strip over the prompt in the desktop app. |
 | `herdrSidebar` | false | Also write the spend report to a Herdr sidebar. |
 
 ## Commands
@@ -168,7 +168,7 @@ What sharing sends, by `shareDetail`:
 | `repos` | Adds repository names and per-repository totals. |
 | `full` | Adds session titles, top sessions, context fill by tool and each machine's hints with evidence. |
 
-Keep a work machine at `numbers`. Repository aliases are an HMAC with a salt stored in `<syncDir>/tally/salt`, created by the first machine, so the same repository has the same alias everywhere. Transcripts stay on the machine that made them, so nothing is counted twice.
+Keep any machine whose repository names or titles are private at `numbers`. Repository aliases are an HMAC with a salt stored in `<syncDir>/tally/salt`, created by the first machine, so the same repository has the same alias everywhere. Transcripts stay on the machine that made them, so nothing is counted twice.
 
 ## Windows, macOS and Linux
 
@@ -202,6 +202,7 @@ Accuracy was checked against ccusage over the same 30 local days on that machine
 - There is no per-subagent context breakdown.
 - Models that are not Anthropic's are listed as unpriced. Unknown Claude models use the latest price of their family and are marked `*`.
 - The first scan of a very large history takes a minute or more; the window shows partial numbers until it finishes.
+- Windows is covered by CI; manual testing on a real Windows machine is pending.
 
 ## Contributing
 

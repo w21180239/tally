@@ -4,7 +4,7 @@
 
 # tally
 
-**一个 Claude Code 插件：按 API 等价美元显示会话花了多少钱、context 里装了什么、怎样少花钱。支持 Windows、macOS 和 Linux，零依赖。**
+**一个 Claude Code 插件：按 API 等价美元显示会话花了多少钱、context 由什么构成、哪里可以少花钱。支持 Windows、macOS 和 Linux，零依赖。**
 
 [快速开始](#快速开始) · [能看到什么](#能看到什么) · [设置](#设置) · [隐私](#隐私) · [文档](./docs/README.md) · [English](./README.md) | 简体中文
 
@@ -98,7 +98,7 @@ claude plugin marketplace remove tally
 
 ### 布局
 
-窗口按宽度选择排版：小于 40 列为紧凑卡片，40 到 69 列为窄版，70 列及以上为完整版。内嵌显示且不足 10 行时画简短视图。窗口折叠后，prompt 上方的一行会显示最重要的提示和可省金额、最近 8 小时的字符图、花费、context 和缓存计时，终端变窄时依次丢掉其中几项。桌面应用在 prompt 上方有一行安静的信息行，VS Code 里显示不带键位的条形图。停靠窗口默认请求 90×40；终端小于 144 列时默认折叠，小于 110 列时无法停靠。
+窗口按宽度选择排版：小于 40 列为紧凑卡片，40 到 69 列为窄版，70 列及以上为完整版。内嵌显示且不足 10 行时画简短视图。窗口折叠后，prompt 上方的一行会显示最重要的提示和可省金额、最近 8 小时的字符图、花费、context 和缓存计时，终端变窄时依次丢掉其中几项。桌面应用多一条低调的摘要栏，VS Code 里显示不带键位的条形图。停靠窗口默认请求 90×40；终端小于 144 列时默认折叠，小于 110 列时无法停靠。
 
 ### 提示（Hints）
 
@@ -138,7 +138,7 @@ claude plugin marketplace remove tally
 | `open` | before-first-message | `before-first-message` 在会话开始时打开、你发出第一条消息后折叠；`always` 一直保持打开；`never` 只在 `/tally` 时打开。 |
 | `money` | cents-and-dollars | `cents-and-dollars` 在 1 美元以下显示美分、以上显示美元；`cents` 和 `dollars` 全程使用同一个单位。 |
 | `decimals` | auto | `auto` 去掉末尾多余的零；`0` 到 `4` 让每个金额固定显示该位数。 |
-| `desktopRow` | true | 桌面应用里 prompt 上方的一行安静摘要。 |
+| `desktopRow` | true | 桌面应用里 prompt 上方的一行摘要栏。 |
 | `herdrSidebar` | false | 同时把花费报告写到 Herdr 侧栏。 |
 
 ## 命令
@@ -168,7 +168,7 @@ tally 读取的内容：`$CLAUDE_CONFIG_DIR/projects` 或 `~/.claude/projects` �
 | `repos` | 增加仓库名和按仓库的汇总。 |
 | `full` | 再增加会话标题、Top sessions、按工具的 context 填充，以及各电脑的提示和证据。 |
 
-公司电脑应保持 `numbers`。仓库别名是 HMAC，盐保存在 `<syncDir>/tally/salt`，由第一台电脑生成，所以同一个仓库在每台电脑上的别名相同。transcript 只留在产生它的那台电脑上，因此不会重复计数。
+仓库名或标题属于隐私的电脑，应保持 `numbers`。仓库别名是 HMAC，盐保存在 `<syncDir>/tally/salt`，由第一台电脑生成，所以同一个仓库在每台电脑上的别名相同。transcript 只留在产生它的那台电脑上，因此不会重复计数。
 
 ## Windows、macOS 和 Linux
 
@@ -202,6 +202,7 @@ tally 读取的内容：`$CLAUDE_CONFIG_DIR/projects` 或 `~/.claude/projects` �
 - 没有按子代理的 context 拆分。
 - 非 Anthropic 模型列为未定价。未知的 Claude 模型按同族最新价格计，并标 `*`。
 - 历史特别大时，首次扫描要一分钟以上，完成前窗口显示的是部分数字。
+- Windows 由 CI 覆盖；尚未在真实的 Windows 电脑上做手工测试。
 
 ## 参与贡献
 
