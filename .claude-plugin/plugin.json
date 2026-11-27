@@ -1,13 +1,13 @@
 {
   "name": "tally",
   "description": "Shows Claude Code spend in API-equivalent dollars, what fills the context, and hints on how to spend less. Reads transcripts locally; no dependencies.",
-  "version": "0.1.0",
-  "author": { "name": "VI" },
+  "version": "1.0.0",
+  "author": { "name": "w21180239" },
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/w21180239/tally",
   "repository": "https://github.com/w21180239/tally",
   "keywords": ["usage", "tokens", "cost", "context"],
-  "types": "./types/index.d.ts",
+  "icon": "./repo-assets/icon.png",  "types": "./types/index.d.ts",
   "userConfig": {
     "priceUpdate": {
       "type": "boolean",

@@ -64,6 +64,14 @@ claude plugin marketplace add w21180239/tally
 claude plugin install tally@tally
 ```
 
+从本地克隆安装（macOS、Linux，或 Windows 的 PowerShell）：
+
+```bash
+git clone https://github.com/w21180239/tally.git
+claude plugin marketplace add <克隆目录的路径>
+claude plugin install tally@tally
+```
+
 重启 Claude Code 或运行 `/reload-plugins`，然后执行：
 
 ```text
@@ -98,7 +106,7 @@ claude plugin marketplace remove tally
 
 ### 布局
 
-窗口按宽度选择排版：小于 40 列为紧凑卡片，40 到 69 列为窄版，70 列及以上为完整版。内嵌显示且不足 10 行时画简短视图。窗口折叠后，prompt 上方的一行会显示最重要的提示和可省金额、最近 8 小时的字符图、花费、context 和缓存计时，终端变窄时依次丢掉其中几项。桌面应用多一条低调的摘要栏，VS Code 里显示不带键位的条形图。停靠窗口默认请求 90×40；终端小于 144 列时默认折叠，小于 110 列时无法停靠。
+窗口按宽度选择排版：小于 40 列为紧凑卡片，40 到 69 列为窄版，70 列及以上为完整版。内嵌显示且不足 10 行时画简短视图。窗口折叠后，prompt 上方的一行会显示最重要的提示和可省金额、最近 8 小时的字符图、花费、context 和缓存计时，终端变窄时依次丢掉其中几项。桌面应用多一条低调的摘要栏，VS Code 里窗口照常绘制，只是不显示键位栏。停靠窗口默认请求 90×40；终端小于 144 列时默认折叠，小于 110 列时无法停靠。
 
 ### 提示（Hints）
 
@@ -121,7 +129,7 @@ claude plugin marketplace remove tally
 
 ### 报告与 Herdr
 
-`/tally report [days] [repo]` 生成一份 markdown 花费报告，可以自己读，也可以交给别人。Claude 可以通过 `tally_report` 工具取同一份报告；随插件提供的 `spend-optimize` skill 会带着走一遍流程、应用你选中的改动，并保存一份基线，14 天后用来对比。打开 `herdrSidebar` 后，tally 还会根据报告快照（24 小时和 30 天）为 Herdr 应用写一个侧栏；关掉它会清理 tally 写过的内容。
+`/tally report [days] [repo]` 把一份 markdown 花费报告写到 Claude Code 当前工作目录下的 `api-spend-<日期>.md`，可以自己读，也可以交给别人。同一天再次生成会覆盖之前的文件，报告里会列出仓库名。Claude 可以通过 `tally_report` 工具取同一份报告；随插件提供的 `spend-optimize` skill 会带着走一遍流程、应用你选中的改动，并保存一份基线，14 天后用来对比。打开 `herdrSidebar` 后，tally 还会根据报告快照（24 小时和 30 天）为 Herdr 应用写一个侧栏；关掉它会清理 tally 写过的内容。
 
 ## 设置
 
@@ -131,10 +139,10 @@ claude plugin marketplace remove tally
 | --- | --- | --- |
 | `priceUpdate` | true | 每周从 Anthropic 定价页刷新价格表。关闭则使用内置价格，并且不发任何网络请求。 |
 | `syncDir` | 空 | 一个由你已有的工具同步的文件夹。留空则关闭共享。如果它是 git 仓库，tally 会在 CLI 里对它 pull 和 push。 |
-| `machineName` | 主机名 | 这台电脑在共享汇总里的标签。 |
+| `machineName` | 主机名 | 这台电脑在共享汇总里的标签。使用 `syncDir` 时建议设置：它就是每台电脑写入的文件名，名字一变（例如主机改名），同一台电脑会被算两次。 |
 | `shareDetail` | numbers | `numbers`、`repos` 或 `full`，见[隐私](#隐私)。 |
 | `redactEvidence` | false | 窗口里的证据也像报告一样脱敏：命令只留程序名，标题清空，路径只留文件名。 |
-| `recheckDays` | 14 | 已采纳的提示隔多少天复查。 |
+| `recheckDays` | 14 | 采纳一条提示后过多少天，tally 去核对节省是否真的保持住了。 |
 | `open` | before-first-message | `before-first-message` 在会话开始时打开、你发出第一条消息后折叠；`always` 一直保持打开；`never` 只在 `/tally` 时打开。 |
 | `money` | cents-and-dollars | `cents-and-dollars` 在 1 美元以下显示美分、以上显示美元；`cents` 和 `dollars` 全程使用同一个单位。 |
 | `decimals` | auto | `auto` 去掉末尾多余的零；`0` 到 `4` 让每个金额固定显示该位数。 |
@@ -149,14 +157,15 @@ claude plugin marketplace remove tally
 | `/tally <tab>` | 直接打开到 `session`、`usage`、`context`、`history`、`hints` 或 `help`。 |
 | `/tally 24h` 或 `30d` | 以该时间跨度打开。 |
 | `/tally money dollars` | 设置显示选项；还有 `decimals`、`open`、`row`，词序不限。 |
-| `/tally report [days] [repo]` | 生成 markdown 花费报告。 |
+| `/tally report [days] [repo]` | 把 markdown 花费报告写到工作目录下的 `api-spend-<日期>.md`。 |
+| `/tally sync` | 立即同步一次（需要设置 `syncDir`），并列出看到的电脑。 |
 | `/tally debug` | 显示扫描进度和总数；加 `--json` 以 JSON 输出。 |
 
 ## 隐私
 
 tally 读取的内容：`$CLAUDE_CONFIG_DIR/projects` 或 `~/.claude/projects` 下的 Claude Code transcript（Windows 上是 `%USERPROFILE%\.claude\projects`）、Claude 桌面应用的本地会话目录（如果存在），以及供 unused-plugin 提示使用的已安装插件列表。
 
-写入的内容：`<config>/tally/` 下它自己的文件（索引、扫描租约、进度和报告快照），以及设置了 `syncDir` 时放在那里的一个汇总文件。tally 从不写入或修改 transcript。
+写入的内容：`<config>/tally/` 下它自己的文件（索引、扫描租约、进度和报告快照），设置了 `syncDir` 时放在那里的一个汇总文件，以及只在你运行 `/tally report` 时写到当前工作目录的 `api-spend-<日期>.md`（同一天再次生成会覆盖，报告里会列出仓库名）。tally 从不写入或修改 transcript。
 
 网络：只有一个请求，发往 `https://platform.claude.com/docs/en/about-claude/pricing.md`，最多每周一次，不携带任何关于你的数据。把 `priceUpdate` 设为 false，tally 就不发任何请求。如果 `syncDir` 是 git 仓库，tally 会在 CLI 里对它执行 `git pull --rebase`、`commit` 和 `push`，只与你自己的远端通信。失败只记日志，不会弹错误。
 
@@ -184,14 +193,14 @@ tally 读取的内容：`$CLAUDE_CONFIG_DIR/projects` 或 `~/.claude/projects` �
 | 项目 | 结果 |
 | --- | --- |
 | 冷读，从无到完成 | 84 至 89 秒（目标不超过 120 秒） |
-| 暖启动，索引已在磁盘上 | 约 9 秒，不读任何 transcript 字节 |
+| 暖启动，索引已在磁盘上 | 约 5 秒，机器负载很高时最多约 13 秒，不读任何 transcript 字节 |
 | 少数文件变化后的增量更新 | 5 秒以内 |
 | 冷读后索引占用磁盘 | 96.7 MB，约为 transcript 体积的 1.2% |
 | 每个扫描时间片的 CPU | 约 50 ms，随后让出 |
 
 完整方法见 [docs/zh-cn/DESIGN.md](./docs/zh-cn/DESIGN.md)。扫描期间的打字延迟还没有人工实测过。
 
-准确性方面，在同一台电脑上用同样的 30 个本地日与 ccusage 做了对数：总额相差 0.003%，没有任何一天的差异超过 0.3%。方法和已知的定义性差异见 [scripts/compare.md](./scripts/compare.md)。
+准确性方面，在同一台电脑上对 2026-10-30 至 2026-11-28 的 30 个本地日与 ccusage 做了对数：总额相差不超过 0.010%，每个模型相差不超过 0.03%。数据、方法和已知的定义性差异见 [scripts/compare.md](./scripts/compare.md)。
 
 ## 限制
 

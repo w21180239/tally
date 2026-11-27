@@ -46,7 +46,7 @@
 
 ## Performance
 
-**Does it slow Claude Code down?** The scan runs in slices of about 50 ms of CPU with a yield between slices. On the measured machine a cold scan took 84 to 89 seconds, a warm start about 9 seconds and an incremental update under 5 seconds. Typing latency during a scan has not been measured by hand; if you notice lag, open an issue with `/tally debug` output.
+**Does it slow Claude Code down?** The scan runs in slices of about 50 ms of CPU with a yield between slices. On the measured machine a cold scan took 84 to 89 seconds, a warm start about 5 seconds (up to about 13 under heavy machine load) and an incremental update under 5 seconds. Typing latency during a scan has not been measured by hand; if you notice lag, open an issue with `/tally debug` output.
 
 **How much disk does it use?** About 1.2% of the transcript size on the measured machine (96.7 MB for 8.3 GB). The index lives in `<config>/tally/index/` and is safe to delete; the next start rebuilds it.
 
@@ -56,7 +56,7 @@
 
 **Does tally send my transcripts anywhere?** No. It writes no transcript and makes one request, to the Anthropic pricing page, at most weekly. Set `priceUpdate` to false for none at all.
 
-**Where are the files?** `<config>/tally/` holds the index, the lease, progress and report snapshots. With `syncDir` set, `<syncDir>/tally/` holds one totals file per machine and the alias salt.
+**Where are the files?** `<config>/tally/` holds the index, the lease, progress and report snapshots. `/tally report` writes `api-spend-<date>.md` in the folder Claude Code is working in; a report from the same day overwrites the earlier one, and it lists repository names. With `syncDir` set, `<syncDir>/tally/` holds one totals file per machine and the alias salt.
 
 ## Troubleshooting data
 

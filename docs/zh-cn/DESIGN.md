@@ -101,7 +101,7 @@ tests/             claude plugin test；fixtures 全部是合成数据
 
 ## 多机同步
 
-设置 `syncDir` 后，每次扫描结束 tally 写一个文件 `<syncDir>/tally/<machineName>.json`（不到 4 MiB），并读入其他电脑的文件。
+设置 `syncDir` 后，每次扫描结束 tally 写一个文件 `<syncDir>/tally/<machineName>.json`（不到 4 MiB），并读入其他电脑的文件。没有设置 `machineName` 时，名字第一次取自主机名，之后保存在 store 里，所以主机之后改名不会再生成第二个文件；直接设置 `machineName` 更稳妥。
 
 - 文件里是 UTC 小时桶。`numbers` 级别下每个桶有四种 token 类型、金额、模型、主会话或子代理、子代理类型×模型以及 fast。`repos` 加上按仓库的桶。`full` 再加会话标题、Top sessions、按工具的 context 填充，以及各机的提示结果和证据。
 - 仓库别名是仓库名的 HMAC，盐存在 `<syncDir>/tally/salt`。第一台电脑生成盐，所有电脑读取它，所以各机上的别名一致。
@@ -112,13 +112,13 @@ tests/             claude plugin test；fixtures 全部是合成数据
 
 ## 报告与 Herdr
 
-`tally_report` 工具接受 `days`、`repo`、`compare` 和 `saveBaseline`，返回 `spend-optimize` skill 使用的报告。`/tally report` 把同一份报告写成 markdown 文件。报告会把命令脱敏成程序名、清空标题、路径只保留文件名。
+`tally_report` 工具接受 `days`、`repo`、`compare` 和 `saveBaseline`，返回 `spend-optimize` skill 使用的报告。`/tally report` 把同一份报告写成当前工作目录下的 `api-spend-<日期>.md`（同一天再次生成会覆盖之前的文件，报告里会列出仓库名）。工具的 `adopt` 参数记录用户选择应用的提示，与窗口里按 `y` 的效果相同。报告会把命令脱敏成程序名、清空标题、路径只保留文件名。
 
 每次扫描结束后，tally 把 24 小时和 30 天的报告快照写到 `<config>/tally/report-<span>.json`。Herdr 侧栏只读取并绘制这些文件，同时显示它们有多旧；它不打包任何 `core/` 的内容。没有 Claude Code 会话在运行时，它显示最后一份快照。关闭 `herdrSidebar` 会删除 tally 创建的文件夹，靠一个标记文件确认是自己写的。
 
 ## 提示的采纳与复查
 
-采纳一条提示会存下该规则的度量值、预期节省和日期。规则可以提供一个前后可比的度量，例如 cache-rebuilt 用“每活跃小时的重写成本”，fast-mode 用“fast 成本占比”。过了 `recheckDays`（默认 14）天，会弹 toast 提醒，Hints 标签页显示“预期省多少、实际省多少”。没有度量的规则只记录采纳，不做别的。置信度低的换模型建议只说“试用”，不会说“降级”。
+采纳一条提示会存下该规则的度量值、预期节省和日期。规则可以提供一个前后可比的度量，例如 cache-rebuilt 用“每活跃小时的重写成本”，fast-mode 用“fast 成本占比”。过了 `recheckDays`（默认 14）天，会弹 toast 提醒，并显示“预期省多少、实际省多少”。没有度量的规则只记录采纳，不做别的。置信度低的换模型建议只说“试用”，不会说“降级”。
 
 ## 隐私不变量
 
@@ -132,6 +132,6 @@ tests/             claude plugin test；fixtures 全部是合成数据
 ## 验证
 
 - 测试用 `claude plugin test` 运行。纯函数和窗口共用一套配置，所有 transcript fixtures 都是合成的。
-- 准确性：在一台电脑上用同样的 30 个本地日，tally 与 ccusage 的总额相差 0.003%，没有任何一天的差异超过 0.3%。方法以及定义性差异（窗口边缘、synthetic 行、来自其他 agent 的行）见 [scripts/compare.md](../../scripts/compare.md)。
-- 在那台电脑上的性能，30 天历史约 8.3 GB、82,000 个文件：冷读 84 至 89 秒，暖启动约 9 秒且不读任何 transcript 字节，增量更新 5 秒以内，索引 96.7 MB（约为 transcript 的 1.2%）。把索引按天拆分之后，冷读完成时的索引体积从 493 MB 降到 96.7 MB。扫描期间的打字延迟还没有人工实测过。
+- 准确性：在一台电脑上对 2026-10-30 至 2026-11-28 的 30 个本地日，tally 与 ccusage 的总额相差不超过 0.010%，每个模型相差不超过 0.03%。数据、方法以及定义性差异（窗口边缘、synthetic 行、来自其他 agent 的行）见 [scripts/compare.md](../../scripts/compare.md)。
+- 在那台电脑上的性能，30 天历史约 8.3 GB、82,000 个文件：冷读 84 至 89 秒，暖启动约 5 秒（机器负载很高时最多约 13 秒）且不读任何 transcript 字节，增量更新 5 秒以内，索引 96.7 MB（约为 transcript 的 1.2%）。把索引按天拆分之后，冷读完成时的索引体积从 493 MB 降到 96.7 MB。扫描期间的打字延迟还没有人工实测过。
 - CI 在 macOS、Windows 和 Ubuntu 上运行 `claude plugin validate .` 和 `claude plugin test .`。

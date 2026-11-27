@@ -1,6 +1,7 @@
 {
   "name": "tally",
-  "owner": { "name": "VI" },
+  "description": "Claude Code plugins by w21180239: tally shows what Claude Code costs in API-equivalent dollars and how to spend less.",
+  "owner": { "name": "w21180239" },
   "plugins": [
     {
       "name": "tally",

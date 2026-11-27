@@ -25,6 +25,17 @@ ccusage:
 2. Difference = (tally - ccusage) / ccusage. Target: at most 1%.
 3. When over 1%, list the days that differ by more than 0.3%, then compare `byModel` over the same days. A cause in tally's parsing, dedupe or pricing is fixed with a test. A definitional difference (window edge, dedupe rule, a model's price, fast mode, rows ccusage reads from other agents) is written down with its numbers.
 
+## Results
+
+Run on 2026-11-28 over the 30 local days from 2026-10-30 to 2026-11-28, one machine, both tools collected within a few minutes of each other.
+
+| Comparison | Difference (tally against ccusage) |
+| --- | --- |
+| Total over the 30 days | within 0.010% |
+| Each model over the same days | within 0.03% |
+
+Both are far inside the 1% target. Window edges, the one known definitional difference, are described below.
+
 ## Windows
 
 - tally: 30 local-day buckets, the first starts at a local midnight; the window ends now.

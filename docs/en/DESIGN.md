@@ -101,7 +101,7 @@ Per step, tally counts usage from `turn.step`, reads context, cost and limits fr
 
 ## Multi-machine sync
 
-With `syncDir` set, after each scan tally writes one file, `<syncDir>/tally/<machineName>.json` (under 4 MiB), and reads the files of the other machines.
+With `syncDir` set, after each scan tally writes one file, `<syncDir>/tally/<machineName>.json` (under 4 MiB), and reads the files of the other machines. Without a `machineName` setting the name comes from the hostname the first time and is then kept in the store, so a later hostname change does not create a second file; setting `machineName` is the sturdier choice.
 
 - The file holds UTC hourly buckets. At `numbers` level each bucket has the four token kinds, cost, model, main or subagent, subagent type by model and fast. `repos` adds per-repository buckets. `full` adds session titles, top sessions, context fill by tool and each machine's hint results with evidence.
 - Repository aliases are an HMAC of the repository name with a salt kept in `<syncDir>/tally/salt`. The first machine creates the salt and every machine reads it, so aliases match across machines.
@@ -112,13 +112,13 @@ With `syncDir` set, after each scan tally writes one file, `<syncDir>/tally/<mac
 
 ## Report and Herdr
 
-The `tally_report` tool takes `days`, `repo`, `compare` and `saveBaseline` and returns the report that the `spend-optimize` skill uses. `/tally report` writes the same report as a markdown file. Reports redact commands to the program name, blank titles and keep only file names in paths.
+The `tally_report` tool takes `days`, `repo`, `compare` and `saveBaseline` and returns the report that the `spend-optimize` skill uses. `/tally report` writes the same report as `api-spend-<date>.md` in the current working folder (a report from the same day overwrites the earlier file, and it lists repository names). The tool's `adopt` parameter records the hints the person chose to apply, as `y` does in the window. Reports redact commands to the program name, blank titles and keep only file names in paths.
 
 After each scan, tally writes 24-hour and 30-day report snapshots to `<config>/tally/report-<span>.json`. The Herdr sidebar only reads and draws those files and shows how old they are; it bundles none of `core/`. With no Claude Code session running, it shows the last snapshot. Turning `herdrSidebar` off removes the folder tally created, identified by a marker file.
 
 ## Hint adoption and recheck
 
-Adopting a hint stores the rule's metric, the expected saving and the date. A rule can provide a before-and-after metric, for example cache-rebuilt uses rebuild cost per active hour and fast-mode uses the fast cost share. After `recheckDays` (default 14), a toast reminds you and the Hints tab shows expected against actual saving. Rules without a metric record the adoption and nothing else. Low-confidence model-change hints say "try it" and never "downgrade".
+Adopting a hint stores the rule's metric, the expected saving and the date. A rule can provide a before-and-after metric, for example cache-rebuilt uses rebuild cost per active hour and fast-mode uses the fast cost share. After `recheckDays` (default 14), a toast reminds you and shows expected against actual saving. Rules without a metric record the adoption and nothing else. Low-confidence model-change hints say "try it" and never "downgrade".
 
 ## Privacy invariants
 
@@ -132,6 +132,6 @@ These hold for every change; a change that breaks one needs a README and SECURIT
 ## Verification
 
 - Tests run with `claude plugin test`. Pure functions and the window share one setup. All transcript fixtures are synthetic.
-- Accuracy: over the same 30 local days on one machine, tally and ccusage totals differed by 0.003%, and no single day differed by more than 0.3%. The method and the definitional differences (window edges, synthetic rows, rows from other agents) are in [scripts/compare.md](../../scripts/compare.md).
-- Performance on that machine, with 30 days of history of about 8.3 GB in 82,000 files: cold scan 84 to 89 s, warm start about 9 s with no transcript bytes read, incremental update under 5 s, 96.7 MB of index (about 1.2% of the transcripts). Splitting the index by day cut its size after a cold scan from 493 MB to 96.7 MB. Typing latency during a scan has not been measured by hand.
+- Accuracy: over the 30 local days from 2026-10-30 to 2026-11-28, tally was within 0.010% of ccusage on the total and within 0.03% on each model. The figures, method and the definitional differences (window edges, synthetic rows, rows from other agents) are in [scripts/compare.md](../../scripts/compare.md).
+- Performance on that machine, with 30 days of history of about 8.3 GB in 82,000 files: cold scan 84 to 89 s, warm start about 5 s (up to about 13 s under heavy machine load) with no transcript bytes read, incremental update under 5 s, 96.7 MB of index (about 1.2% of the transcripts). Splitting the index by day cut its size after a cold scan from 493 MB to 96.7 MB. Typing latency during a scan has not been measured by hand.
 - CI runs `claude plugin validate .` and `claude plugin test .` on macOS, Windows and Ubuntu.

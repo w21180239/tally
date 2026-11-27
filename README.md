@@ -64,6 +64,14 @@ claude plugin marketplace add w21180239/tally
 claude plugin install tally@tally
 ```
 
+From a local clone (macOS, Linux, or PowerShell on Windows):
+
+```bash
+git clone https://github.com/w21180239/tally.git
+claude plugin marketplace add <path-to-clone>
+claude plugin install tally@tally
+```
+
 Restart Claude Code or run `/reload-plugins`, then run:
 
 ```text
@@ -98,7 +106,7 @@ The foot of the window shows cache timers with the cost to refill them, a contex
 
 ### Layouts
 
-The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. Folded, the window leaves one line over the prompt: the best hint and its saving, a character chart of the past 8 hours, cost, context and cache timer, with parts dropped as the terminal narrows. The desktop app adds a low-key summary strip, and VS Code gets a bar without keys. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock.
+The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. Folded, the window leaves one line over the prompt: the best hint and its saving, a character chart of the past 8 hours, cost, context and cache timer, with parts dropped as the terminal narrows. The desktop app adds a low-key summary strip, and in VS Code the window draws without the key bar. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock.
 
 ### Hints
 
@@ -121,7 +129,7 @@ With `syncDir` set, each machine writes its totals to `<syncDir>/tally/<machineN
 
 ### Report and Herdr
 
-`/tally report [days] [repo]` writes a markdown spend report you can read or hand to someone. Claude can call the same report through the `tally_report` tool, and the bundled `spend-optimize` skill walks through it, applies the changes you choose, and stores a baseline for a comparison 14 days on. With `herdrSidebar` on, tally also writes a sidebar for the Herdr app from report snapshots (24 hours and 30 days). Turning it off removes what tally wrote.
+`/tally report [days] [repo]` writes a markdown spend report to `api-spend-<date>.md` in the folder Claude Code is working in, which you can read or hand to someone. A report from the same day overwrites the earlier file, and it lists repository names. Claude can call the same report through the `tally_report` tool, and the bundled `spend-optimize` skill walks through it, applies the changes you choose, and stores a baseline for a comparison 14 days on. With `herdrSidebar` on, tally also writes a sidebar for the Herdr app from report snapshots (24 hours and 30 days). Turning it off removes what tally wrote.
 
 ## Settings
 
@@ -131,10 +139,10 @@ Set the options through the plugin settings (`userConfig` in `plugin.json`), for
 | --- | --- | --- |
 | `priceUpdate` | true | Refresh the price table weekly from the Anthropic pricing page. Off keeps the built-in prices and makes no network call. |
 | `syncDir` | empty | A folder synced by something you already use. Empty turns sharing off. If it is a git repository, tally pulls and pushes it from the CLI. |
-| `machineName` | hostname | How this machine is labelled in shared totals. |
+| `machineName` | hostname | How this machine is labelled in shared totals. Set it when you use `syncDir`: it is the file name each machine writes, so a name that changes (a renamed host) would count the same machine twice. |
 | `shareDetail` | numbers | `numbers`, `repos` or `full`. See [Privacy](#privacy). |
 | `redactEvidence` | false | Redact the evidence in the window the way the report does: commands keep only the program name, titles are blank, paths keep only the file name. |
-| `recheckDays` | 14 | Days before an adopted hint is checked again. |
+| `recheckDays` | 14 | Days after you adopt a hint before tally checks whether the saving held. |
 | `open` | before-first-message | `before-first-message` opens at session start and folds on your first message; `always` keeps it open; `never` opens it only on `/tally`. |
 | `money` | cents-and-dollars | `cents-and-dollars` shows cents under $1 and dollars above; `cents` and `dollars` use one unit throughout. |
 | `decimals` | auto | `auto` trims trailing zeros; `0` to `4` fixes the decimals on every amount. |
@@ -149,14 +157,15 @@ Set the options through the plugin settings (`userConfig` in `plugin.json`), for
 | `/tally <tab>` | Opens on `session`, `usage`, `context`, `history`, `hints` or `help`. |
 | `/tally 24h` or `30d` | Opens with that time span. |
 | `/tally money dollars` | Sets a display option; also `decimals`, `open`, `row`. Word order is free. |
-| `/tally report [days] [repo]` | Writes a markdown spend report. |
+| `/tally report [days] [repo]` | Writes a markdown spend report to `api-spend-<date>.md` in the working folder. |
+| `/tally sync` | Runs one sync now (needs `syncDir`) and lists the machines it saw. |
 | `/tally debug` | Shows scan progress and totals; `--json` prints them as JSON. |
 
 ## Privacy
 
 What tally reads: the Claude Code transcripts under `$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects` (on Windows `%USERPROFILE%\.claude\projects`), the Claude desktop app's local session folders if they exist, and the installed-plugin list for the unused-plugin hint.
 
-What it writes: its own files under `<config>/tally/` (the index, a scan lease, progress and report snapshots) and, if you set `syncDir`, one totals file there. tally never writes or edits a transcript.
+What it writes: its own files under `<config>/tally/` (the index, a scan lease, progress and report snapshots); if you set `syncDir`, one totals file there; and, only when you run `/tally report`, `api-spend-<date>.md` in the current working folder (a report from the same day overwrites it, and it lists repository names). tally never writes or edits a transcript.
 
 Network: one request, to `https://platform.claude.com/docs/en/about-claude/pricing.md`, at most once a week. It sends no data about you. Set `priceUpdate` to false and tally makes no request. If `syncDir` is a git repository, tally runs `git pull --rebase`, `commit` and `push` on it from the CLI; that talks to your own remote and nothing else. Failures are logged and never shown as an error.
 
@@ -184,14 +193,14 @@ Measured on one macOS development machine on 2026-11-27, with 30 days of history
 | What | Result |
 | --- | --- |
 | Cold scan, from nothing to done | 84 to 89 s (target: 120 s or less) |
-| Warm start, index already on disk | about 9 s, with no transcript bytes read |
+| Warm start, index already on disk | about 5 s, up to about 13 s under heavy machine load, with no transcript bytes read |
 | Incremental update after a few files change | under 5 s |
 | Index size on disk after the cold scan | 96.7 MB, about 1.2% of the transcript size |
 | CPU per scan slice | about 50 ms, then yield |
 
 The full method is in [docs/en/DESIGN.md](./docs/en/DESIGN.md). Typing latency during a scan has not been measured by hand yet.
 
-Accuracy was checked against ccusage over the same 30 local days on that machine: the totals differed by 0.003%, and no single day differed by more than 0.3%. The method and its known definitional differences are in [scripts/compare.md](./scripts/compare.md).
+Accuracy was checked against ccusage over the same 30 local days on that machine: over the 30 local days from 2026-10-30 to 2026-11-28, tally was within 0.010% of ccusage on the total and within 0.03% on each model. The figures, method and known definitional differences are in [scripts/compare.md](./scripts/compare.md).
 
 ## Limitations
 
