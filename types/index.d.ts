@@ -1,5 +1,5 @@
 // The values tally keeps in `$.state`, as the engine's plugin contract.
-// Mirrors LiveState in core/live-state.ts; keep the two in step.
+// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts; keep them in step.
 
 export interface TallyTokens {
   input: number;
@@ -36,10 +36,37 @@ export interface TallyLive {
   toolChars: Record<string, number>;
 }
 
+export interface TallyView {
+  mode: "closed" | "open" | "folded";
+  tab: "session" | "usage" | "context" | "history" | "hints" | "help";
+  span: "session" | "24h" | "30d";
+  repoOnly: boolean;
+  machines: "this" | "all";
+  hasSent: boolean;
+  hasWarned: boolean;
+  hasTipped: boolean;
+}
+
+export interface TallyFoot {
+  contextTokens: number | null;
+  contextWindow: number;
+  compactAt: number | null;
+  limits: Array<{ kind: string; percentUsed: number; resetsAt?: string }>;
+  refillUsd: number | null;
+}
+
+export interface TallyChart {
+  values: number[];
+  bands: number[];
+}
+
 declare module "claude-code" {
   interface PluginState {
     tally: {
       live: Shaped<TallyLive>;
+      view: Shaped<TallyView>;
+      foot: Shaped<TallyFoot>;
+      chart: Shaped<TallyChart>;
     };
   }
 }

@@ -12,9 +12,15 @@ import { drainAsync } from "../core/steps.ts";
 import { locate } from "./locate.ts";
 import { loadProject } from "./project-store.ts";
 import { makeSlicer } from "./slicer.ts";
+import { onMeasure, onPrompt, onTurnEnd } from "./window.ts";
 
 /** The atom the views read. */
 export const liveAtom = atom({ plugin: "tally", key: "live" } as const, emptyLive("", 0, 0), { shape: "live-1" });
+
+/** The live state, read for a view. */
+export function readLive($: EngineInterface): Promise<LiveState> {
+  return read($, liveAtom);
+}
 
 /** `$.store` key of the last rate-limit windows seen: `{ at, limits }`, kept for reports and near-limit rules. */
 export const LAST_LIMITS_KEY = "lastLimits";
@@ -37,6 +43,11 @@ function inBackground($: EngineInterface, work: () => Promise<unknown>): void {
   $.clock.after(0, () => {
     work().catch(() => {});
   });
+}
+
+// The cache life main last showed, which prices the window's refill figure.
+async function mainLife($: EngineInterface): Promise<"5m" | "1h"> {
+  return (await read($, liveAtom)).lastWrite?.ttl ?? "1h";
 }
 
 async function idOf($: EngineInterface): Promise<string> {
@@ -119,6 +130,8 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
   // Accounting never holds up or fails the call it watches: each handler swallows its own errors.
   on("prompt.submit", async ($, e, next) => {
     await ensure($).catch(() => undefined);
+    // The window's first-message fold never fails the prompt.
+    await onPrompt($, e).catch(() => undefined);
     return next(e);
   });
 
@@ -167,6 +180,7 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
     const done = await next(e);
     if (e.agentId === undefined) {
       inBackground($, () => noteLimits($));
+      inBackground($, async () => onTurnEnd($, await mainLife($)));
       const now = await $.clock.now();
       if (now - ledgerAt >= LEDGER_INTERVAL_MS) {
         ledgerAt = now;
@@ -180,6 +194,7 @@ export function wireLive(on: On, deps: LiveDeps = {}): void {
   // The engine's own reading of the windows, whenever one moves.
   on("session.measure", async ($, e, next) => {
     if (e.rateLimits.length > 0) await $.store.set(LAST_LIMITS_KEY, { at: await $.clock.now(), limits: e.rateLimits }).catch(() => undefined);
+    await onMeasure($, e, await mainLife($)).catch(() => undefined);
     return next(e);
   });
 }
