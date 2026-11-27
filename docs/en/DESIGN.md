@@ -45,7 +45,7 @@ tests/             claude plugin test; fixtures are synthetic
 
 **Chunked reads.** Each read asks for up to 4 MiB as text. A range can cut a multi-byte character in two, so the reader keeps only whole lines: the partial last line, including any replacement character at the cut, is dropped and the offset advances by the byte length of the lines kept. A single line larger than a chunk is parsed by a separate oversized-line path.
 
-**Incremental updates.** For each file the index stores size, mtime and the byte offset reached (always at a line end). Unchanged files are skipped, grown files continue from the offset, shrunk files are read again, and files outside the window are trimmed. `fs.list` already returns size and mtime, so nothing is statted per file.
+**Incremental updates.** For each file the index stores size, mtime and the byte offset reached (always at a line end). Unchanged files are skipped, grown files continue from the offset, shrunk files are read again, and files outside the window are trimmed. A project whose window files are all read but that has no index (every transcript older than 30 days, or none with rows) gets an empty one, so readers count it read rather than unread. `fs.list` already returns size and mtime, so nothing is statted per file.
 
 **Parsing rules.**
 

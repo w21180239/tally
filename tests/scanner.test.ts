@@ -591,6 +591,29 @@ describe("scanner index", () => {
     b.s.stop();
   });
 
+  test("a project with nothing to read in the window gets an empty index; one with an unread file gets none", async () => {
+    const w = worldOf();
+    await w.advance(100 * DAY_MS);
+    file(w, "-cur", "in.jsonl", ["r1"], HOUR);
+    file(w, "-old", "ancient.jsonl", ["r2"], 40 * DAY_MS);
+    w.put(`${ROOT}/-blank/empty.jsonl`, "");
+    w.setMtime(`${ROOT}/-blank/empty.jsonl`, w.time() - HOUR);
+    file(w, "-late", "stuck.jsonl", ["r3"], HOUR);
+    const a = boot(w, "a", {}, (p) => (p.includes("/-late/") ? Promise.reject(new Error("unreadable")) : undefined));
+    await pump(w, a.done);
+    expect((await shardOf(w, "-old"))?.usage.length).toBe(0);
+    expect((await shardOf(w, "-blank"))?.usage.length).toBe(0);
+    expect(await shardOf(w, "-late")).toBeNull();
+    expect(a.saved).toContain("-old");
+    // A later pass with nothing new writes no index file for them again.
+    const writes = a.v.writes.length;
+    const n = a.seen.length;
+    a.s.rescan();
+    await pump(w, () => a.seen.length > n && a.done());
+    expect(a.v.writes.slice(writes).filter((x) => x.path.includes("/tally/index/"))).toEqual([]);
+    a.s.stop();
+  });
+
   test("an index stamped with an older format is ignored and rebuilt from the transcripts", async () => {
     const w = worldOf();
     await w.advance(100 * DAY_MS);
