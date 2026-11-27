@@ -86,6 +86,7 @@ function assistantRow(l: Rec, ctx: FileCtx): Parsed | null {
   if (plugin) row.plugin = plugin;
   if (effort) row.effort = effort;
   if (cwd) row.cwd = cwd;
+  if (ctx.isSub && ctx.agentType) row.agentType = ctx.agentType;
   return { t: "usage", row };
 }
 

@@ -180,3 +180,30 @@ describe("shard fix round 1", () => {
     expect(Object.keys(t.files)).toEqual(["/p/a/s-0.jsonl"]);
   });
 });
+
+describe("shard agentType", () => {
+  const withTypes = (): Shard => {
+    const s = shard(4);
+    s.usage[1].agentType = "Explore";
+    s.usage[2].agentType = "Plan";
+    s.usage[3].agentType = "Explore";
+    return s;
+  };
+  test("round-trips, rows without a type stay without", () => {
+    const s = withTypes();
+    const d = decodeShard(encodeShard(s));
+    expect(d).toEqual(s);
+    expect(d.usage.map((r) => r.agentType)).toEqual([undefined, "Explore", "Plan", "Explore"]);
+    expect("agentType" in d.usage[0]).toBe(false);
+  });
+  test("a shard written before the column existed still decodes, agentType absent", () => {
+    const s = shard(4);
+    const old = encodeShard(s).map((p) => {
+      const o = JSON.parse(p) as { items: [string, unknown][] };
+      for (const it of o.items) if (it[0] === "usage") (it[1] as unknown[]).length = 20;
+      return JSON.stringify(o);
+    });
+    expect(JSON.parse(old[0]).items.find((i: [string]) => i[0] === "usage")[1].length).toBe(20);
+    expect(decodeShard(old)).toEqual(s);
+  });
+});

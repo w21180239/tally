@@ -356,6 +356,9 @@ describe("scanner", () => {
     expect(shard.usage.find((r) => r.requestId === "dup-1")!.sidechain).toBe(true);
     expect(shard.files[sub]).toMatchObject({ isSub: true, agentType: "Explore", sessionId: "s1" });
     expect(shard.files[orphan].agentType).toBe("unknown");
+    expect(shard.usage.find((r) => r.requestId === "dup-1")!.agentType).toBe("Explore");
+    expect(shard.usage.find((r) => r.requestId === "orphan")!.agentType).toBe("unknown");
+    expect(shard.usage.find((r) => r.requestId === "solo")!.agentType).toBeUndefined();
     expect(Object.keys(shard.files).some((k) => k.endsWith(".meta.json"))).toBe(false);
     a.s.stop();
   });

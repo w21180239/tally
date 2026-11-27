@@ -52,7 +52,7 @@ describe("30d span", () => {
     expect(usds(s.byRepo)).toEqual({ alpha: 26, beta: 15, gamma: 17 });
   });
 
-  test("subagent type x model with tool counts; several types in a session give unknown", () => {
+  test("subagent type x model with tool counts; a sub row without agentType reads as unknown", () => {
     expect(Object.keys(s.bySubType).sort()).toEqual(["Explore", "general-purpose", "unknown"]);
     expect(usd(s.bySubType.Explore[OPUS])).toBe(3.5);
     expect(s.bySubType.Explore[OPUS].tools).toEqual({ Bash: 1 });
@@ -167,6 +167,22 @@ describe("session span", () => {
     const s = run({ span: "session" }, []);
     expect(s.total.requests).toBe(0);
     expect(s.timeline.points.length).toBe(1);
+  });
+});
+
+describe("sub-agent attribution", () => {
+  test("two types in one session are told apart by row.agentType", () => {
+    const rows = [
+      usage({ id: "a", session: "x", ts: "2026-11-20T01:00:00Z", model: SONNET, k: 1, cwd: "/w/r", sidechain: true, agentType: "Plan" }),
+      usage({ id: "b", session: "x", ts: "2026-11-20T01:05:00Z", model: SONNET, k: 2, cwd: "/w/r", sidechain: true, agentType: "Explore" }),
+      usage({ id: "c", session: "x", ts: "2026-11-20T01:10:00Z", model: SONNET, k: 3, cwd: "/w/r", sidechain: true }),
+    ];
+    const sh: Shard = { v: 1, project: "q", files: {}, usage: rows, users: [], metas: [], compacts: [], snapshots: [] };
+    const s = run({}, [sh]);
+    expect(Object.keys(s.bySubType).sort()).toEqual(["Explore", "Plan", "unknown"]);
+    expect(usd(s.bySubType.Plan[SONNET])).toBe(1);
+    expect(usd(s.bySubType.Explore[SONNET])).toBe(2);
+    expect(usd(s.bySubType.unknown[SONNET])).toBe(3);
   });
 });
 

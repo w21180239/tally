@@ -40,6 +40,7 @@ export type Spec = {
   skill?: string;
   plugin?: string;
   tools?: ToolUse[];
+  agentType?: string;
 };
 
 export function usage(s: Spec): UsageRow {
@@ -59,6 +60,7 @@ export function usage(s: Spec): UsageRow {
   };
   if (s.skill) row.skill = s.skill;
   if (s.plugin) row.plugin = s.plugin;
+  if (s.agentType) row.agentType = s.agentType;
   return row;
 }
 
@@ -75,14 +77,14 @@ export const specs1: Spec[] = [
   // s1 alpha: custom + ai title, Explore sub-agent
   { id: "r1", session: "s1", ts: "2026-10-30T02:00:00Z", model: OPUS, k: 2, cwd: A },
   { id: "r2", session: "s1", ts: "2026-11-05T22:30:00Z", model: SONNET, k: 4, cwd: A },
-  { id: "r3", session: "s1", ts: "2026-11-05T22:40:00Z", model: SONNET, k: 2, cwd: A, sidechain: true, tools: [tool("Read")] },
-  { id: "r4", session: "s1", ts: "2026-11-05T22:45:00Z", model: OPUS, k: 1, cwd: A, sidechain: true, tools: [tool("Bash")] },
+  { id: "r3", session: "s1", ts: "2026-11-05T22:40:00Z", model: SONNET, k: 2, cwd: A, sidechain: true, tools: [tool("Read")], agentType: "Explore" },
+  { id: "r4", session: "s1", ts: "2026-11-05T22:45:00Z", model: OPUS, k: 1, cwd: A, sidechain: true, tools: [tool("Bash")], agentType: "Explore" },
   // s2 beta: skill + plugin, general-purpose sub-agent, an unpriced model
   { id: "r5", session: "s2", ts: "2026-11-20T08:00:00Z", model: OPUS, k: 3, cwd: B, skill: "brainstorm", plugin: "superpowers" },
-  { id: "r6", session: "s2", ts: "2026-11-20T08:10:00Z", model: OPUS, k: 1, cwd: B, sidechain: true, tools: [tool("Read"), tool("Read"), ...mcp(1)] },
-  { id: "r7", session: "s2", ts: "2026-11-20T08:20:00Z", model: SONNET, k: 1, cwd: B, sidechain: true, tools: [tool("Grep")] },
+  { id: "r6", session: "s2", ts: "2026-11-20T08:10:00Z", model: OPUS, k: 1, cwd: B, sidechain: true, tools: [tool("Read"), tool("Read"), ...mcp(1)], agentType: "general-purpose" },
+  { id: "r7", session: "s2", ts: "2026-11-20T08:20:00Z", model: SONNET, k: 1, cwd: B, sidechain: true, tools: [tool("Grep")], agentType: "general-purpose" },
   { id: "r13", session: "s2", ts: "2026-11-10T00:00:00Z", model: "claude-unknown-1", k: 1, cwd: B },
-  // s5 gamma: two sub-agent types in one session, so the type is ambiguous
+  // s5 gamma: sidechain row without an agentType (older index): reads as unknown
   { id: "r15", session: "s5", ts: "2026-11-12T03:00:00Z", model: SONNET, k: 1, cwd: G, sidechain: true },
   // outside the 30-day window
   { id: "r12", session: "s7", ts: "2026-10-20T00:00:00Z", model: OPUS, k: 10, cwd: A },

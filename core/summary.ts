@@ -72,22 +72,6 @@ const repoFor = (r: UsageRow): string => (r.cwd ? repoOf(r.cwd) || UNKNOWN_REPO 
 export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts): Summary {
   const { span, nowMs, tzOffsetMin } = opts;
 
-  // Sub-agent types per session, from each shard file's agentType. A request carries no file link, so a
-  // session that ran several types gives UNKNOWN_SUB for its sidechain rows.
-  const types = new Map<string, Set<string>>();
-  for (const s of shards) {
-    for (const f of Object.values(s.files)) {
-      if (!f.isSub || !f.agentType) continue;
-      const set = types.get(f.sessionId) ?? new Set<string>();
-      set.add(f.agentType);
-      types.set(f.sessionId, set);
-    }
-  }
-  const subTypeOf = (r: UsageRow): string => {
-    const set = types.get(r.sessionId);
-    return set && set.size === 1 ? [...set][0] : UNKNOWN_SUB;
-  };
-
   // Synthetic rows are not API requests. Rows are priced once here.
   const unpriced = new Set<string>();
   let rows: Row[] = [];
@@ -169,7 +153,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     add(slot(out.byModel, r.model, zero), r, usd);
     add(slot(out.byRepo, repo, zero), r, usd);
     if (r.sidechain) {
-      const m = slot(slot(out.bySubType, subTypeOf(r), () => ({})), r.model, () => ({ ...zero(), tools: {} as Record<string, number> }));
+      const m = slot(slot(out.bySubType, r.agentType ?? UNKNOWN_SUB, () => ({})), r.model, () => ({ ...zero(), tools: {} as Record<string, number> }));
       add(m, r, usd);
       for (const t of r.tools) m.tools[t.name] = (m.tools[t.name] ?? 0) + 1;
     }

@@ -147,3 +147,13 @@ describe("parseLine other", () => {
     expect(parseLine('{"type":"progress"}', ctx)).toBe(null);
   });
 });
+
+describe("parseLine agentType", () => {
+  test("a sub-file row carries the file's agent type; a main-file row has none", () => {
+    expect(usage(parseLine(assistant(), sub)).agentType).toBe("x");
+    expect("agentType" in usage(parseLine(assistant(), ctx))).toBe(false);
+  });
+  test("a sub file without a type leaves it absent", () => {
+    expect("agentType" in usage(parseLine(assistant(), { ...sub, agentType: undefined }))).toBe(false);
+  });
+});

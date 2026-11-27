@@ -41,13 +41,15 @@ function table(): { at(v: string): number; list: string[] } {
 
 // UsageRow as parallel columns: field names are written once per chunk, not once per row.
 // flags: bit0 fast, bit1 sidechain, bit2 synthetic. Optional strings use null for "absent".
-// sessionId, model and cwd are column indexes into tables appended after the 17 columns.
+// sessionId, model and cwd are column indexes into tables appended after the 17 columns; agentType
+// (column 20, table 21) follows them so shards written before it existed still decode.
 function usageCols(rows: UsageRow[]): unknown[] {
   const c = (f: (r: UsageRow) => unknown) => rows.map(f);
   const opt = (f: (r: UsageRow) => string | undefined) => rows.map((r) => f(r) ?? null);
   const sess = table();
   const model = table();
   const cwd = table();
+  const agent = table();
   return [
     c((r) => r.requestId),
     c((r) => sess.at(r.sessionId)),
@@ -69,6 +71,8 @@ function usageCols(rows: UsageRow[]): unknown[] {
     sess.list,
     model.list,
     cwd.list,
+    c((r) => (r.agentType === undefined ? null : agent.at(r.agentType))),
+    agent.list,
   ];
 }
 
@@ -100,6 +104,8 @@ function usageRows(cols: unknown[][]): UsageRow[] {
     if (cols[14][i] !== null) row.skill = cols[14][i] as string;
     if (cols[15][i] !== null) row.plugin = cols[15][i] as string;
     if (cols[16][i] !== null) row.effort = cols[16][i] as string;
+    // Columns 20-21 were added later: shards written without them decode with agentType absent.
+    if (cols[20] && cols[20][i] != null) row.agentType = (cols[21] as unknown as string[])[cols[20][i] as number];
     out.push(row);
   }
   return out;

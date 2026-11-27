@@ -310,7 +310,10 @@ export function startScanner($: ScannerEnv, opts: ScanOpts): { stop(): void; res
         if (old) st.dirty.add(dayIdx(old.ts));
         // A subagent file took the request over: the kept row must read as sidechain too.
         const kept = verdict === "replace" && isSub ? st.ledger.get(p.row.requestId) : undefined;
-        if (kept) kept.sidechain = true;
+        if (kept) {
+          kept.sidechain = true;
+          if (agentType) kept.agentType = agentType;
+        }
       } else if (p.t === "user") {
         // The index keeps a prompt's first TEXT_KEEP chars and where its line starts; the rest is fetched on demand.
         const row = p.row;

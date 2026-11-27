@@ -21,6 +21,8 @@ export type UsageRow = RawUsage & {
   skill?: string;
   plugin?: string;
   effort?: string;
+  /** Sub-agent type of the transcript the request came from; absent for main-session rows. */
+  agentType?: string;
 };
 
 export type UserRow = {
