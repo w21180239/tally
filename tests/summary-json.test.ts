@@ -1,5 +1,6 @@
 import { describe, expect, test } from "claude-code/testing";
 import { summaryJson } from "../engine/summary-json.ts";
+import { idleProgress } from "../engine/progress.ts";
 import { saveBuckets, dayIdx } from "../engine/project-store.ts";
 import type { Shard } from "../core/shard.ts";
 import type { UsageRow } from "../core/types.ts";
@@ -33,7 +34,7 @@ describe("summaryJson", () => {
     await saveBuckets(w.$, CFG, "-p1", { days: new Map([[dayIdx(a), shard("-p1", [row("r1", a, 1_000_000), row("r2", b, 2_000_000)])]]) }, {}, NOW);
     await saveBuckets(w.$, CFG, "-p2", { days: new Map([[dayIdx(old), shard("-p2", [row("r3", old, 5_000_000)])], [dayIdx(a), shard("-p2", [row("r4", a, 3_000_000)])]]) }, {}, NOW);
     let ticks = 0;
-    const out = JSON.parse(await summaryJson(w.$, CFG, ["-p1", "-p2", "-none"], NOW, TZ, PRICES, async () => void ticks++));
+    const out = JSON.parse(await summaryJson(w.$, CFG, ["-p1", "-p2", "-none"], NOW, TZ, PRICES, idleProgress(false), async () => void ticks++));
     // opus input is $10 per MTok in the fixture price table.
     expect(Math.abs(out.total.usd - 60) < 1e-9).toBe(true);
     expect(out.total.requests).toBe(3);
@@ -45,5 +46,7 @@ describe("summaryJson", () => {
     expect(Math.abs(out.byDay[29].usd - 40) < 1e-9).toBe(true);
     expect(Math.abs(out.byDay[28].usd - 20) < 1e-9).toBe(true);
     expect(ticks).toBeGreaterThan(0);
+    expect(out.scan.phase).toBe("idle");
+    expect(out.unpriced).toEqual([]);
   });
 });

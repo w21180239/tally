@@ -5,6 +5,7 @@ import { debugText, idleProgress } from "../engine/progress.ts";
 import type { ScanProgress } from "../engine/progress.ts";
 import { listProjects, startScanner } from "../engine/scanner.ts";
 import { summaryJson } from "../engine/summary-json.ts";
+import { makeSlicer } from "../engine/slicer.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 
 type Platform = "darwin" | "win32" | "linux";
@@ -86,7 +87,9 @@ export const register: Register = (on) => {
       const projects = await listProjects($, loc.roots);
       if (args[1] === "--json") {
         const now = await $.clock.now();
-        return { text: await summaryJson($, loc.cfg, projects, now, -new Date(now).getTimezoneOffset(), BUILTIN_PRICES, () => $.clock.sleep(0)) };
+        const slicer = makeSlicer($);
+        const tick = () => slicer.check();
+        return { text: await summaryJson($, loc.cfg, projects, now, -new Date(now).getTimezoneOffset(), BUILTIN_PRICES, progress, tick) };
       }
       return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now(), () => $.clock.sleep(0)) };
     }

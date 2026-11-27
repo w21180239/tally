@@ -4,12 +4,14 @@ import { repoOf } from "./path.ts";
 import { bump, dict } from "./dict.ts";
 import { cacheUnitPrices, costOf, memoResolver } from "./pricing.ts";
 import type { PriceTable } from "./pricing.ts";
-import { findRebuilds } from "./cache-life.ts";
+import { findRebuildsSteps } from "./cache-life.ts";
 import type { Rebuild } from "./cache-life.ts";
-import { analyzeFlow } from "./flow.ts";
+import { analyzeFlowSteps } from "./flow.ts";
 import type { FlowItem, Paste } from "./flow.ts";
 import type { Shard } from "./shard.ts";
 import type { Tokens, UsageRow } from "./types.ts";
+import { drain, drainAsync, STEP_ROWS } from "./steps.ts";
+import type { Steps } from "./steps.ts";
 
 export type Span = "session" | "24h" | "30d";
 export type Money = { usd: number; tokens: Tokens; requests: number };
@@ -94,6 +96,19 @@ type Row = { r: UsageRow; usd: number; repo: string };
 const repoFor = (r: UsageRow): string => (r.cwd ? repoOf(r.cwd) || UNKNOWN_REPO : UNKNOWN_REPO);
 
 export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts): Summary {
+  return drain(summarySteps(shards, prices, opts));
+}
+
+/**
+ * Same Summary as `summarize`, computed in steps: `tick` is awaited about every STEP_ROWS rows and between
+ * phases, so the caller can hand control back (e.g. through a slicer) instead of blocking for the whole pass.
+ */
+export function summarizeAsync(shards: Shard[], prices: PriceTable, opts: SummaryOpts, tick: () => Promise<void> | void): Promise<Summary> {
+  return drainAsync(summarySteps(shards, prices, opts), tick);
+}
+
+function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): Steps<Summary> {
+  let n = 0;
   const { span, nowMs, tzOffsetMin } = opts;
   const resolve = memoResolver(prices);
 
@@ -104,6 +119,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
   const everyRow: UsageRow[] = [];
   for (const s of shards) {
     for (const r of s.usage) {
+      if (++n % STEP_ROWS === 0) yield;
       if (r.synthetic) continue;
       everyRow.push(r);
       const repo = repoFor(r);
@@ -188,7 +204,9 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
   type Acc = { usd: number; started: number; byRepo: Map<string, number> };
   const sessions = new Map<string, Acc>();
   const hourTokens = new Map<number, number>();
+  yield;
   for (const { r, usd, repo } of rows) {
+    if (++n % STEP_ROWS === 0) yield;
     add(out.total, r, usd);
     add(r.sidechain ? out.sub : out.main, r, usd);
     if (r.fast) add(out.fast, r, usd);
@@ -220,6 +238,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
     a.byRepo.set(repo, (a.byRepo.get(repo) ?? 0) + usd);
   }
 
+  yield;
   if (hourTokens.size) {
     const sorted = [...hourTokens.values()].sort((a, b) => a - b);
     const rank = (pct: number) => sorted[Math.max(1, Math.ceil((pct / 100) * sorted.length)) - 1];
@@ -238,6 +257,7 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
       metas.set(m.sessionId, e);
     }
   }
+  yield;
   const top: TopSession[] = [];
   for (const [sessionId, a] of sessions) {
     let repo = UNKNOWN_REPO;
@@ -255,15 +275,20 @@ export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts
 
   // Deep dimensions: a request is counted when it is one of the summarized rows.
   const counted = new Set<UsageRow>();
-  for (const { r } of rows) counted.add(r);
+  for (const { r } of rows) {
+    if (++n % STEP_ROWS === 0) yield;
+    counted.add(r);
+  }
   const users = shards.flatMap((s) => s.users);
   const compacts = shards.flatMap((s) => s.compacts);
   const inWindow = (ts: number) => span === "session" || (ts >= from && ts <= to);
-  out.cacheRebuilds = findRebuilds(everyRow, (r) => counted.has(r), (r) => {
+  yield;
+  out.cacheRebuilds = yield* findRebuildsSteps(everyRow, (r) => counted.has(r), (r) => {
     const u = cacheUnitPrices(r, prices, resolve);
     return r.tokens.cw5m * u.cw5m + r.tokens.cw1h * u.cw1h;
   });
-  const flow = analyzeFlow({
+  yield;
+  const flow = yield* analyzeFlowSteps({
     rows: everyRow,
     users,
     compacts,

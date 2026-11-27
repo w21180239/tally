@@ -2,6 +2,8 @@
 import { streamOf } from "./stream.ts";
 import { HOUR_MS } from "./time.ts";
 import type { UsageRow } from "./types.ts";
+import { drain, STEP_ROWS } from "./steps.ts";
+import type { Steps } from "./steps.ts";
 
 export type CacheLife = "5m" | "1h";
 export type Rebuild = { sessionId: string; ts: number; tokens: number; usd: number; gapMs: number; ttl: CacheLife };
@@ -30,18 +32,37 @@ export function cacheLife(writes: { ts: number; cw5m: number; cw1h: number }[]):
  * `writeUsd` prices a request's cache writes.
  */
 export function findRebuilds(rows: UsageRow[], counted: (r: UsageRow) => boolean, writeUsd: (r: UsageRow) => number): Rebuild[] {
-  const keyed = rows.map((r) => ({ r, key: streamOf(r) }));
-  keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.r.ts - b.r.ts || (a.r.requestId < b.r.requestId ? -1 : 1)));
+  return drain(findRebuildsSteps(rows, counted, writeUsd));
+}
+
+/** `findRebuilds` in steps: rows are grouped by stream and each stream is sorted alone, so no single sort spans every row. */
+export function* findRebuildsSteps(rows: UsageRow[], counted: (r: UsageRow) => boolean, writeUsd: (r: UsageRow) => number): Steps<Rebuild[]> {
+  const streams = new Map<string, UsageRow[]>();
+  for (let i = 0; i < rows.length; i++) {
+    if (i % STEP_ROWS === STEP_ROWS - 1) yield;
+    const key = streamOf(rows[i]);
+    const g = streams.get(key);
+    if (g) g.push(rows[i]);
+    else streams.set(key, [rows[i]]);
+  }
   const out: Rebuild[] = [];
-  for (let i = 1; i < keyed.length; i++) {
-    const { r, key } = keyed[i];
-    const before = keyed[i - 1];
-    if (before.key !== key) continue;
-    const tokens = r.tokens.cw5m + r.tokens.cw1h;
-    if (tokens < REBUILD_MIN_WRITE_TOKENS || !counted(r)) continue;
-    const gapMs = r.ts - before.r.ts;
-    const ttl = cacheLife([{ ts: r.ts, cw5m: r.tokens.cw5m, cw1h: r.tokens.cw1h }]);
-    if (gapMs > (ttl === "1h" ? HOUR_MS : FIVE_MIN_MS)) out.push({ sessionId: r.sessionId, ts: r.ts, tokens, usd: writeUsd(r), gapMs, ttl });
+  let n = 0;
+  for (const key of [...streams.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const group = streams.get(key)!;
+    group.sort((a, b) => a.ts - b.ts || (a.requestId < b.requestId ? -1 : 1));
+    n += group.length;
+    if (n >= STEP_ROWS) {
+      n = 0;
+      yield;
+    }
+    for (let i = 1; i < group.length; i++) {
+      const r = group[i];
+      const tokens = r.tokens.cw5m + r.tokens.cw1h;
+      if (tokens < REBUILD_MIN_WRITE_TOKENS || !counted(r)) continue;
+      const gapMs = r.ts - group[i - 1].ts;
+      const ttl = cacheLife([{ ts: r.ts, cw5m: r.tokens.cw5m, cw1h: r.tokens.cw1h }]);
+      if (gapMs > (ttl === "1h" ? HOUR_MS : FIVE_MIN_MS)) out.push({ sessionId: r.sessionId, ts: r.ts, tokens, usd: writeUsd(r), gapMs, ttl });
+    }
   }
   return out.sort((a, b) => a.ts - b.ts || (a.sessionId < b.sessionId ? -1 : 1));
 }

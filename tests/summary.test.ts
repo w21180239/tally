@@ -1,5 +1,6 @@
 import { describe, test, expect } from "claude-code/testing";
-import { summarize } from "../core/summary.ts";
+import { summarize, summarizeAsync } from "../core/summary.ts";
+import { STEP_ROWS } from "../core/steps.ts";
 import { activeHours, localDay, localDayStart, utcHour } from "../core/time.ts";
 import { month, usage, NOW, OPUS, PRICES, SONNET, TZ } from "./fixtures/month.ts";
 import type { Shard } from "../core/shard.ts";
@@ -281,5 +282,40 @@ describe("summarize internals", () => {
     expect(Object.keys(s.byRepo)).toEqual(["constructor"]);
     expect(Object.keys(s.byModel).sort()).toEqual(["constructor", "toString"]);
     expect(s.bySubType.constructor.toString.tools.constructor).toBe(2);
+  });
+});
+
+describe("summarizeAsync", () => {
+  const opts = { span: "30d" as const, nowMs: NOW, tzOffsetMin: TZ };
+
+  test("gives exactly the Summary of summarize on the month fixture", async () => {
+    let ticks = 0;
+    const a = await summarizeAsync(month(), PRICES, opts, () => void ticks++);
+    expect(a).toEqual(summarize(month(), PRICES, opts));
+    expect(ticks).toBeGreaterThan(0);
+  });
+
+  test("every span and a repo filter match the sync Summary", async () => {
+    for (const o of [{ ...opts, span: "24h" as const }, { ...opts, span: "session" as const }, { ...opts, repo: "alpha" }]) {
+      expect(await summarizeAsync(month(), PRICES, o, async () => {})).toEqual(summarize(month(), PRICES, o));
+    }
+  });
+
+  test("ticks many times when the rows cross STEP_ROWS, and each tick lets a pending task run", async () => {
+    const rows = Array.from({ length: STEP_ROWS * 5 }, (_, i) =>
+      req({ id: `r${i}`, session: `s${i % 7}`, at: i * 1000, tokens: { input: 10, output: 5, cacheRead: 1000, cw5m: i % 50 === 0 ? 30_000 : 0 }, cwd: "/w/alpha" }),
+    );
+    const shard: Shard = { v: 1, project: "p", files: {}, usage: rows, users: [], metas: [], compacts: [], snapshots: [] };
+    const big = { ...opts, nowMs: rows[rows.length - 1].ts + 1000 };
+    let ticks = 0;
+    let ran = 0;
+    const a = await summarizeAsync([shard], PRICES, big, async () => {
+      ticks++;
+      await Promise.resolve().then(() => void ran++);
+    });
+    expect(ticks).toBeGreaterThan(10);
+    expect(ran).toBe(ticks);
+    expect(a).toEqual(summarize([shard], PRICES, big));
+    expect(a.total.requests).toBe(STEP_ROWS * 5);
   });
 });

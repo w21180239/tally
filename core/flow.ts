@@ -3,6 +3,8 @@
 // context until a compaction, and every counted request re-reads the cached share of it. A part's re-read
 // cost is its tokens times the cache-read spend of the requests made while it was there.
 import { dictOf } from "./dict.ts";
+import { drain, STEP_ROWS } from "./steps.ts";
+import type { Steps } from "./steps.ts";
 import { streamOf } from "./stream.ts";
 import type { CompactRow, UsageRow, UserRow } from "./types.ts";
 
@@ -95,9 +97,16 @@ function openingRest(c: Conv): number {
 }
 
 export function analyzeFlow(input: FlowInput): FlowOut {
+  return drain(analyzeFlowSteps(input));
+}
+
+/** `analyzeFlow` in steps: yields every STEP_ROWS rows of a pass and before each conversation's replay. */
+export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
+  let n = 0;
   const tools = new Map<string, Tool>();
   const convs = new Map<string, Conv>();
   for (const r of input.rows) {
+    if (++n % STEP_ROWS === 0) yield;
     for (const t of r.tools) if (t.id !== undefined) tools.set(t.id, t);
     const key = streamOf(r);
     let c = convs.get(key);
@@ -108,9 +117,17 @@ export function analyzeFlow(input: FlowInput): FlowOut {
     }
     c.rows.push(r);
   }
-  for (const u of input.users) convs.get(streamOf(u))?.users.push(u);
+  for (const u of input.users) {
+    if (++n % STEP_ROWS === 0) yield;
+    convs.get(streamOf(u))?.users.push(u);
+  }
   for (const k of input.compacts) convs.get(streamOf(k))?.compacts.push(k.ts);
   for (const c of convs.values()) {
+    n += c.rows.length + c.users.length;
+    if (n >= STEP_ROWS) {
+      n = 0;
+      yield;
+    }
     c.rows.sort((a, b) => a.ts - b.ts);
     c.users.sort((a, b) => a.ts - b.ts);
     c.compacts.sort((a, b) => a - b);
@@ -137,7 +154,7 @@ export function analyzeFlow(input: FlowInput): FlowOut {
 
   type Stay = { source: FlowSource; label: string; tokens: number; counted: boolean; listed: boolean; paste: boolean; from: number; item: FlowItem | null };
 
-  const replay = (c: Conv, cap: number): void => {
+  const replay = function* (c: Conv, cap: number): Steps<void> {
     // Running totals after each counted request since the last compaction: re-read tokens share and USD.
     let shares = [0];
     let spend = [0];
@@ -179,6 +196,7 @@ export function analyzeFlow(input: FlowInput): FlowOut {
     let ci = 0;
     // Wake order at one instant: compaction, then arrivals, then the request that read them.
     while (ri < rows.length || ui < users.length || ci < compacts.length) {
+      if (++n % STEP_ROWS === 0) yield;
       const tc = ci < compacts.length ? compacts[ci] : Infinity;
       const tu = ui < users.length ? users[ui].ts : Infinity;
       const tr = ri < rows.length ? rows[ri].ts : Infinity;
@@ -236,7 +254,15 @@ export function analyzeFlow(input: FlowInput): FlowOut {
     for (const [file, n] of wholes) if (n > (wholeBest.get(file) ?? 0)) wholeBest.set(file, n);
   };
 
-  for (const c of convs.values()) if (c.rows.length > 0) replay(c, c.sub ? caps.sub : caps.main);
+  for (const c of convs.values()) {
+    if (c.rows.length === 0) continue;
+    n += c.rows.length;
+    if (n >= STEP_ROWS) {
+      n = 0;
+      yield;
+    }
+    yield* replay(c, c.sub ? caps.sub : caps.main);
+  }
 
   const repeated = [...wholeBest].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1] || text(a[0], b[0]));
   const flow = [...items.values()]
