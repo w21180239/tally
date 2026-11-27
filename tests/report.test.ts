@@ -198,6 +198,9 @@ describe("tool arguments", () => {
     expect(argsOf({ days: 7, repo: " demo ", compare: true, saveBaseline: true, extra: 1 })).toEqual({ days: 7, repo: "demo", compare: true, saveBaseline: true });
     expect(argsOf({ days: "7", repo: 3, compare: "yes", saveBaseline: 1 })).toEqual({});
     expect(argsOf(undefined)).toEqual({});
+    expect(argsOf({ adopt: [" fast-mode ", "fast-mode", "", 3, "long-session"] })).toEqual({ adopt: ["fast-mode", "long-session"] });
+    expect(argsOf({ adopt: [] })).toEqual({});
+    expect(argsOf({ adopt: "fast-mode" })).toEqual({});
     expect([undefined, 0, -4, 3.6, 99].map(clampDays)).toEqual([30, 1, 1, 4, 30]);
   });
 });
@@ -281,12 +284,12 @@ const textOf = (r: { result?: unknown }): string => String(r.result);
 const rowsOf = (): UsageRow[] => [usageRow("a", 3), usageRow("b", 20), usageRow("c", 0.02)];
 
 describe("the tally_report tool", () => {
-  test("is declared at session start with its four parameters", async ($, on) => {
+  test("is declared at session start with its five parameters", async ($, on) => {
     const r = rig(on);
     await start($);
     expect(r.registered.map((t) => t.name)).toEqual(["tally_report"]);
     const props = (r.registered[0]!.inputSchema as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(props).sort()).toEqual(["compare", "days", "repo", "saveBaseline"]);
+    expect(Object.keys(props).sort()).toEqual(["adopt", "compare", "days", "repo", "saveBaseline"]);
   });
 
   test("answers with the markdown report", async ($, on) => {
@@ -330,6 +333,78 @@ describe("the tally_report tool", () => {
     await start($);
     expect(textOf(await call($, { compare: true }))).toContain("No baseline compared.");
     expect(r.stored.has(BASELINE_KEY)).toBe(false);
+  });
+});
+
+// The seeded rows give the thinking-output rule a hint: all of the output cost is thinking, and it has a metric.
+const adoptionsOf = (r: Rig): Array<{ rule: string; at: number; metricName?: string; before?: number; expectedUsd: number }> => (r.stored.get("adoptions") as never) ?? [];
+
+describe("the tally_report adopt parameter", () => {
+  test("records an adoption for each flagged rule, with its metric and expected saving", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    const out = textOf(await call($, { adopt: ["thinking-output"] }));
+    expect(out).toContain("Adopted: thinking-output.");
+    const [a, ...rest] = adoptionsOf(r);
+    expect(rest).toEqual([]);
+    expect(a).toMatchObject({ rule: "thinking-output", at: NOW, metricName: "thinking share of output cost" });
+    expect(Math.abs(a!.before! - 1)).toBeLessThan(1e-6);
+    expect(Math.abs(a!.expectedUsd - 6)).toBeLessThan(1e-6);
+  });
+
+  test("an unknown id and an unflagged rule are skipped and named", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    expect(HINT_RULES.find((h) => h.id === "fast-mode")!.run(inputOf(summaryOf(rowsOf())))).toEqual([]);
+    const out = textOf(await call($, { adopt: ["no-such-rule", "fast-mode", "thinking-output"] }));
+    expect(out).toContain("Adopted: thinking-output.");
+    expect(out).toContain("Skipped, unknown rule: no-such-rule.");
+    expect(out).toContain("Skipped, not flagged over 30 days: fast-mode.");
+    expect(adoptionsOf(r).map((a) => a.rule)).toEqual(["thinking-output"]);
+  });
+
+  test("nothing adoptable records nothing", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    const out = textOf(await call($, { adopt: ["no-such-rule"] }));
+    expect(out).toContain("Adopted: none.");
+    expect(r.stored.has("adoptions")).toBe(false);
+  });
+
+  test("adopt and saveBaseline in one call write both, over the whole 30 days even for a narrower report", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    const out = textOf(await call($, { days: 7, repo: "demo", saveBaseline: true, adopt: ["thinking-output"] }));
+    expect(out).toContain("Baseline saved:");
+    expect(out).toContain("Adopted: thinking-output.");
+    // The 7-day report holds two requests ($4); the baseline and the adoption both see all three ($6).
+    const per = (r.stored.get(BASELINE_KEY) as Baseline).perHint.find((h) => h.rule === "thinking-output")!;
+    expect(Math.abs(per.expectedUsd - 6)).toBeLessThan(1e-6);
+    expect(Math.abs(adoptionsOf(r)[0]!.expectedUsd - 6)).toBeLessThan(1e-6);
+  });
+
+  test("adopting a rule again replaces its record", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    await call($, { adopt: ["thinking-output"] });
+    await call($, { adopt: ["thinking-output"] });
+    expect(adoptionsOf(r)).toHaveLength(1);
+  });
+});
+
+describe("report text for the skill", () => {
+  test("each hint names its rule id, and Confidence states the price table and its date", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    const out = textOf(await call($, {}));
+    expect(out).toContain("Rule: thinking-output");
+    expect(out).toMatch(/- Price table: built-in \(\d{4}-\d{2}-\d{2}\)\./);
   });
 });
 

@@ -4,6 +4,7 @@ import type { Hint } from "../core/hint.ts";
 import { activeDays } from "../core/rules/shared.ts";
 import type { Money } from "../core/summary.ts";
 import { DAY_MS } from "../core/time.ts";
+import { PRICING_URL } from "../engine/price-update.ts";
 import { RUN_RATE_DAYS } from "./build.ts";
 import type { Report } from "./build.ts";
 
@@ -57,7 +58,7 @@ function tablesSection(r: Report): string {
 
 function hintBlock(h: Hint, i: number): string {
   const tags = [h.urgent === true ? "urgent" : "", h.projected === true ? "estimate under a what-if" : "", h.confidence === "low" ? "low confidence" : ""].filter((t) => t !== "");
-  const lines = [`### ${i + 1}. ${h.title}`, "", `${h.usd > 0 ? usd(h.usd) : "No dollar figure"}${tags.length === 0 ? "" : ` (${tags.join(", ")})`}`, "", h.summary, "", `Action: ${h.action}`];
+  const lines = [`### ${i + 1}. ${h.title}`, "", `Rule: ${h.rule}`, "", `${h.usd > 0 ? usd(h.usd) : "No dollar figure"}${tags.length === 0 ? "" : ` (${tags.join(", ")})`}`, "", h.summary, "", `Action: ${h.action}`];
   if (h.evidence.length > 0) {
     lines.push("", "Evidence:");
     for (const e of h.evidence) lines.push(e.detail === "" ? `- ${e.label}` : `- ${e.label}: ${e.detail}`);
@@ -106,6 +107,7 @@ function confidenceSection(r: Report): string {
   const est = r.hints.filter((h) => h.projected === true).length;
   if (est > 0) lines.push(`- ${plural(est, "hint")} give a projected saving under a what-if, not billed spend.`);
   lines.push("- Prices are the API list prices; a subscription bills differently.");
+  if (r.prices !== undefined) lines.push(`- Price table: ${r.prices.source === "builtin" ? `built-in (${day(r.prices.updatedAt)})` : `fetched ${day(r.prices.updatedAt)} from ${PRICING_URL.replace(/^https:\/\//, "")}`}.`);
   return [`Overall: ${level}.`, "", ...lines].join("\n");
 }
 

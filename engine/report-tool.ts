@@ -2,6 +2,7 @@
 // (report-<span>.json beside the scan index). All three build one Report from the same loads as the Hints tab.
 import type { EngineInterface } from "claude-code";
 import { HINT_RULES, runRules } from "../core/hint.ts";
+import type { Hint } from "../core/hint.ts";
 import { joinPath } from "../core/path.ts";
 import { summarizeAsync } from "../core/summary.ts";
 import type { Span, Summary } from "../core/summary.ts";
@@ -9,6 +10,7 @@ import { DAY_MS } from "../core/time.ts";
 import { BASELINE_KEY, baselineOf, buildReport, parseBaseline, runRateOf, snapshotJson } from "../report/build.ts";
 import type { Baseline, Report } from "../report/build.ts";
 import { renderMarkdown } from "../report/markdown.ts";
+import { adoptHint } from "./adopt.ts";
 import { inputOf, loadScope, sharedOf } from "./hints-view.ts";
 import { locate } from "./locate.ts";
 import { makeSlicer } from "./slicer.ts";
@@ -21,12 +23,13 @@ export const MAX_DAYS = 30;
 /** Snapshots are rebuilt at most this often by scan-done events. */
 export const SNAPSHOT_GAP_MS = 60_000;
 
-export type ReportArgs = { days?: number; repo?: string; compare?: boolean; saveBaseline?: boolean };
+export type ReportArgs = { days?: number; repo?: string; compare?: boolean; saveBaseline?: boolean; adopt?: string[] };
 
 const DESCRIPTION =
   "Markdown spend report for Claude Code use on this computer, billed at API list rates: totals, models, repositories, costliest sessions, ranked saving hints and how far to trust the figures. " +
   "Use it to find where the money goes and what to change. `days` sets the window (default 30, at most 30), `repo` limits it to one repository, " +
-  "`saveBaseline` records today's spend pace and each hint's expected saving, and `compare` shows the pace now against the saved baseline.";
+  "`saveBaseline` records today's spend pace and each hint's expected saving, `compare` shows the pace now against the saved baseline, " +
+  "and `adopt` records the listed hint rule ids as adopted so tally can check their effect later.";
 
 const SCHEMA = {
   type: "object",
@@ -35,6 +38,7 @@ const SCHEMA = {
     repo: { type: "string", description: "Only this repository." },
     compare: { type: "boolean", description: "Compare the spend pace with the saved baseline." },
     saveBaseline: { type: "boolean", description: "Record the spend pace and the hints' expected savings as the new baseline." },
+    adopt: { type: "array", items: { type: "string" }, description: "Rule ids (the `Rule:` line of each hint) to record as adopted. Ids that are unknown or not flagged are skipped and named in the answer." },
   },
 };
 
@@ -51,12 +55,16 @@ export function argsOf(input: unknown): ReportArgs {
   if (typeof i.repo === "string" && i.repo.trim() !== "") out.repo = i.repo.trim();
   if (i.compare === true) out.compare = true;
   if (i.saveBaseline === true) out.saveBaseline = true;
+  if (Array.isArray(i.adopt)) {
+    const ids = [...new Set(i.adopt.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter((x) => x !== ""))];
+    if (ids.length > 0) out.adopt = ids;
+  }
   return out;
 }
 
 export const clampDays = (days: number | undefined): number => (days === undefined ? MAX_DAYS : Math.min(MAX_DAYS, Math.max(1, Math.round(days))));
 
-type Built = { report: Report; saved?: Baseline };
+type Built = { report: Report; saved?: Baseline; adopted?: { done: string[]; unknown: string[]; unflagged: string[] } };
 
 // One load of every project, then the window's summary and, when a baseline is asked for, the unfiltered 30-day one.
 async function build($: EngineInterface, args: ReportArgs, now: number): Promise<Built> {
@@ -69,26 +77,51 @@ async function build($: EngineInterface, args: ReportArgs, now: number): Promise
   const sh = await sharedOf($, loc.cfg, snaps, now, tick);
   const span: Span = days <= 1 ? "24h" : "30d";
   const summary = await summarizeAsync(shards, sh.prices, { span, nowMs: now, tzOffsetMin: tz, usage: true, ...(days > 1 && days < MAX_DAYS && { since: now - days * DAY_MS }), ...(args.repo !== undefined && { repo: args.repo }) }, tick);
+  const adopting = args.adopt !== undefined;
   const needsRate = args.compare === true || args.saveBaseline === true;
-  const whole = (days === MAX_DAYS && args.repo === undefined) || !needsRate ? summary : await summarizeAsync(shards, sh.prices, { span: "30d", nowMs: now, tzOffsetMin: tz, usage: true }, tick);
+  const whole = (days === MAX_DAYS && args.repo === undefined) || !(needsRate || adopting) ? summary : await summarizeAsync(shards, sh.prices, { span: "30d", nowMs: now, tzOffsetMin: tz, usage: true }, tick);
   const runRate = needsRate ? runRateOf(whole) : undefined;
   const baseline = args.compare === true ? parseBaseline(await $.store.get(BASELINE_KEY).catch(() => undefined)) : undefined;
   const report = await buildReport(inputOf(sh, "span", summary, ""), { days, ...(args.repo !== undefined && { repo: args.repo }), compare: args.compare === true, ...(baseline && { baseline }), ...(runRate !== undefined && { runRate }), unread }, tick);
-  if (args.saveBaseline !== true || runRate === undefined) return { report };
-  // Saved hints cover all 30 days and every repo, so any later window is judged against the same basis.
+  const saving = args.saveBaseline === true && runRate !== undefined;
+  if (!saving && !adopting) return { report };
+  // Saved and adopted hints cover all 30 days and every repo, so any later window is judged against the same basis.
   const hints = whole === summary && args.repo === undefined ? report.hints : await runRules(HINT_RULES, inputOf(sh, "span", whole, ""), tick);
-  const saved = baselineOf(now, runRate, hints);
-  await $.store.set(BASELINE_KEY, saved);
-  return { report, saved };
+  const out: Built = { report };
+  if (saving) {
+    out.saved = baselineOf(now, runRate, hints);
+    await $.store.set(BASELINE_KEY, out.saved);
+  }
+  if (adopting) out.adopted = await adoptAll($, args.adopt!, hints);
+  return out;
+}
+
+// One record per flagged rule, in the order asked; the rest are named so the caller can tell a typo from a quiet rule.
+async function adoptAll($: EngineInterface, ids: string[], hints: Hint[]): Promise<NonNullable<Built["adopted"]>> {
+  const out = { done: [] as string[], unknown: [] as string[], unflagged: [] as string[] };
+  for (const id of ids) {
+    const hint = hints.find((h) => h.rule === id);
+    if (hint !== undefined) {
+      await adoptHint($, hint);
+      out.done.push(id);
+    } else (HINT_RULES.some((r) => r.id === id) ? out.unflagged : out.unknown).push(id);
+  }
+  return out;
 }
 
 const dollars = (n: number): string => `$${n.toFixed(2)}`;
 
-/** The tool's answer: the markdown, with a closing line when a baseline was stored. */
+/** The tool's answer: the markdown, with closing lines when a baseline was stored or hints were adopted. */
 export async function reportText($: EngineInterface, args: ReportArgs): Promise<string> {
-  const { report, saved } = await build($, args, await $.clock.now());
+  const { report, saved, adopted } = await build($, args, await $.clock.now());
   const note = saved === undefined ? "" : `\nBaseline saved: ${dollars(saved.runRate)} per 30 days and ${saved.perHint.length} hint${saved.perHint.length === 1 ? "" : "s"}${report.unread === undefined ? "" : "; some projects were not indexed yet, so the pace may be low"}.\n`;
-  return renderMarkdown(report) + note;
+  const lines: string[] = [];
+  if (adopted !== undefined) {
+    lines.push(adopted.done.length > 0 ? `Adopted: ${adopted.done.join(", ")}.` : "Adopted: none.");
+    if (adopted.unknown.length > 0) lines.push(`Skipped, unknown rule: ${adopted.unknown.join(", ")}.`);
+    if (adopted.unflagged.length > 0) lines.push(`Skipped, not flagged over 30 days: ${adopted.unflagged.join(", ")}.`);
+  }
+  return renderMarkdown(report) + note + (lines.length === 0 ? "" : `\n${lines.join("\n")}\n`);
 }
 
 /** `/tally report [days] [repo]`: writes `api-spend-<date>.md` into the session working folder, then names the file. */

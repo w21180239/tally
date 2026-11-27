@@ -27,6 +27,8 @@ export type Report = {
   repo?: string;
   /** Projects with no usable index when the report was built; their spend is missing. */
   unread?: number;
+  /** Where the price table in effect came from and its date (epoch ms). */
+  prices?: { source: "builtin" | "fetched"; updatedAt: number };
 };
 
 export type ReportOpts = {
@@ -71,7 +73,7 @@ export function parseBaseline(raw: unknown): Baseline | undefined {
 /** The report for `input`'s summary. Evidence is always redacted. `tick` is awaited between rules. */
 export async function buildReport(input: HintInput, opts: ReportOpts, tick?: Tick): Promise<Report> {
   const hints = (await runRules(HINT_RULES, input, tick)).map((h) => ({ ...h, evidence: h.evidence.map((e) => redact(e, true)) }));
-  const report: Report = { span: input.summary.span, generatedAt: input.nowMs, summary: input.summary, hints };
+  const report: Report = { span: input.summary.span, generatedAt: input.nowMs, summary: input.summary, hints, prices: { source: input.prices.source, updatedAt: input.prices.updatedAt } };
   if (opts.repo !== undefined && opts.repo !== "") report.repo = opts.repo;
   if (opts.unread !== undefined && opts.unread > 0) report.unread = opts.unread;
   if (opts.compare && opts.baseline !== undefined && opts.runRate !== undefined) {
