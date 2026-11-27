@@ -61,6 +61,31 @@ describe("parseArgs", () => {
     expect(parseArgs("syncDir /Data/Sync").set).toEqual({ syncDir: "/Data/Sync" });
   });
 
+  test("prototype-property names are plain unknown words", () => {
+    for (const w of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+      expect(parseArgs(`${w} x`)).toEqual({ set: {}, unknown: [w, "x"] });
+      expect(parseArgs(`${w} report`)).toEqual({ set: {}, sub: "report", repo: w, unknown: [] });
+    }
+  });
+
+  test("quoted values keep spaces and backslashes", () => {
+    expect(parseArgs('syncDir "C:\\My Docs\\Sync"')).toEqual({ set: { syncDir: "C:\\My Docs\\Sync" }, unknown: [] });
+    expect(parseArgs("syncDir 'C:\\My Docs' history").set).toEqual({ syncDir: "C:\\My Docs" });
+    expect(parseArgs("syncDir 'C:\\My Docs' history").tab).toBe("history");
+    expect(parseArgs('machineName "Work Laptop" money cents').set).toEqual({ machineName: "Work Laptop", money: "cents" });
+    expect(parseArgs('syncDir ""').set).toEqual({ syncDir: "" });
+  });
+
+  test("quoted words are data, never keywords", () => {
+    expect(parseArgs('"history"')).toEqual({ set: {}, unknown: ["history"] });
+    expect(parseArgs('report "my repo" 7d')).toEqual({ set: {}, sub: "report", days: 7, repo: "my repo", unknown: [] });
+  });
+
+  test("an unterminated quote is plain text", () => {
+    expect(parseArgs('syncDir "C:\\My Docs').set).toEqual({ syncDir: '"C:\\My' });
+    expect(parseArgs('syncDir "C:\\My Docs').unknown).toEqual(["Docs"]);
+  });
+
   test("several settings in one line", () => {
     expect(parseArgs("money cents decimals 1 row off").set).toEqual({ money: "cents", decimals: "1", desktopRow: false });
   });
