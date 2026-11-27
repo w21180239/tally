@@ -17,7 +17,7 @@ import { maybeSnapshot } from "./snapshot.ts";
 import { onMeasure, onPrompt, onTurnEnd, reseatView } from "./window.ts";
 
 /** The atom the views read. */
-export const liveAtom = atom({ plugin: "tally", key: "live" } as const, emptyLive("", 0, 0), { shape: "live-2" });
+export const liveAtom = atom({ plugin: "tally", key: "live" } as const, emptyLive("", 0, 0), { shape: "live-3" });
 
 /** The live state, read for a view. */
 export function readLive($: EngineInterface): Promise<LiveState> {

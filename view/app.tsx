@@ -4,9 +4,11 @@ import type { EngineInterface, RenderElement, RenderInput } from "claude-code";
 import type { TabId } from "../core/args.ts";
 import type { Settings } from "../core/settings.ts";
 import type { Span } from "../core/summary.ts";
+import { isActive, readAgentStates, readContext, wantContext } from "../engine/context-view.ts";
 import { readSession } from "../engine/session-view.ts";
+import { loadTranscript, needsTranscript, readTranscripts } from "../engine/subagent-transcript.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
-import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, showTab, toggleShown } from "../engine/window.ts";
+import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setCtxAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, setTranscript, showTab, toggleShown } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
 import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
@@ -16,6 +18,7 @@ import type { WindowData } from "./data.ts";
 import { layoutOf } from "./layout.ts";
 import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
 import type { KeyCtx } from "./keys.ts";
+import { drawContext } from "./tabs/context.tsx";
 import { drawSession } from "./tabs/session.tsx";
 import { drawUsage } from "./tabs/usage.tsx";
 import { tableOf } from "./table.ts";
@@ -31,8 +34,7 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
 
 // Until each tab has its own body: one dim line saying what it will hold.
-const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage">, string> = {
-  context: "What fills the context window.",
+const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage" | "context">, string> = {
   history: "Spend over the last 30 days.",
   hints: "Ways to spend less.",
   help: "Keys, prices and settings.",
@@ -209,10 +211,32 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     });
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
+  } else if (tab === "context") {
+    const [live, data, states, transcripts] = await Promise.all([readLive($), readContext($), readAgentStates($), readTranscripts($)]);
+    // A stale reading, or an agent's transcript in view that is not read yet, is fetched off the draw.
+    wantContext($, data, states, live, d.now);
+    const chosen = live.agents[view.ctxAgent];
+    if (chosen !== undefined && view.transcript && needsTranscript(transcripts.byAgent[chosen.id], isActive(states.byId[chosen.id]?.status), d.now)) {
+      inBackground($, () => loadTranscript($, live.sessionId, chosen.id, chosen.type));
+    }
+    const drawn = drawContext(t, {
+      d,
+      live,
+      data,
+      states,
+      transcripts: transcripts.byAgent,
+      view: { ctxAgent: view.ctxAgent, listing: view.listing, more: view.more, transcript: view.transcript },
+      onAgent: (id) => attempt($, () => setCtxAgent($, id)),
+      onListing: (listing) => attempt($, () => setListing($, listing)),
+      onMore: (more) => attempt($, () => setMore($, more)),
+      onTranscript: (on) => attempt($, () => setTranscript($, on)),
+    });
+    tabRows = drawn.rows;
+    Object.assign(ctx, drawn.ctx);
   } else {
     tabRows = [
       <Text key="placeholder" dimColor wrap="truncate-end">
-        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage">]}
+        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage" | "context">]}
       </Text>,
     ];
   }

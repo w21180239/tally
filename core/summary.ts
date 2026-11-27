@@ -50,6 +50,8 @@ export type Summary = {
   flow: FlowItem[];
   /** `flow` per agent: `main`, `sub:<type>`. */
   flowByAgent: Record<string, FlowItem[]>;
+  /** MCP server to the re-read cost of all its tool results (main and sub-agents), not limited to the top-40 `flow`. */
+  mcpReread: Record<string, number>;
   /** Where each billed kind went, per agent; only when asked for with `usage`. */
   usage?: UsageDetail;
   /** Prompts of 5000+ tokens by re-read cost, top 40; a sub-agent's task prompt counts too. */
@@ -204,6 +206,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     peakContext: dict(),
     flow: [],
     flowByAgent: dict(),
+    mcpReread: dict(),
     pastes: [],
     wholeReads: dict(),
     compactions: dict(),
@@ -310,6 +313,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
   out.peakContext = flow.peakContext;
   out.flow = flow.flow;
   out.flowByAgent = flow.byAgent;
+  out.mcpReread = flow.mcpReread;
   out.pastes = flow.pastes;
   out.wholeReads = flow.wholeReads;
   out.toolFill = flow.toolFill;

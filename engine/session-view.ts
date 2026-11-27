@@ -3,7 +3,8 @@
 // index and the nearest breakdown snapshot, in the background; the tab draws whatever the atom last held.
 import { atom, read, update } from "claude-code";
 import type { EngineInterface } from "claude-code";
-import { mcpResultUsd, mcpSchemaSteps, nearestSnapshot } from "../core/breakdown.ts";
+import { mcpSchemaSteps, nearestSnapshot, residentTokens } from "../core/breakdown.ts";
+import type { McpCost } from "../core/breakdown.ts";
 import type { LiveState } from "../core/live-state.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
@@ -22,18 +23,25 @@ export type SessionData = {
   at: number;
   /** Spend of the requests after each skill call, costliest first. */
   skills: Array<{ name: string; usd: number }>;
-  /** MCP servers by cost: resident schemas and tool results re-read, and how many calls were made. */
-  mcp: Array<{ server: string; usd: number; schemaUsd: number; resultUsd: number; calls: number }>;
+  /**
+   * MCP servers by cost: resident schemas (main requests only) and the re-read of every tool result, sub-agents'
+   * included, and how many calls were made.
+   */
+  mcp: McpCost[];
+  /** How many of the session's requests the index held when this was built; 0 means the session is still pure live. */
+  rows: number;
+  /** Schema tokens each server keeps in the window, from the snapshot the figures rest on. */
+  resident: Record<string, number>;
   /** The breakdown snapshot the schema figures rest on; `proxy` when it was taken in another session. */
   snapshot: { ts: number; proxy: boolean } | null;
 };
 
-export const EMPTY_SESSION: SessionData = { sessionId: "", at: 0, skills: [], mcp: [], snapshot: null };
+export const EMPTY_SESSION: SessionData = { sessionId: "", at: 0, skills: [], mcp: [], rows: 0, resident: {}, snapshot: null };
 
 /** The figures are rebuilt from the index at most this often. */
 export const SESSION_INTERVAL_MS = 300_000;
 
-const sessionAtom = atom({ plugin: "tally", key: "session" } as const, EMPTY_SESSION, { shape: "session-1" });
+const sessionAtom = atom({ plugin: "tally", key: "session" } as const, EMPTY_SESSION, { shape: "session-2" });
 
 export function readSession($: EngineInterface): Promise<SessionData> {
   return read($, sessionAtom);
@@ -71,9 +79,9 @@ async function build($: EngineInterface, live: Pick<LiveState, "sessionId" | "st
 
   const near = nearestSnapshot(snaps, rows.length > 0 ? summary.from : live.startedAt, id);
   const schema = near === null ? {} : await drainAsync(mcpSchemaSteps(rows, near.snap, BUILTIN_PRICES), tick);
-  const results = mcpResultUsd(summary.flow);
+  const results = summary.mcpReread;
   const servers = new Set([...Object.keys(schema), ...Object.keys(results), ...Object.keys(summary.byMcp)]);
-  const mcp: SessionData["mcp"] = [];
+  const mcp: McpCost[] = [];
   for (const server of servers) {
     const schemaUsd = (schema as Record<string, number>)[server] ?? 0;
     const resultUsd = results[server] ?? 0;
@@ -84,7 +92,7 @@ async function build($: EngineInterface, live: Pick<LiveState, "sessionId" | "st
   const skills = Object.entries(summary.bySkill)
     .map(([name, m]) => ({ name, usd: m.usd }))
     .sort((a, b) => b.usd - a.usd || (a.name < b.name ? -1 : 1));
-  const data: SessionData = { sessionId: id, at: now, skills, mcp, snapshot: near === null ? null : { ts: near.snap.ts, proxy: near.proxy } };
+  const data: SessionData = { sessionId: id, at: now, skills, mcp, rows: rows.length, resident: near === null ? {} : residentTokens(near.snap), snapshot: near === null ? null : { ts: near.snap.ts, proxy: near.proxy } };
   await update($, sessionAtom, () => data);
   invalidateWindow($);
 }

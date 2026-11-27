@@ -3,6 +3,7 @@
 import type { RenderElement } from "claude-code";
 import type { LiveState } from "../../core/live-state.ts";
 import { BUILTIN_PRICES } from "../../core/prices.builtin.ts";
+import { liveMcp } from "../../core/breakdown.ts";
 import { agentCaches, kindRows, modelSplit, perActiveHour, whereItWent } from "../../core/where.ts";
 import type { KindRow, WentRow } from "../../core/where.ts";
 import type { SessionData } from "../../engine/session-view.ts";
@@ -207,13 +208,18 @@ export function drawSession(t: Table, i: SessionInput): SessionDrawing {
 
   // Index-backed lists belong to the live session only.
   const mine = data.sessionId === live.sessionId && live.sessionId !== "";
-  if (mine && data.mcp.length > 0) {
+  // Until the index holds a request of the session, the servers come from the live tally and carry `~`.
+  const isGuess = mine && data.rows === 0;
+  const servers = !mine ? [] : isGuess ? liveMcp(live, data.resident, BUILTIN_PRICES) : data.mcp;
+  if (servers.length > 0) {
     const star = data.snapshot?.proxy === true ? "*" : "";
+    const guess = isGuess ? "~" : "";
     out.push(title(t, "mcp", "MCP servers", "schemas and results, re-read"));
-    for (const m of data.mcp.slice(0, i.more ? undefined : LIST_ROWS)) {
-      out.push(amountRow(t, { key: `mcp-${m.server}`, label: `${m.server}${m.calls > 0 ? `${SEP}${m.calls} ${m.calls === 1 ? "call" : "calls"}` : ""}`, amount: `${moneyOf(d, m.usd)}${star}` }));
+    for (const m of servers.slice(0, i.more ? undefined : LIST_ROWS)) {
+      out.push(amountRow(t, { key: `mcp-${m.server}`, label: `${m.server}${m.calls > 0 ? `${SEP}${m.calls} ${m.calls === 1 ? "call" : "calls"}` : ""}`, amount: `${guess}${moneyOf(d, m.usd)}${star}` }));
     }
     if (star !== "") out.push(<Text key="mcp-note" dimColor>{`* schema sizes from a snapshot taken in another session`}</Text>);
+    out.push(<Text key="mcp-scope" dimColor>{isGuess ? "~ schemas only, from this launch's requests; results are priced once the index has the session" : "schemas: main requests; results: main and sub-agents"}</Text>);
     out.push(blank(t, "mcp"));
   }
   if (mine && data.skills.length > 0) {
@@ -222,7 +228,7 @@ export function drawSession(t: Table, i: SessionInput): SessionDrawing {
     out.push(blank(t, "skills"));
   }
   // One key opens every cut list: sub-agents, MCP servers and skills.
-  const isCut = went.filter((r) => r.kind === "agent").length > AGENT_ROWS || (mine && (data.mcp.length > LIST_ROWS || data.skills.length > LIST_ROWS));
+  const isCut = went.filter((r) => r.kind === "agent").length > AGENT_ROWS || (mine && (servers.length > LIST_ROWS || data.skills.length > LIST_ROWS));
   if (isCut) {
     ctx.more = true;
     out.push(

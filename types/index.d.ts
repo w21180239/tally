@@ -1,5 +1,5 @@
 // The values tally keeps in `$.state`, as the engine's plugin contract.
-// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts, SessionData in engine/session-view.ts, UsageData in engine/usage-view.ts; keep them in step.
+// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts, SessionData in engine/session-view.ts, UsageData in engine/usage-view.ts, ContextData in core/context.ts, AgentStates in engine/context-view.ts, Transcripts in engine/subagent-transcript.ts; keep them in step.
 
 export interface TallyTokens {
   input: number;
@@ -37,6 +37,7 @@ export interface TallyLive {
   toolChars: Record<string, number>;
   activeMs: number;
   mainModels: Record<string, number>;
+  mainRequests: Record<string, number>;
   restored: Record<string, { usd: number; tokens: TallyTokens; requests: number }>;
   restoredSub: Record<string, number>;
   otherByModel: Record<string, number>;
@@ -56,6 +57,8 @@ export interface TallyView {
   listing: boolean;
   full: boolean;
   shown: string[];
+  ctxAgent: string;
+  transcript: boolean;
 }
 
 export interface TallyFoot {
@@ -71,6 +74,8 @@ export interface TallySession {
   at: number;
   skills: Array<{ name: string; usd: number }>;
   mcp: Array<{ server: string; usd: number; schemaUsd: number; resultUsd: number; calls: number }>;
+  rows: number;
+  resident: Record<string, number>;
   snapshot: { ts: number; proxy: boolean } | null;
 }
 
@@ -100,6 +105,53 @@ export interface TallyUsage {
   failure?: { key: string; why: string };
 }
 
+export interface TallyContextRow {
+  name: string;
+  tokens: number;
+  deferred: number;
+}
+
+export interface TallyContext {
+  sessionId: string;
+  at: number;
+  precision: "estimated" | "counted";
+  total: number;
+  max: number;
+  system: number;
+  tools: number;
+  messages: number;
+  deferred: number;
+  skills: TallyContextRow[];
+  mcp: TallyContextRow[];
+  agents: TallyContextRow[];
+  memory: TallyContextRow[];
+  used: { skills: string[]; mcp: string[]; agents: string[] } | null;
+  failure?: { sessionId: string; why: string };
+}
+
+export interface TallyAgentStates {
+  at: number;
+  byId: Record<string, { status: string; window?: number }>;
+}
+
+export interface TallyTranscripts {
+  byAgent: Record<
+    string,
+    {
+      status: "loading" | "ready" | "failed";
+      message: string;
+      at: number;
+      bytes: number;
+      view: {
+        prompt: string;
+        calls: Array<{ tool: string; item: string; resultChars: number | null }>;
+        total: number;
+        answer: string;
+      } | null;
+    }
+  >;
+}
+
 export interface TallyChart {
   values: number[];
   bands: number[];
@@ -114,6 +166,9 @@ declare module "claude-code" {
       chart: Shaped<TallyChart>;
       session: Shaped<TallySession>;
       usage: Shaped<TallyUsage>;
+      context: Shaped<TallyContext>;
+      "context-agents": Shaped<TallyAgentStates>;
+      transcripts: Shaped<TallyTranscripts>;
     };
   }
 }

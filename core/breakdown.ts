@@ -131,3 +131,34 @@ export function mcpResultUsd(flow: FlowItem[]): Record<string, number> {
   }
   return out;
 }
+
+/** One MCP server's figures for the Session tab: schemas plus results re-read, and its calls. */
+export type McpCost = { server: string; usd: number; schemaUsd: number; resultUsd: number; calls: number };
+
+/**
+ * A stand-in for the index figures while a session has no indexed rows: the live tally's calls per server, and each
+ * resident schema's cost over the main requests this launch made. Results are not priced (there is no flow yet), so
+ * the figure is a floor. Costliest first.
+ */
+export function liveMcp(live: { toolCalls: Record<string, number>; mainRequests: Record<string, number> }, resident: Record<string, number>, prices: PriceTable): McpCost[] {
+  const resolve = memoResolver(prices);
+  const zero = { input: 0, output: 0, cacheRead: 0, cw5m: 0, cw1h: 0 };
+  // Cache-read price per token, summed over the main requests of each model.
+  let readPerToken = 0;
+  for (const [model, n] of Object.entries(live.mainRequests)) {
+    const row: UsageRow = { requestId: "", sessionId: "", ts: 0, model, tokens: zero, fast: false, sidechain: false, synthetic: false, thinkingChars: 0, replyChars: 0, tools: [] };
+    readPerToken += cacheUnitPrices(row, prices, resolve).read * n;
+  }
+  const calls = dict<number>();
+  for (const [tool, n] of Object.entries(live.toolCalls)) {
+    const server = mcpServerOf(tool);
+    if (server !== null) calls[server] = (calls[server] ?? 0) + n;
+  }
+  const out: McpCost[] = [];
+  for (const server of new Set([...Object.keys(calls), ...Object.keys(resident)])) {
+    const schemaUsd = (resident[server] ?? 0) * readPerToken;
+    const n = calls[server] ?? 0;
+    if (schemaUsd > 0 || n > 0) out.push({ server, usd: schemaUsd, schemaUsd, resultUsd: 0, calls: n });
+  }
+  return out.sort((a, b) => b.usd - a.usd || (a.server < b.server ? -1 : 1));
+}

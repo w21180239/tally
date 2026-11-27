@@ -5,6 +5,7 @@
 import { dict, dictOf } from "./dict.ts";
 import { drain, STEP_ROWS } from "./steps.ts";
 import type { Steps } from "./steps.ts";
+import { mcpServerOf } from "./breakdown.ts";
 import { agentKeyOf, streamOf } from "./stream.ts";
 import type { CompactRow, UsageRow, UserRow } from "./types.ts";
 
@@ -53,6 +54,8 @@ export type FlowOut = {
   toolFill: Record<string, number>;
   /** Session to the largest prompt of any of its conversations. */
   peakContext: Record<string, number>;
+  /** MCP server to the re-read cost of every tool result it returned, over all agents and before the lists are cut to FLOW_ITEMS. */
+  mcpReread: Record<string, number>;
 };
 
 export const FLOW_ITEMS = 40;
@@ -313,7 +316,13 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       }
     }
   }
+  // Per server, over every part: the lists below keep only the costliest.
+  const mcpReread = dict<number>();
+  for (const it of whole.values()) {
+    const server = it.source === "mcp" ? mcpServerOf(it.label) : null;
+    if (server !== null) mcpReread[server] = (mcpReread[server] ?? 0) + it.rereadUsd;
+  }
   const flow = ranked(whole.values());
   pastes.sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.sessionId, b.sessionId));
-  return { flow, byAgent, pastes: pastes.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak) };
+  return { flow, byAgent, pastes: pastes.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak), mcpReread };
 }

@@ -47,6 +47,8 @@ export type LiveState = {
   activeMs: number;
   /** This launch's main-thread spend by model. */
   mainModels: Record<string, number>;
+  /** This launch's main-thread requests by model. */
+  mainRequests: Record<string, number>;
   /** Requests, tokens and spend of the session's earlier launches, by model. */
   restored: Record<string, Money>;
   /** What earlier launches' sub-agents spent, by agent type; the rest of `restoredUsd` is the main thread's. */
@@ -82,6 +84,7 @@ export function emptyLive(sessionId: string, startedAt: number, restoredUsd = 0)
     toolChars: {},
     activeMs: 0,
     mainModels: {},
+    mainRequests: {},
     restored: {},
     restoredSub: {},
     otherByModel: {},
@@ -207,6 +210,7 @@ export function applyStep(s0: LiveState, st: Step): LiveState {
     ...s,
     main: { ...addTokens(s.main, t), usd: s.main.usd + st.usd },
     mainModels: { ...s.mainModels, [st.model]: (s.mainModels[st.model] ?? 0) + st.usd },
+    mainRequests: { ...s.mainRequests, [st.model]: (s.mainRequests[st.model] ?? 0) + 1 },
     messageCount: st.messageCount,
     compactions: s.compactions + (dropped ? 1 : 0),
     ...(lastWrite && { lastWrite }),

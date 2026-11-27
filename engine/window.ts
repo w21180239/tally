@@ -61,11 +61,15 @@ export type ViewState = {
   /** Usage: every row's full text is shown (`v`), and the rows whose own text was opened. */
   full: boolean;
   shown: string[];
+  /** Context: the sub-agent whose detail shows (its id); empty for the main conversation. */
+  ctxAgent: string;
+  /** Context: the chosen sub-agent's transcript is in view (`v`). */
+  transcript: boolean;
 };
 
-export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false, more: false, agent: "", listing: false, full: false, shown: [] };
+export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false, more: false, agent: "", listing: false, full: false, shown: [], ctxAgent: "", transcript: false };
 
-const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-3" });
+const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-4" });
 const footAtom = atom({ plugin: "tally", key: "foot" } as const, EMPTY_FOOT, { shape: "foot-1" });
 const chartAtom = atom({ plugin: "tally", key: "chart" } as const, EMPTY_CHART, { shape: "chart-1" });
 
@@ -203,7 +207,7 @@ export async function reseatView($: EngineInterface): Promise<void> {
 
 
 export async function showTab($: EngineInterface, tab: TabId): Promise<void> {
-  await changeView($, (v) => ({ ...v, tab, more: false, listing: false, shown: [], hasTipped: true }));
+  await changeView($, (v) => ({ ...v, tab, more: false, listing: false, shown: [], transcript: false, hasTipped: true }));
   await $.store.set(TAB_KEY, tab);
 }
 
@@ -226,6 +230,16 @@ export async function setAgent($: EngineInterface, agent: string): Promise<void>
 
 export async function setListing($: EngineInterface, listing: boolean): Promise<void> {
   await changeView($, (v) => ({ ...v, listing }));
+}
+
+/** Context: shows one sub-agent's detail (its id), or the main conversation (empty). Leaves the transcript view. */
+export async function setCtxAgent($: EngineInterface, ctxAgent: string): Promise<void> {
+  await changeView($, (v) => ({ ...v, ctxAgent, listing: false, shown: [], more: false, transcript: false }));
+}
+
+/** Context: puts the chosen agent's transcript in view, or goes back to its detail. */
+export async function setTranscript($: EngineInterface, transcript: boolean): Promise<void> {
+  await changeView($, (v) => ({ ...v, transcript, more: false }));
 }
 
 export async function setFull($: EngineInterface, full: boolean): Promise<void> {
