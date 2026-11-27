@@ -12,6 +12,7 @@ import { currentPrices } from "../engine/price-update.ts";
 import { locate } from "../engine/locate.ts";
 import { recheckSoon } from "../engine/adopt.ts";
 import { syncHerdr } from "../engine/herdr.ts";
+import { REPORT_TOOL_FULL, argsOf, registerReportTool, reportCommand, reportText, snapshotSoon } from "../engine/report-tool.ts";
 import { resetSync, syncSoon } from "../engine/sync.ts";
 import { syncExtra } from "../engine/sync-extra.ts";
 import { readLive, startLive, updatePrices, wireLive } from "../engine/live.ts";
@@ -21,7 +22,9 @@ import { startTimers } from "../engine/timers.ts";
 import { drawBand, drawPane } from "../view/app.tsx";
 
 const RECHECK_DELAY_MS = 10_000;
-const USAGE = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...) or debug";
+// The 24h snapshot slides with the clock even when a scan finds nothing new, so the owner refreshes it on this beat too.
+const SNAPSHOT_EVERY_MS = 600_000;
+const USAGE = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), report or debug";
 
 export const register: Register = (on, options) => {
   // A change in the config menu reloads the module with the new options, so this runs again.
@@ -29,6 +32,7 @@ export const register: Register = (on, options) => {
   let progress: ScanProgress = idleProgress(false);
   let stop: (() => void) | undefined;
   let timers: Array<{ cancel(): void }> = [];
+  let snapTimer: { cancel(): void } | undefined;
   // Bumped by every session.start and session.end: a start still waiting on its delay sees it was superseded.
   let gen = 0;
   useSettings(settings);
@@ -37,9 +41,11 @@ export const register: Register = (on, options) => {
     const started = await next(e);
     await $.command.register({
       name: COMMAND,
-      description: "Open the tally window: spend, context and hints. A tab or 24h/30d opens it there; money, decimals, open or row sets an option; debug shows the scan",
-      argumentHint: "[session|usage|context|history|hints|help|24h|30d] or money <cents-and-dollars|cents|dollars> or decimals <auto|0-4> or row <on|off>",
+      description: "Open the tally window: spend, context and hints. A tab or 24h/30d opens it there; money, decimals, open or row sets an option; report [days] [repo] writes a spend report file; debug shows the scan",
+      argumentHint: "[session|usage|context|history|hints|help|24h|30d] or money <cents-and-dollars|cents|dollars> or decimals <auto|0-4> or row <on|off> or report [days] [repo]",
     });
+    // The report tool is optional too: without it the window and the command still work.
+    await registerReportTool($).catch(() => {});
     // The live tally never holds the session up or fails its start.
     await startLive($, e).catch(() => {});
     // Nor does the window: open or folded as the person left it, with the foot and chart filling in behind.
@@ -74,6 +80,10 @@ export const register: Register = (on, options) => {
         if (mine === gen) recheckSoon($, () => settings.recheckDays);
       });
     }
+    snapTimer?.cancel();
+    snapTimer = $.clock.every(SNAPSHOT_EVERY_MS, () => {
+      if (mine === gen && progress.owner) snapshotSoon($);
+    });
     resetSync();
     // Start off the hook's path so the session is never held up by the first listing.
     $.clock.after(100, () => {
@@ -86,7 +96,10 @@ export const register: Register = (on, options) => {
         onProgress: (p) => {
           progress = p;
           // A finished scan of the owner session feeds the sync, off this callback's path and one at a time.
-          if (p.phase === "done" && p.owner) syncSoon($, () => settings, () => syncExtra($));
+          if (p.phase === "done" && p.owner) {
+            syncSoon($, () => settings, () => syncExtra($));
+            snapshotSoon($);
+          }
         },
         onShardSaved: () => {},
       }).stop;
@@ -102,6 +115,8 @@ export const register: Register = (on, options) => {
       resetSync();
       stop?.();
       stop = undefined;
+      snapTimer?.cancel();
+      snapTimer = undefined;
       for (const t of timers) t.cancel();
       timers = [];
     }
@@ -113,6 +128,15 @@ export const register: Register = (on, options) => {
     // Our own fold set its mode before it closed the pane.
     if ((await readView($)).mode !== "folded" && e.origin.kind !== "unload") await keepFolded($);
     return next(e);
+  });
+
+  // The tool tally_report: the model calls it, this answers with the markdown.
+  on("tool.run", { tool: REPORT_TOOL_FULL }, async ($, e) => {
+    try {
+      return { result: await reportText($, argsOf(e)) };
+    } catch (err) {
+      return { deny: `tally_report failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
   });
 
   on("ui.render", { component: "Pane", requestId: PANE_ID }, ($, e) => drawPane($, e, settings));
@@ -132,6 +156,7 @@ export const register: Register = (on, options) => {
       }
       return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now(), () => $.clock.sleep(0)) };
     }
+    if (a.sub === "report") return { text: await reportCommand($, { ...(a.days !== undefined && { days: a.days }), ...(a.repo !== undefined && { repo: a.repo }) }) };
     if (a.sub !== undefined) return { text: `/tally ${a.sub} is not available yet.` };
 
     const hasSet = Object.keys(a.set).length > 0;
