@@ -1,5 +1,5 @@
 // The Usage tab's figures: where each billed kind of token went. Input and output are split by the text that came
-// with or went out in each request (characters / 4, scaled to the tokens the request reported), so those rows are
+// with or went out in each request (chars / 4, normalised to the request's reported total), so those rows are
 // estimates; cache writes are the reported tokens, each with the reason that most likely caused it. Pure.
 import type { BreakdownSnapshot } from "./breakdown.ts";
 import { dict } from "./dict.ts";
