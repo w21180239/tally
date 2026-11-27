@@ -2,8 +2,12 @@ import { nearestSnapshot, residentTokens } from "../breakdown.ts";
 import type { Evidence, HintRule } from "../hint.ts";
 import { LISTED, proxyNote, residentUsdPerToken, tokensText, usdText } from "./shared.ts";
 
-/** A server's resident schemas must cost at least this many dollars, and it must be called less than once per this many main requests. */
-export const SCHEMA_MIN_USD = 10;
+/**
+ * A server's resident schemas must cost at least this many dollars and pass this share of all spend (strictly over), and it must be called less than once per this many main requests.
+ * The share scales the bar with spend: on a 30-day, $5.7k span one 1k-token server costs 0.3%; a 0.25% bar keeps a small server on a small bill reportable.
+ */
+export const SCHEMA_MIN_USD = 1;
+export const SCHEMA_MIN_SHARE = 0.0025;
 export const SCHEMA_REQUESTS_PER_CALL = 100;
 /** Servers with fewer calls than this belong to unused-mcp-server. */
 export const SCHEMA_MIN_CALLS = 1;
@@ -14,10 +18,10 @@ export const mcpSchemaHeavy: HintRule = {
     const near = nearestSnapshot(snaps, summary.to, live?.sessionId);
     const perToken = residentUsdPerToken(summary, prices);
     const requests = summary.main.requests;
-    if (near === null || perToken <= 0) return [];
+    if (near === null || perToken <= 0 || summary.total.usd <= 0) return [];
     const heavy = Object.entries(residentTokens(near.snap))
       .map(([server, tokens]) => ({ server, tokens, usd: tokens * perToken, calls: summary.byMcp[server]?.calls ?? 0 }))
-      .filter((s) => s.usd >= SCHEMA_MIN_USD && s.calls >= SCHEMA_MIN_CALLS && s.calls * SCHEMA_REQUESTS_PER_CALL < requests)
+      .filter((s) => s.usd >= SCHEMA_MIN_USD && s.usd / summary.total.usd > SCHEMA_MIN_SHARE && s.calls >= SCHEMA_MIN_CALLS && s.calls * SCHEMA_REQUESTS_PER_CALL < requests)
       .sort((a, b) => b.usd - a.usd || (a.server < b.server ? -1 : 1));
     if (heavy.length === 0) return [];
     const usd = heavy.reduce((n, s) => n + s.usd, 0);

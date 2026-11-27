@@ -5,8 +5,9 @@ import { LISTED, titleOf, tokensText, usdText } from "./shared.ts";
 
 /** Size of one tool result, in tokens, from which it is reported: 5 pastes. The scan lists results from this size on. */
 export const HUGE_RESULT_TOKENS = HUGE_RESULT_MIN_TOKENS;
-/** Floor on the cache reads the reported results added together, in dollars. */
+/** Floor on the cache reads the reported results added together, in dollars, and on their part of all spend (strictly over). */
 export const HUGE_RESULT_MIN_USD = 1;
+export const HUGE_RESULT_MIN_SHARE = 0.0005;
 
 // What names the result: a file path, a command line, or the tool itself.
 function what(r: BigResult): Evidence {
@@ -21,7 +22,7 @@ export const hugeToolResult: HintRule = {
     const huge = summary.hugeResults.filter((r) => r.tokens >= HUGE_RESULT_TOKENS).sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens);
     if (huge.length === 0) return [];
     const usd = huge.reduce((n, r) => n + r.rereadUsd, 0);
-    if (usd < HUGE_RESULT_MIN_USD) return [];
+    if (usd < HUGE_RESULT_MIN_USD || summary.total.usd <= 0 || usd / summary.total.usd <= HUGE_RESULT_MIN_SHARE) return [];
     const evidence: Evidence[] = [];
     for (const r of huge.slice(0, LISTED)) {
       const title = titleOf(summary, r.sessionId);

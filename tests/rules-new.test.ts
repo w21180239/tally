@@ -122,72 +122,85 @@ describe("memory-heavy", () => {
 });
 
 describe("skill-catalog-heavy", () => {
-  // 25000 main requests on opus 5.5: one resident token costs 25000 * 0.2 / 1e6 = 0.005. Four skills of 1250 tokens cost 5000 * 0.005 = $25.00.
-  const MAIN = { byModel: { [OPUS]: money(0, 25_000) }, main: money(0, 25_000) };
-  const skills = { alpha: 1250, beta: 1250, gamma: 1250, delta: 1250 };
+  // 1000 main requests: one resident token costs $0.0002. Four skills of 3750 tokens cost 15000 * 0.0002 = $3.00, which is 3% of a $100 span.
+  const skills = { alpha: 3750, beta: 3750, gamma: 3750, delta: 3750 };
+  const span = (total: number, over: Partial<Summary> = {}): Partial<Summary> => ({ ...THOUSAND, total: money(total, 1000), ...over });
   const called = (...names: string[]) => Object.fromEntries(names.map((n) => [n, money(1)]));
-  test("a 25 dollar catalog with 1 of 4 skills called fires; the amount is the cost of the 3 unused: $18.75", () => {
-    const h = only(fire("skill-catalog-heavy", { ...MAIN, bySkill: called("alpha") }, { live, snaps: [snapOf({ skills })] }));
-    expect(near(h.usd, 18.75)).toBe(true);
+  test("a 3 dollar catalog (6% of spend) with 1 of 4 skills called fires; the amount is the cost of the 3 unused: $2.25", () => {
+    const h = only(fire("skill-catalog-heavy", span(50, { bySkill: called("alpha") }), { live, snaps: [snapOf({ skills })] }));
+    expect(near(h.usd, 2.25)).toBe(true);
     expect(h.projected).toBeUndefined();
     expect(h.summary).toContain("1 of 4");
     expect(h.evidence.map((e) => e.label)).toEqual(["Never called", "Never called", "Never called"]);
-    expect(h.evidence[0]!.detail).toBe("beta: 1k tokens, $6.25");
+    expect(h.evidence[0]!.detail).toBe("beta: 4k tokens, $0.75");
   });
   test("half the skills called stays quiet; a plugin prefix on the called name still matches", () => {
-    expect(fire("skill-catalog-heavy", { ...MAIN, bySkill: called("alpha", "beta") }, { live, snaps: [snapOf({ skills })] })).toEqual([]);
-    expect(fire("skill-catalog-heavy", { ...MAIN, bySkill: called("pkg:alpha", "pkg:beta") }, { live, snaps: [snapOf({ skills })] })).toEqual([]);
-    expect(only(fire("skill-catalog-heavy", { ...MAIN, bySkill: called("pkg:alpha") }, { live, snaps: [snapOf({ skills })] })).summary).toContain("1 of 4");
+    expect(fire("skill-catalog-heavy", span(50, { bySkill: called("alpha", "beta") }), { live, snaps: [snapOf({ skills })] })).toEqual([]);
+    expect(fire("skill-catalog-heavy", span(50, { bySkill: called("pkg:alpha", "pkg:beta") }), { live, snaps: [snapOf({ skills })] })).toEqual([]);
+    expect(only(fire("skill-catalog-heavy", span(50, { bySkill: called("pkg:alpha") }), { live, snaps: [snapOf({ skills })] })).summary).toContain("1 of 4");
   });
-  test("a catalog just under 25 dollars stays quiet: 4 * 1249 tokens = $24.98", () => {
+  test("over 3 percent of spend fires, exactly 3 percent stays quiet: $99 vs $100 total", () => {
+    expect(only(fire("skill-catalog-heavy", span(99), { live, snaps: [snapOf({ skills })] })).rule).toBe("skill-catalog-heavy");
+    expect(fire("skill-catalog-heavy", span(100), { live, snaps: [snapOf({ skills })] })).toEqual([]);
+  });
+  test("a catalog just under 1 dollar stays quiet however big its share: 4 * 1249 tokens = $0.9992 of a $10 span", () => {
     const small = { alpha: 1249, beta: 1249, gamma: 1249, delta: 1249 };
-    expect(fire("skill-catalog-heavy", { ...MAIN }, { live, snaps: [snapOf({ skills: small })] })).toEqual([]);
+    expect(fire("skill-catalog-heavy", span(10), { live, snaps: [snapOf({ skills: small })] })).toEqual([]);
+    expect(only(fire("skill-catalog-heavy", span(10), { live, snaps: [snapOf({ skills: { alpha: 1250, beta: 1250, gamma: 1250, delta: 1250 } })] })).rule).toBe("skill-catalog-heavy");
   });
-  test("a 1000 request span cannot reach the floor: the same list costs $1", () => {
+  test("no skills, no snapshot or no spend is quiet", () => {
+    expect(fire("skill-catalog-heavy", span(50), { live, snaps: [snapOf()] })).toEqual([]);
+    expect(fire("skill-catalog-heavy", span(50), { live })).toEqual([]);
     expect(fire("skill-catalog-heavy", { ...THOUSAND }, { live, snaps: [snapOf({ skills })] })).toEqual([]);
-  });
-  test("no skills or no snapshot is quiet", () => {
-    expect(fire("skill-catalog-heavy", { ...MAIN }, { live, snaps: [snapOf()] })).toEqual([]);
-    expect(fire("skill-catalog-heavy", { ...MAIN }, { live })).toEqual([]);
   });
 });
 
 describe("mcp-schema-heavy", () => {
   const server = (tokens: number, deferred = 0) => snapOf({ mcp: { alpha: { tokens, deferred } } });
   const calls = (n: number) => ({ byMcp: { alpha: { ...money(0), calls: n } } });
-  // 10000 main requests: one resident token costs 10000 * 0.2 / 1e6 = 0.002, so 5000 tokens cost $10.00; fewer than 1 call per 100 requests means under 100 calls.
-  const MAIN = { byModel: { [OPUS]: money(0, 10_000) }, main: money(0, 10_000) };
-  test("10 dollars of schemas and 99 calls in 10000 requests fires", () => {
-    const h = only(fire("mcp-schema-heavy", { ...MAIN, ...calls(99) }, { live, snaps: [server(5000)] }));
-    expect(near(h.usd, 10)).toBe(true);
+  // 1000 main requests: one resident token costs $0.0002, so 5000 tokens cost $1.00; fewer than 1 call per 100 requests means under 10 calls.
+  // `$100` spans put that server at 1% of spend; the share bar is 0.25%.
+  const MAIN = { ...THOUSAND, total: money(100, 1000) };
+  test("1 dollar of schemas (1% of spend) and 9 calls in 1000 requests fires", () => {
+    const h = only(fire("mcp-schema-heavy", { ...MAIN, ...calls(9) }, { live, snaps: [server(5000)] }));
+    expect(near(h.usd, 1)).toBe(true);
     expect(h.projected).toBeUndefined();
-    expect(h.evidence[0]!.detail).toBe("alpha: 5k schema tokens, $10.00; 99 calls in 10000 requests");
+    expect(h.evidence[0]!.detail).toBe("alpha: 5k schema tokens, $1.00; 9 calls in 1000 requests");
     expect(h.short).toBe("1 MCP server with rarely used schemas");
   });
-  test("100 calls in 10000 requests (1 per 100) stays quiet", () => {
-    expect(fire("mcp-schema-heavy", { ...MAIN, ...calls(100) }, { live, snaps: [server(5000)] })).toEqual([]);
+  test("10 calls in 1000 requests (1 per 100) stays quiet", () => {
+    expect(fire("mcp-schema-heavy", { ...MAIN, ...calls(10) }, { live, snaps: [server(5000)] })).toEqual([]);
   });
   test("a server with no calls at all is left to unused-mcp-server", () => {
     expect(fire("mcp-schema-heavy", { ...MAIN, ...calls(0) }, { live, snaps: [server(5000)] })).toEqual([]);
     expect(fire("mcp-schema-heavy", { ...MAIN }, { live, snaps: [server(5000)] })).toEqual([]);
   });
-  test("only the resident part counts: 6000 tokens with 1000 deferred fire, 4999 resident stay quiet", () => {
-    expect(near(only(fire("mcp-schema-heavy", { ...MAIN, ...calls(1) }, { live, snaps: [server(6000, 1000)] })).usd, 10)).toBe(true);
+  test("only the resident part counts: 6000 tokens with 1000 deferred fire, 4999 resident ($0.9998) stay quiet", () => {
+    expect(near(only(fire("mcp-schema-heavy", { ...MAIN, ...calls(1) }, { live, snaps: [server(6000, 1000)] })).usd, 1)).toBe(true);
     expect(fire("mcp-schema-heavy", { ...MAIN, ...calls(1) }, { live, snaps: [server(5999, 1000)] })).toEqual([]);
+  });
+  test("over 0.25 percent of spend fires, exactly 0.25 percent stays quiet: $399 vs $400 total", () => {
+    expect(only(fire("mcp-schema-heavy", { ...THOUSAND, total: money(399, 1000), ...calls(1) }, { live, snaps: [server(5000)] })).rule).toBe("mcp-schema-heavy");
+    expect(fire("mcp-schema-heavy", { ...THOUSAND, total: money(400, 1000), ...calls(1) }, { live, snaps: [server(5000)] })).toEqual([]);
+  });
+  test("a span with no spend is quiet", () => {
+    expect(fire("mcp-schema-heavy", { ...THOUSAND, ...calls(1) }, { live, snaps: [server(5000)] })).toEqual([]);
   });
   test("each server is judged alone, and the amount sums the ones that fire", () => {
     const snap = snapOf({ mcp: { alpha: { tokens: 5000, deferred: 0 }, busy: { tokens: 10_000, deferred: 0 }, small: { tokens: 100, deferred: 0 } } });
-    const byMcp = { alpha: { ...money(0), calls: 5 }, busy: { ...money(0), calls: 5000 }, small: { ...money(0), calls: 1 } };
+    const byMcp = { alpha: { ...money(0), calls: 5 }, busy: { ...money(0), calls: 500 }, small: { ...money(0), calls: 1 } };
     const h = only(fire("mcp-schema-heavy", { ...MAIN, byMcp }, { live, snaps: [snap] }));
     expect(h.evidence.length).toBe(1);
-    expect(near(h.usd, 10)).toBe(true);
+    expect(near(h.usd, 1)).toBe(true);
   });
 });
 
 describe("huge-tool-result", () => {
   const big = (tokens: number, over: Partial<BigResult> = {}): BigResult => ({ sessionId: "s1", tool: "Read", source: "read", label: "/p/dump.log", tokens, rereadUsd: 1.5, ...over });
+  // Spans of $1000: a $1.50 re-read is 0.15% of spend; the share bar is 0.05%.
+  const total = { total: money(1000) };
   test("a result of 25000 tokens fires with its re-read cost", () => {
-    const h = only(fire("huge-tool-result", { hugeResults: [big(25_000)], topSessions: [{ sessionId: "s1", repo: "r", title: "Private title", started: NOW, usd: 1, resume: "" }] }));
+    const h = only(fire("huge-tool-result", { ...total, hugeResults: [big(25_000)], topSessions: [{ sessionId: "s1", repo: "r", title: "Private title", started: NOW, usd: 1, resume: "" }] }));
     expect(HUGE_RESULT_MIN_TOKENS).toBe(25_000);
     expect(h.usd).toBe(1.5);
     expect(h.projected).toBeUndefined();
@@ -202,11 +215,12 @@ describe("huge-tool-result", () => {
     }
   });
   test("24999 tokens stays quiet", () => {
-    expect(fire("huge-tool-result", { hugeResults: [big(24_999)] })).toEqual([]);
+    expect(fire("huge-tool-result", { ...total, hugeResults: [big(24_999)] })).toEqual([]);
   });
   test("several results add up; a command and a plain tool get their own evidence kinds", () => {
     const h = only(
       fire("huge-tool-result", {
+        ...total,
         hugeResults: [big(40_000, { tool: "Bash", source: "bash", label: "cat /p/dump.log", rereadUsd: 0.5 }), big(30_000, { tool: "Grep", source: "tool", label: "Grep", rereadUsd: 0.75 }), big(20_000)],
       }),
     );
@@ -214,9 +228,17 @@ describe("huge-tool-result", () => {
     expect(h.evidence.map((e) => `${e.label}:${e.kind}`)).toEqual(["Tool:text", "Size:text", "Command:command", "Size:text"]);
   });
   test("results that re-read for under 1 dollar in all stay quiet: $0.99 vs $1.00", () => {
-    expect(fire("huge-tool-result", { hugeResults: [big(25_000, { rereadUsd: 0.99 })] })).toEqual([]);
-    expect(fire("huge-tool-result", { hugeResults: [big(30_000, { rereadUsd: 0.5 }), big(30_000, { rereadUsd: 0.49 })] })).toEqual([]);
-    expect(only(fire("huge-tool-result", { hugeResults: [big(30_000, { rereadUsd: 0.5 }), big(30_000, { rereadUsd: 0.5 })] })).usd).toBe(1);
+    const small = { total: money(100) };
+    expect(fire("huge-tool-result", { ...small, hugeResults: [big(25_000, { rereadUsd: 0.99 })] })).toEqual([]);
+    expect(fire("huge-tool-result", { ...small, hugeResults: [big(30_000, { rereadUsd: 0.5 }), big(30_000, { rereadUsd: 0.49 })] })).toEqual([]);
+    expect(only(fire("huge-tool-result", { ...small, hugeResults: [big(30_000, { rereadUsd: 0.5 }), big(30_000, { rereadUsd: 0.5 })] })).usd).toBe(1);
+  });
+  test("over 0.05 percent of spend fires, exactly 0.05 percent stays quiet: $1.50 of $2999 vs $3000", () => {
+    expect(only(fire("huge-tool-result", { total: money(2999), hugeResults: [big(25_000)] })).rule).toBe("huge-tool-result");
+    expect(fire("huge-tool-result", { total: money(3000), hugeResults: [big(25_000)] })).toEqual([]);
+  });
+  test("a span with no spend is quiet", () => {
+    expect(fire("huge-tool-result", { hugeResults: [big(25_000)] })).toEqual([]);
   });
 });
 
@@ -224,39 +246,39 @@ describe("limit-pace", () => {
   const win = (percentUsed: number, resetsAt: number) => ({ percentUsed, resetsAt });
   const FIVE = 5 * HOUR;
   const SEVEN = 7 * DAY;
-  // 5h window with 2h left: 3h elapsed. 60% is exactly the pace that ends at the reset; 61% runs out
-  // after 3h * (100/61 - 1) = 1.918h = 1h 55m, about 4m before the reset.
+  // 5h window with 1h left: 4h elapsed. 80% is exactly the pace that ends at the reset; 81% runs out
+  // after 4h * (100/81 - 1) = 0.938h = 56m, about 3m before the reset.
   test("a pace that fills the 5h window before its reset fires as an urgent alert with the projected time", () => {
-    const h = only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(61, NOW + 2 * HOUR) } })));
+    const h = only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(81, NOW + HOUR) } })));
     expect(h.usd).toBe(0);
     expect(h.urgent).toBe(true);
     expect(h.projected).toBeUndefined();
-    expect(h.short).toBe("5h limit full in 1h 55m");
-    expect(h.summary).toContain("1h 55m");
-    expect(h.evidence).toEqual([{ label: "5-hour window", detail: "61% used, 3h 00m into the window; full in 1h 55m, 4m before the reset", kind: "text" }]);
+    expect(h.short).toBe("5h limit full in 56m");
+    expect(h.summary).toContain("56m");
+    expect(h.evidence).toEqual([{ label: "5-hour window", detail: "81% used, 4h 00m into the window; full in 56m, 3m before the reset", kind: "text" }]);
   });
-  test("60 percent with 2h left reaches 100 percent exactly at the reset, so it stays quiet", () => {
-    expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(60, NOW + 2 * HOUR) } }))).toEqual([]);
+  test("80 percent with 1h left reaches 100 percent exactly at the reset, so it stays quiet", () => {
+    expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(80, NOW + HOUR) } }))).toEqual([]);
   });
-  // 7d window with 3.5d left: 3.5d elapsed. 50% is the break-even pace; 51% runs out after 3.5d * 49/51 = 3.36d = 3d 8h.
+  // 7d window with 2d left: 5d elapsed. 71.43% is the break-even pace: 71% stays quiet, 72% runs out after 5d * 28/72 = 1.94d = 1d 22h.
   test("the 7d window is judged on its own length", () => {
-    const h = only(rule("limit-pace").run(inputOf({ limits: { sevenDay: win(51, NOW + 3.5 * DAY) } })));
-    expect(h.short).toBe("7d limit full in 3d 8h");
-    expect(rule("limit-pace").run(inputOf({ limits: { sevenDay: win(50, NOW + 3.5 * DAY) } }))).toEqual([]);
+    const h = only(rule("limit-pace").run(inputOf({ limits: { sevenDay: win(72, NOW + 2 * DAY) } })));
+    expect(h.short).toBe("7d limit full in 1d 22h");
+    expect(rule("limit-pace").run(inputOf({ limits: { sevenDay: win(71, NOW + 2 * DAY) } }))).toEqual([]);
   });
   test("with both windows on pace the earlier fill leads and both get a row", () => {
-    const h = only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(61, NOW + 2 * HOUR), sevenDay: win(51, NOW + 3.5 * DAY) } })));
+    const h = only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(81, NOW + HOUR), sevenDay: win(72, NOW + 2 * DAY) } })));
     expect(h.short.startsWith("5h")).toBe(true);
     expect(h.evidence.map((e) => e.label)).toEqual(["5-hour window", "7-day window"]);
   });
-  // 30 minutes into the 5h window, 49% would be full in 31 minutes; under half of the window used it stays quiet, at 50% it fires.
-  test("under 50 percent used stays quiet however steep the pace", () => {
-    expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(49, NOW + 4.5 * HOUR) } }))).toEqual([]);
-    expect(only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(50, NOW + 4.5 * HOUR) } }))).short).toBe("5h limit full in 30m");
+  // 30 minutes into the 5h window, 69% would be full in 13 minutes; under 70% used it stays quiet, at 70% it fires.
+  test("under 70 percent used stays quiet however steep the pace", () => {
+    expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(69, NOW + 4.5 * HOUR) } }))).toEqual([]);
+    expect(only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(70, NOW + 4.5 * HOUR) } }))).short).toBe("5h limit full in 12m");
   });
   test("a window just begun, one with no reset time, a stale one and a full one are skipped", () => {
     // 6 minutes into the 5h window is under 5 percent of it: too early to extrapolate.
-    expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(50, NOW + FIVE - 6 * MIN) } }))).toEqual([]);
+    expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(90, NOW + FIVE - 6 * MIN) } }))).toEqual([]);
     expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: { percentUsed: 90 } } }))).toEqual([]);
     expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(90, NOW - 1) } }))).toEqual([]);
     expect(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(100, NOW + HOUR) } }))).toEqual([]);
@@ -363,7 +385,7 @@ describe("ranking", () => {
       NEW_RULES,
       inputOf({
         summary: summaryOf({ cacheTtl: { ...NO_TTL, requests: 10, usd5m: 10, usd1h: 7 }, subagentRuns: { runs: 10, small: 8, smallStartupUsd: 1.5, byType: {} } }),
-        limits: { fiveHour: { percentUsed: 61, resetsAt: NOW + 2 * HOUR } },
+        limits: { fiveHour: { percentUsed: 81, resetsAt: NOW + HOUR } },
       }),
     );
     expect(out.map((h) => h.rule)).toEqual(["limit-pace", "cache-ttl-choice", "subagent-overhead"]);

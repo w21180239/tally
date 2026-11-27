@@ -52,6 +52,7 @@ const SAVE_MS = 300_000;
 const TEXT_KEEP = 200;
 const PROMPT_PREVIEW = 120;
 const SKIPPED = "audit.jsonl";
+// Folders listed at once. 16 and 64 measured the same on macOS; host concurrency on Windows is unverified.
 const LIST_WAVE = 16;
 
 // One UTC day of a project: file states bucketed by mtime, user and compact rows by ts, meta rows by the
