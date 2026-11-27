@@ -14,6 +14,7 @@ export async function readEnv($: Pick<Host, "env">): Promise<EnvMap> {
     HOME: await $.env.get("HOME"),
     USERPROFILE: await $.env.get("USERPROFILE"),
     APPDATA: await $.env.get("APPDATA"),
+    LOCALAPPDATA: await $.env.get("LOCALAPPDATA"),
     XDG_CONFIG_HOME: await $.env.get("XDG_CONFIG_HOME"),
   };
 }

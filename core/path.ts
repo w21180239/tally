@@ -43,6 +43,9 @@ export function scanRoots(env: Env, platform: "darwin" | "win32" | "linux"): str
     roots.push(joinPath(home, "Library", "Application Support", ...sessions));
   } else if (platform === "win32") {
     roots.push(joinPath(env("APPDATA") || joinPath(home, "AppData", "Roaming"), ...sessions));
+    // The Microsoft Store (MSIX) build has its %APPDATA% writes redirected into the package's LocalCache.
+    const local = env("LOCALAPPDATA") || joinPath(home, "AppData", "Local");
+    roots.push(joinPath(local, "Packages", "Claude_pzs8sxrjxfjjc", "LocalCache", "Roaming", ...sessions));
   } else {
     roots.push(joinPath(env("XDG_CONFIG_HOME") || joinPath(home, ".config"), ...sessions));
   }
