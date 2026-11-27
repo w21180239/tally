@@ -177,6 +177,46 @@ describe("redact", () => {
     expect(cmd("make; rm -rf x")).toBe("make");
   });
 
+  test("shell syntax never leaks: the output is empty or the bare program, nothing else", () => {
+    const cmd = (detail: string) => redact({ kind: "command", label: "Command", detail }, true).detail;
+    const cases: [string, string[]][] = [
+      ["FOO=$(cat k) git", ["", "git"]],
+      ["FOO=a\\ b git", ["", "git"]],
+      ['FOO="$(cat k z)" git', ["", "git"]],
+      ["FOO=`cat k` git", ["", "git"]],
+      ["git$(cat k)", [""]],
+      ["git`cat k`", [""]],
+      ['"git"$(cat k)', [""]],
+      ["$(secret) x", [""]],
+      ["cat<secret.txt", ["", "cat"]],
+      ["echo>out", ["", "echo"]],
+      ["(cd /x && git)", [""]],
+      ["-secret", [""]],
+      ["!secret", [""]],
+      ["<secret", [""]],
+      ["secret\\ name x", [""]],
+    ];
+    for (const [input, allowed] of cases) {
+      const out = cmd(input);
+      expect(allowed).toContain(out);
+      expect(out).toMatch(/^[\w.]*$/);
+    }
+  });
+
+  test("sudo and env are skipped to show the real program; anything unsure shows nothing", () => {
+    const cmd = (detail: string) => redact({ kind: "command", label: "Command", detail }, true).detail;
+    expect(cmd("sudo git push")).toBe("git");
+    expect(cmd("sudo -E -n git push")).toBe("git");
+    expect(cmd("/usr/bin/sudo FOO=1 /usr/bin/git x")).toBe("git");
+    expect(cmd("env FOO=1 git x")).toBe("git");
+    expect(cmd("env -i FOO=1 BAR='a b' git x")).toBe("git");
+    expect(cmd("sudo env A=1 git")).toBe("git");
+    expect(cmd("sudo -u root git")).toBe("");
+    expect(cmd("env -S 'git x'")).toBe("");
+    expect(cmd("sudo")).toBe("");
+    expect(cmd("env FOO=secret")).toBe("");
+  });
+
   test("a command path with a trailing separator keeps its last folder name", () => {
     const cmd = (detail: string) => redact({ kind: "command", label: "Command", detail }, true).detail;
     expect(cmd("/a/b/")).toBe("b");

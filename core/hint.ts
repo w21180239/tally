@@ -52,18 +52,52 @@ export async function runRules(rules: readonly HintRule[], input: HintInput, tic
   return sortHints([...best.values()]);
 }
 
-// A command word that is an assignment; its value may hold quoted runs with spaces. Needs a space or the end after it.
-const ENV_WORD = /^[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s"'])*(?:\s+|$)/;
+// A leading VAR=value word; the value may hold quoted runs with spaces. An escape, `$(` or a backtick makes it no match.
+const ENV_WORD = /^[A-Za-z_]\w*=(?:"(?:[^"\\`$]|\$(?!\())*"|'[^']*'|[^\s"'\\`$]|\$(?!\())*(?:\s+|$)/;
 const QUOTED_WORD = /^(["'])(.*?)\1/;
+const WORD_END = /[\s|;&]/;
+const SAFE_NAME = /^[\w.][\w.+@:~-]*$/;
+// Wrappers whose own flags and assignments are skipped to reach the real program; any other flag shows nothing.
+const WRAPPERS: Record<string, RegExp> = { sudo: /^-[EHnSbkKA]+$/, env: /^-i$/ };
+const MAX_WRAPPERS = 3;
 
-// The program a command line runs: past leading VAR=value words, unquoted, without its folder. Fails closed: when what
-// is left is no plain program word (only assignments, an open quote, a stray `=`), the answer is "".
+// The first word of `rest` as a bare program name plus what follows it, or null when it is anything but a plain name.
+function firstWord(rest: string): { name: string; after: string } | null {
+  const q = QUOTED_WORD.exec(rest);
+  let raw: string;
+  let after: string;
+  if (q !== null) {
+    raw = q[2]!;
+    after = rest.slice(q[0].length);
+  } else {
+    const end = rest.search(WORD_END);
+    raw = end < 0 ? rest : rest.slice(0, end);
+    after = end < 0 ? "" : rest.slice(end);
+    if (raw.endsWith("\\") && /^\s/.test(after)) return null;
+  }
+  if (after !== "" && !WORD_END.test(after[0]!)) return null;
+  const name = baseName(raw);
+  return SAFE_NAME.test(name) ? { name, after } : null;
+}
+
+// The program a command line runs: past leading VAR=value words and sudo/env wrappers, unquoted, without its folder.
+// Fails closed: anything that is not a plain program name (assignments only, an open quote, `$(`, redirects) gives "".
 function programOf(command: string): string {
   let rest = command.trim();
-  for (let m = ENV_WORD.exec(rest); m !== null; m = ENV_WORD.exec(rest)) rest = rest.slice(m[0].length);
-  const quoted = QUOTED_WORD.exec(rest);
-  const word = quoted !== null ? quoted[2]! : (rest.split(/[\s|;&]/, 1)[0] ?? "");
-  return /["'=]/.test(word) ? "" : baseName(word);
+  for (let depth = 0; depth <= MAX_WRAPPERS; depth++) {
+    for (let m = ENV_WORD.exec(rest); m !== null; m = ENV_WORD.exec(rest)) rest = rest.slice(m[0].length);
+    const w = firstWord(rest);
+    if (w === null) return "";
+    const flags = WRAPPERS[w.name];
+    if (flags === undefined) return w.name;
+    rest = w.after.trimStart();
+    for (;;) {
+      const flag = /^\S+/.exec(rest)?.[0];
+      if (flag === undefined || !flags.test(flag)) break;
+      rest = rest.slice(flag.length).trimStart();
+    }
+  }
+  return "";
 }
 
 /** With `on`, the row keeps only what is safe to show: a command its program, a path its file name, a title nothing. */
