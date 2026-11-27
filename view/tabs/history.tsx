@@ -1,7 +1,7 @@
 // The History tab: a month of spend, for all repos or the live session's repo alone. Rows by billed kind, day, model,
 // main thread against sub-agents, sub-agent type, repo and session, then what each tool added to context and what each
-// MCP server cost. A running transcript scan is named with its percent. `drawHistory` returns the rows and the keys
-// they add.
+// MCP server cost. A running transcript scan is named with its percent. With a sync folder, `t` shows every computer's
+// figures; a block no file carries says "This computer only". `drawHistory` returns the rows and the keys they add.
 import type { RenderElement } from "claude-code";
 import { dayWords, historyKeyOf, localDayName, scanText } from "../../core/history.ts";
 import type { HistoryData, ScanState } from "../../core/history.ts";
@@ -23,6 +23,10 @@ export type HistoryView = { more: boolean; shown: string[] };
 export type HistoryInput = {
   d: WindowData;
   data: HistoryData;
+  /** With a sync folder: this computer's figures or every computer's (the `t` key). */
+  machines?: "this" | "all";
+  /** A sync folder is set, so the figures carry the merge. */
+  sync?: boolean;
   /** The scan under way, or null. */
   scan: ScanState | null;
   repoOnly: boolean;
@@ -37,13 +41,28 @@ export type HistoryDrawing = { rows: RenderElement[]; ctx: KeyCtx };
 export const sessionRowKey = (sessionId: string): string => `session|${sessionId}`;
 
 const SPAN_WORDS = "the past 30 days";
+export const ONLY_HERE = "This computer only";
+export const SOME_MISSING = "Not every computer shares this";
 
 export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
   const { Text, Button } = t;
-  const { d, data, view } = i;
+  const { d, view } = i;
   const ctx: KeyCtx = {};
   const out: RenderElement[] = [];
-  const want = historyKeyOf(i.repoOnly);
+  const want = historyKeyOf(i.repoOnly, i.sync === true);
+  // Other computers' files carry no per-repo split, so one repo is never merged.
+  const merged = i.machines === "all" && !i.repoOnly ? i.data.all : undefined;
+  const data: HistoryData = merged ?? i.data;
+  // The note a block carries in the all-computers view: nothing when every file fed it.
+  const labelOf = (block: string): string | undefined => {
+    if (merged === undefined) return undefined;
+    if (block === "usage" || block === "byMcp") return ONLY_HERE;
+    return merged.localOnly.includes(block) ? (merged.contributed.includes(block) ? SOME_MISSING : ONLY_HERE) : undefined;
+  };
+  const noted = (block: string, note?: string): string | undefined => {
+    const label = labelOf(block);
+    return label === undefined ? note : note === undefined ? label : `${note}${SEP}${label}`;
+  };
   const scanLine: RenderElement[] =
     i.scan === null
       ? []
@@ -74,6 +93,26 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
     </Box>,
     ...scanLine,
   );
+  if (merged !== undefined) {
+    out.push(
+      <Text key="machines-note" dimColor wrap="truncate-end">
+        {`All computers${SEP}${merged.machines.join(", ")}`}
+      </Text>,
+    );
+    if (merged.localOnly.includes("hours")) {
+      out.push(
+        <Text key="machines-hours" dimColor wrap="truncate-end">
+          Some computers share fewer days than this window, so older days hold fewer computers.
+        </Text>,
+      );
+    }
+  } else if (i.machines === "all" && i.repoOnly && i.sync === true) {
+    out.push(
+      <Text key="machines-repo" dimColor wrap="truncate-end">
+        All computers needs All repos: the other computers' files cannot be cut to one repo.
+      </Text>,
+    );
+  }
   if (i.scan === null && data.unread > 0) {
     out.push(
       <Text key="unread" dimColor wrap="truncate-end">
@@ -100,7 +139,7 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
   const topOf = (values: number[]): number => values.reduce((a, v) => Math.max(a, v), 0);
   const share = (v: number, top: number): number => (top > 0 ? v / top : 0);
 
-  out.push(title(t, "kinds", "Billed kinds", "tokens and spend"));
+  out.push(title(t, "kinds", "Billed kinds", noted("usage", "tokens and spend")));
   const kindTop = topOf(data.kinds.map((k) => k.usd));
   for (const k of data.kinds) out.push(amountRow(t, { key: `kind-${k.kind}`, label: `${KIND_LABEL[k.kind]}${SEP}${tokensText(k.tokens)}`, amount: moneyOf(d, k.usd), share: share(k.usd, kindTop) }));
   out.push(blank(t, "kinds"));
@@ -129,23 +168,25 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
   }
 
   if (!i.repoOnly && data.repos.length > 0) {
-    out.push(title(t, "repos", "Spend per repo"));
+    out.push(title(t, "repos", "Spend per repo", noted("byRepo")));
     const top = topOf(data.repos.map((r) => r.usd));
     for (const r of shownOf(data.repos, SECTION_ROWS)) out.push(amountRow(t, { key: `repo-${r.name}`, label: r.name, amount: moneyOf(d, r.usd), share: share(r.usd, top) }));
     out.push(blank(t, "repos"));
   }
 
   if (data.sessions.length > 0) {
-    out.push(title(t, "sessions", "Largest sessions", "press a row for its resume command"));
+    out.push(title(t, "sessions", "Largest sessions", noted("topSessions", "press a row for its resume command")));
     const top = topOf(data.sessions.map((s) => s.usd));
     for (const s of shownOf(data.sessions, SECTION_ROWS)) {
       const key = sessionRowKey(s.sessionId);
       const name = s.title === undefined || s.title === "" ? s.sessionId.slice(0, 8) : s.title;
       const day = dayWords(localDayName(s.started, -new Date(s.started).getTimezoneOffset()));
-      out.push(amountRow(t, { key, label: `${name}${SEP}${day}${SEP}${s.repo}`, amount: moneyOf(d, s.usd), share: share(s.usd, top), onPress: () => i.onShown(key) }));
+      // A session of another computer resumes only there: its machine is named and no resume line is offered.
+      const elsewhere = merged?.sessionMachine[s.sessionId];
+      out.push(amountRow(t, { key, label: `${name}${SEP}${day}${SEP}${s.repo}${elsewhere === undefined ? "" : `${SEP}${elsewhere}`}`, amount: moneyOf(d, s.usd), share: share(s.usd, top), onPress: () => i.onShown(key) }));
       ctx.rows = true;
       if (view.shown.includes(key)) {
-        const lines = [...(s.title === undefined || s.title === "" ? [] : [s.title]), `session ${s.sessionId}`, ...(s.pr === undefined ? [] : [`PR ${s.pr}`]), s.resume];
+        const lines = [...(s.title === undefined || s.title === "" ? [] : [s.title]), `session ${s.sessionId}`, ...(s.pr === undefined ? [] : [`PR ${s.pr}`]), elsewhere === undefined ? s.resume : `on ${elsewhere}: resume it there`];
         out.push(textLines(t, `${key}-detail`, lines.join("\n"), DETAIL_LINES));
       }
     }
@@ -153,7 +194,7 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
   }
 
   if (data.fill.length > 0) {
-    out.push(title(t, "fill", "Context fill by tool", "tokens each tool added, estimated"));
+    out.push(title(t, "fill", "Context fill by tool", noted("toolFill", "tokens each tool added, estimated")));
     const top = topOf(data.fill.map((f) => f.tokens));
     for (const f of shownOf(data.fill, SECTION_ROWS)) out.push(amountRow(t, { key: `fill-${f.tool}`, label: f.tool, amount: `~${tokensText(f.tokens)}`, share: share(f.tokens, top) }));
     out.push(blank(t, "fill"));
@@ -161,7 +202,7 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
 
   if (data.mcp.length > 0) {
     const star = data.mcpProxy ? "*" : "";
-    out.push(title(t, "mcp", "MCP servers", "schemas and results, re-read"));
+    out.push(title(t, "mcp", "MCP servers", noted("byMcp", "schemas and results, re-read")));
     const top = topOf(data.mcp.map((m) => m.usd));
     for (const m of shownOf(data.mcp, SECTION_ROWS)) {
       out.push(amountRow(t, { key: `mcp-${m.server}`, label: `${m.server}${m.calls > 0 ? `${SEP}${m.calls} ${m.calls === 1 ? "call" : "calls"}` : ""}`, amount: `${moneyOf(d, m.usd)}${star}`, share: share(m.usd, top) }));

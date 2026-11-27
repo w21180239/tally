@@ -11,6 +11,8 @@ import { makeSlicer } from "../engine/slicer.ts";
 import { currentPrices } from "../engine/price-update.ts";
 import { locate } from "../engine/locate.ts";
 import { syncHerdr } from "../engine/herdr.ts";
+import { resetSync, syncSoon } from "../engine/sync.ts";
+import { syncExtra } from "../engine/sync-extra.ts";
 import { readLive, startLive, updatePrices, wireLive } from "../engine/live.ts";
 import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
 import { startSessionView } from "../engine/session-view.ts";
@@ -63,6 +65,7 @@ export const register: Register = (on, options) => {
     const loc = await locate($);
     stop?.();
     const mine = ++gen;
+    resetSync();
     // Start off the hook's path so the session is never held up by the first listing.
     $.clock.after(100, () => {
       if (mine !== gen) return;
@@ -73,6 +76,8 @@ export const register: Register = (on, options) => {
         roots: loc.roots,
         onProgress: (p) => {
           progress = p;
+          // A finished scan of the owner session feeds the sync, off this callback's path and one at a time.
+          if (p.phase === "done" && p.owner) syncSoon($, () => settings, () => syncExtra($));
         },
         onShardSaved: () => {},
       }).stop;
@@ -85,6 +90,7 @@ export const register: Register = (on, options) => {
     // heartbeat) and the redraw timers keep running, and a start still waiting on its delay stays valid.
     if (e.reason !== "clear") {
       gen++;
+      resetSync();
       stop?.();
       stop = undefined;
       for (const t of timers) t.cancel();

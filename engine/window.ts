@@ -26,6 +26,8 @@ let current: Settings = DEFAULT_SETTINGS;
 export function useSettings(settings: Settings): void {
   current = settings;
 }
+/** The options the module runs with now. */
+export const settingsNow = (): Settings => current;
 
 export const PANE_ID = "tally";
 export const PANE_TITLE = "tally";

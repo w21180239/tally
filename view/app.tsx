@@ -10,6 +10,7 @@ import { loadTranscript, needsTranscript, readTranscripts } from "../engine/suba
 import { readHistory, readScanView, wantHistory } from "../engine/history-view.ts";
 import { needsHelp, readHelp, refreshHelp } from "../engine/help-view.ts";
 import { needsHints, readHints, refreshHints } from "../engine/hints-view.ts";
+import { needsRemotes, readRemotes, refreshRemotes } from "../engine/sync.ts";
 import { currentPrices, lastPriceError } from "../engine/price-update.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
 import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setCtxAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, setTranscript, showTab, toggleShown } from "../engine/window.ts";
@@ -158,10 +159,10 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
       ]),
     );
   }
-  if (ctx.machines === true && (tab === "usage" || tab === "history" || tab === "hints")) {
+  if (ctx.machines === true && (tab === "history" || tab === "hints")) {
     switches.push(
-      switchRow(t, "Machines", "t", [
-        { key: "machines-this", label: "This machine", isChosen: view.machines === "this", onPress: () => attempt($, () => setMachines($, "this")) },
+      switchRow(t, "Computers", "t", [
+        { key: "machines-this", label: "This computer", isChosen: view.machines === "this", onPress: () => attempt($, () => setMachines($, "this")) },
         { key: "machines-all", label: "All computers", isChosen: view.machines === "all", onPress: () => attempt($, () => setMachines($, "all")) },
       ]),
     );
@@ -237,10 +238,12 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   } else if (tab === "history") {
     const [data, scan] = await Promise.all([readHistory($), readScanView($)]);
     // Stale figures, or a scan not looked at lately, are handled off the draw; the tab shows what it has meanwhile.
-    wantHistory($, data, scan, { repoOnly: view.repoOnly }, d.now);
+    wantHistory($, data, scan, { repoOnly: view.repoOnly, sync: ctx.machines === true }, d.now);
     const drawn = drawHistory(t, {
       d,
       data,
+      machines: view.machines,
+      sync: ctx.machines === true,
       scan: scan.scan,
       repoOnly: view.repoOnly,
       view: { more: view.more, shown: view.shown },
@@ -254,12 +257,16 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     const want = { span, repoOnly: view.repoOnly, sessionId: live.sessionId };
     // Stale findings, or those of another span or repo, are rebuilt off the draw; the tab shows what it has meanwhile.
     if (needsHints(data, want, d.now)) inBackground($, () => refreshHints($, want));
+    // The other computers' files are read off the draw while the all-computers view is on.
+    const remote = await readRemotes($);
+    if (ctx.machines === true && view.machines === "all" && needsRemotes(remote, d.now)) inBackground($, () => refreshRemotes($, settings));
     const drawn = drawHints(t, {
       d,
       data,
       want,
       view: { shown: view.shown },
       redact: settings.redactEvidence,
+      ...(ctx.machines === true && { machines: { mode: view.machines, remote } }),
       onShown: (key) => attempt($, () => toggleShown($, key)),
     });
     tabRows = drawn.rows;

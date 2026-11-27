@@ -8,13 +8,15 @@ import { mcpSchemaSteps, nearestSnapshot } from "../core/breakdown.ts";
 import type { BreakdownSnapshot } from "../core/breakdown.ts";
 import { dict } from "../core/dict.ts";
 import { EMPTY_HISTORY, historyKeyOf, historyOf, mcpCosts, scanOf } from "../core/history.ts";
-import type { HistoryData, ScanState } from "../core/history.ts";
+import type { HistoryData, HistoryMeta, MergedHistory, ScanState } from "../core/history.ts";
 import { repoOf } from "../core/path.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
 import type { PriceTable } from "../core/pricing.ts";
 import type { Shard } from "../core/shard.ts";
 import { drainAsync, STEP_ROWS } from "../core/steps.ts";
 import { repoFor, summarizeAsync, UNKNOWN_REPO } from "../core/summary.ts";
+import type { Summary } from "../core/summary.ts";
+import { mergeMachines } from "../core/sync.ts";
 import type { UsageRow } from "../core/types.ts";
 import { locate } from "./locate.ts";
 import { currentPrices } from "./price-update.ts";
@@ -23,7 +25,8 @@ import { readProgress } from "./progress.ts";
 import { listProjects } from "./scanner.ts";
 import { makeSlicer } from "./slicer.ts";
 import { lastSnapshot, loadSnapshots } from "./snapshot.ts";
-import { attempt, inBackground, invalidateWindow } from "./window.ts";
+import { loadRemotes } from "./sync.ts";
+import { attempt, inBackground, invalidateWindow, settingsNow } from "./window.ts";
 
 /** Figures older than this are rebuilt at the next draw of the tab; during a scan, sooner. */
 export const HISTORY_INTERVAL_MS = 300_000;
@@ -39,7 +42,7 @@ const FAILURE_CHARS = 80;
 export type ScanView = { at: number; scan: ScanState | null };
 export const EMPTY_SCAN_VIEW: ScanView = { at: 0, scan: null };
 
-const historyAtom = atom({ plugin: "tally", key: "history" } as const, EMPTY_HISTORY, { shape: "history-1" });
+const historyAtom = atom({ plugin: "tally", key: "history" } as const, EMPTY_HISTORY, { shape: "history-2" });
 const scanAtom = atom({ plugin: "tally", key: "history-scan" } as const, EMPTY_SCAN_VIEW, { shape: "history-scan-1" });
 
 export function readHistory($: EngineInterface): Promise<HistoryData> {
@@ -50,11 +53,12 @@ export function readScanView($: EngineInterface): Promise<ScanView> {
 }
 
 type Tick = () => Promise<void>;
-type Want = { repoOnly: boolean };
+/** `sync`: a sync folder is set, so the build also merges the other computers' files. */
+type Want = { repoOnly: boolean; sync?: boolean };
 
 /** True when the figures need a rebuild: another key, past their age limit, or built mid-scan and the scan is over. */
 export function needsRebuild(data: Pick<HistoryData, "key" | "at" | "partial" | "failure">, scan: Pick<ScanView, "scan">, want: Want, now: number): boolean {
-  const key = historyKeyOf(want.repoOnly);
+  const key = historyKeyOf(want.repoOnly, want.sync);
   if (data.failure?.key === key && now - data.failure.at < HISTORY_RETRY_MS) return false;
   if (data.key !== key) return true;
   if (now - data.at >= (scan.scan !== null ? HISTORY_SCAN_INTERVAL_MS : HISTORY_INTERVAL_MS)) return true;
@@ -64,7 +68,7 @@ export function needsRebuild(data: Pick<HistoryData, "key" | "at" | "partial" | 
 /** True when the draw should queue a check: a rebuild is due, or the progress file has not been read lately. */
 export function needsHistory(data: Pick<HistoryData, "key" | "at" | "partial" | "failure">, scan: ScanView, want: Want, now: number): boolean {
   if (needsRebuild(data, scan, want, now)) return true;
-  return data.failure?.key !== historyKeyOf(want.repoOnly) && now - scan.at >= SCAN_CHECK_MS;
+  return data.failure?.key !== historyKeyOf(want.repoOnly, want.sync) && now - scan.at >= SCAN_CHECK_MS;
 }
 
 // Schema cost over the main-thread rows of each session, within the span and for the repo.
@@ -101,7 +105,28 @@ async function schemaCosts(prices: PriceTable, shards: Shard[], snapsOf: (projec
 
 let running: Promise<void> | undefined;
 
-async function build($: EngineInterface, repoOnly: boolean, now: number, scanning: boolean): Promise<void> {
+// The same figures over this computer and the other computers' files. Every remote file is parsed in its own slice.
+async function mergedOf($: EngineInterface, summary: Summary, meta: HistoryMeta, tick: Tick): Promise<MergedHistory | undefined> {
+  const settings = settingsNow();
+  if (settings.syncDir === "") return undefined;
+  const { self, files } = await loadRemotes($, settings, tick);
+  const merged = mergeMachines(summary, files, meta.tzOffsetMin, self);
+  const sessionMachine: Record<string, string> = dict<string>();
+  for (const f of files) for (const s of f.sessions ?? []) sessionMachine[s.sessionId] = f.machine;
+  const contributed: string[] = [];
+  if (files.some((f) => f.detail !== "numbers")) contributed.push("byRepo");
+  if (files.some((f) => f.detail === "full" && f.sessions !== undefined)) contributed.push("topSessions");
+  if (files.some((f) => f.detail === "full" && f.toolFill !== undefined)) contributed.push("toolFill");
+  return {
+    ...historyOf(merged, meta),
+    machines: [...new Set([self, ...files.map((f) => f.machine)])].sort(),
+    localOnly: merged.localOnly,
+    contributed,
+    sessionMachine,
+  };
+}
+
+async function build($: EngineInterface, repoOnly: boolean, sync: boolean, now: number, scanning: boolean): Promise<void> {
   const loc = await locate($);
   const prices = await currentPrices($);
   const slicer = makeSlicer($);
@@ -132,8 +157,19 @@ async function build($: EngineInterface, repoOnly: boolean, now: number, scannin
   const schema = await schemaCosts(prices, shards, (p) => snaps.get(p) ?? [], summary.from, summary.to, repo, tick);
   const mcp = mcpCosts(schema.usd, summary.mcpReread, summary.byMcp);
 
-  const data = historyOf(summary, { key: historyKeyOf(repoOnly), at: now, repo, tzOffsetMin, mcp, mcpProxy: schema.proxy, mcpMissing: schema.missing, unread, partial: scanning });
-  await update($, historyAtom, () => data);
+  const meta: HistoryMeta = { key: historyKeyOf(repoOnly, sync), at: now, repo, tzOffsetMin, mcp, mcpProxy: schema.proxy, mcpMissing: schema.missing, unread, partial: scanning };
+  const data = historyOf(summary, meta);
+  // Numbers files carry no repo filter, so a one-repo view is never merged.
+  let all: MergedHistory | undefined;
+  if (sync && !repoOnly) {
+    try {
+      all = await mergedOf($, summary, meta, tick);
+    } catch (err) {
+      // The local figures still show.
+      $.ui.log(`tally: history merge failed: ${err instanceof Error ? err.message : String(err)}`, { to: "debug" });
+    }
+  }
+  await update($, historyAtom, () => (all === undefined ? data : { ...data, all }));
   invalidateWindow($);
 }
 
@@ -149,14 +185,14 @@ async function lookAtScan($: EngineInterface, now: number): Promise<boolean> {
 /** Rebuilds the figures when `needsRebuild` says so (or `force`); one build runs at a time. Never rejects. */
 export async function refreshHistory($: EngineInterface, want: Want, force = false): Promise<void> {
   try {
-    const key = historyKeyOf(want.repoOnly);
+    const key = historyKeyOf(want.repoOnly, want.sync);
     while (running !== undefined) await running;
     const now = await $.clock.now();
     const scan = await read($, scanAtom);
     const data = await read($, historyAtom);
     if (!force && !needsRebuild(data, scan, want, now)) return;
     // No await between the checks above and this line: only one build starts.
-    running = build($, want.repoOnly, now, scan.scan !== null)
+    running = build($, want.repoOnly, want.sync === true, now, scan.scan !== null)
       .catch(async (err: unknown) => {
         const why = (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0]!.slice(0, FAILURE_CHARS);
         try {

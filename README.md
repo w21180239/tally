@@ -117,7 +117,7 @@ On the Hints tab, `y` adopts a hint. tally records the rule's metric, the expect
 
 ### Multiple machines
 
-With `syncDir` set, each machine writes its totals to `<syncDir>/tally/<machineName>.json` and reads the others. History and Hints then get a `t` key that switches between this machine and all machines. Blocks that cannot be merged say "this machine only" in the all-machines view. See [Privacy](#privacy) for what each `shareDetail` level shares.
+With `syncDir` set, each machine writes its totals to `<syncDir>/tally/<machineName>.json` and reads the others. History and Hints then get a `t` key that switches between this computer and all computers. Blocks that cannot be merged say "This computer only" in the all-computers view. See [Privacy](#privacy) for what each `shareDetail` level shares.
 
 ### Report and Herdr
 

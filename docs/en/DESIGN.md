@@ -108,7 +108,7 @@ With `syncDir` set, after each scan tally writes one file, `<syncDir>/tally/<mac
 - Days are stored in UTC and shown in the viewer's local time zone.
 - Transcripts stay on the machine that made them, so no request is counted twice.
 - If `syncDir` is a git repository, tally runs `git pull --rebase` before and `git commit` and `git push` after a write, through `$.process.run`. Failures are logged only. In the desktop app and VS Code this step is skipped and the next CLI session pushes.
-- Blocks that cannot be merged at the chosen level show "this machine only" in the all-machines view.
+- Blocks that cannot be merged at the chosen level show "This computer only" in the all-computers view.
 
 ## Report and Herdr
 

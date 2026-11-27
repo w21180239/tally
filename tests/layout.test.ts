@@ -139,9 +139,13 @@ describe("keyLine", () => {
 
   test("the body's own keys appear only while it has them", () => {
     const all = keyLine("usage", { agents: true, canView: true, canGoBack: true, more: true, rows: true, machines: true });
-    expect(all).toEqual(["0-5 switch tab", "s time span", "t machines", "a agent list", "p/n prev/next", "v open agent", "b return", "m full lists", "tab/enter open rows", "esc collapse"]);
+    expect(all).toEqual(["0-5 switch tab", "s time span", "a agent list", "p/n prev/next", "v open agent", "b return", "m full lists", "tab/enter open rows", "esc collapse"]);
+    // `t` is drawn only on the two tabs that merge other computers' figures, and only with a sync folder.
+    expect(keyLine("history", { machines: true })).toContain("t computers");
+    expect(keyLine("hints", { machines: true })).toContain("t computers");
+    expect(keyLine("history")).not.toContain("t computers");
     expect(keyLine("hints", { evidence: true, adopt: true })).toEqual(["0-5 switch tab", "s time span", "r repo filter", "tab/enter show evidence", "y adopt", "esc collapse"]);
-    expect(keyLine("session", { machines: true })).not.toContain("t machines");
+    expect(keyLine("session", { machines: true })).not.toContain("t computers");
   });
 
   test("the line leads with how to focus, then whole entries while they fit", () => {

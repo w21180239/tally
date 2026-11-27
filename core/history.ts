@@ -35,6 +35,18 @@ export type HistoryData = {
   partial: boolean;
   /** Set when the last build for `key` failed and none has worked since. */
   failure?: { key: string; why: string; at: number };
+  /** With a sync folder: the same figures over every computer's file (the `t` key); absent for one repo. */
+  all?: MergedHistory;
+};
+
+/** The figures merged over the machine files. Blocks of `localOnly` hold this computer alone, or, if listed in `contributed`, not every computer's share. */
+export type MergedHistory = Omit<HistoryData, "all"> & {
+  /** This computer and every other one with a valid file. */
+  machines: string[];
+  localOnly: string[];
+  contributed: string[];
+  /** Session id to the computer that holds it, for sessions of other computers. */
+  sessionMachine: Record<string, string>;
 };
 
 export const EMPTY_HISTORY: HistoryData = {
@@ -60,7 +72,8 @@ export const EMPTY_HISTORY: HistoryData = {
   partial: false,
 };
 
-export const historyKeyOf = (repoOnly: boolean): string => (repoOnly ? "repo" : "all");
+/** `sync`: a sync folder is set, so the figures also carry the all-computers merge (never for one repo). */
+export const historyKeyOf = (repoOnly: boolean, sync = false): string => (repoOnly ? "repo" : sync ? "all+sync" : "all");
 
 const tokenSum = (m: Money): number => m.tokens.input + m.tokens.output + m.tokens.cacheRead + m.tokens.cw5m + m.tokens.cw1h;
 const amount = (m: Money): Amount => ({ usd: m.usd, tokens: tokenSum(m) });

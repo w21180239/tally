@@ -30,7 +30,7 @@ export type KeyCtx = {
   evidence?: boolean;
   /** A hint can be adopted with `y`. */
   adopt?: boolean;
-  /** Totals of other machines exist (`syncDir` set): `t` switches this machine and all. */
+  /** Totals of other computers exist (`syncDir` set): `t` switches this computer and all. */
   machines?: boolean;
 };
 
@@ -47,7 +47,7 @@ export function keyLine(tab: TabId, ctx: KeyCtx = {}): string[] {
   const keys = ["0-5 switch tab"];
   if (spansOf(tab).length > 0) keys.push("s time span");
   if (hasRepoSwitch(tab)) keys.push("r repo filter");
-  if (ctx.machines === true && (tab === "usage" || tab === "history" || tab === "hints")) keys.push("t machines");
+  if (ctx.machines === true && (tab === "history" || tab === "hints")) keys.push("t computers");
   if (ctx.agents === true) keys.push("a agent list", "p/n prev/next");
   if (ctx.canView === true) keys.push("v open agent");
   if (ctx.canFull === true) keys.push("v full text");
