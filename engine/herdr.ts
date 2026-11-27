@@ -1,9 +1,9 @@
-// Installs or removes the Herdr.app sidebar mod (herdr/main.js) under Herdr's mods folder.
+// Keeps the tally sidebar mod (herdr/main.js) in Herdr's mods folder in step with the herdrSidebar setting.
 import { configDir, joinPath } from "../core/path.ts";
 import { herdrRootDir } from "../core/herdr.ts";
 import { platformOf, readEnv } from "./locate.ts";
 
-/** Hidden file that marks `mods/tally` as ours: a folder without it is never written or deleted. */
+/** Ownership tag inside `mods/tally`; tally leaves a folder that lacks it alone. */
 export const MARKER = ".tally-plugin";
 /** Hidden file naming the folder that holds the report snapshots; hidden files do not make Herdr reload the mod. */
 export const SOURCE = ".tally-source.json";
@@ -82,19 +82,23 @@ export async function syncHerdr($: Host, settings: { herdrSidebar: boolean }): P
   const mod = await fromTemplate($, "mod.json");
   if (main === undefined || mod === undefined) return "no-template";
   const source = `${JSON.stringify({ reports: joinPath(configDir(get), "tally") })}\n`;
-  // Marker first, main.js last: Herdr reloads on a visible file, so by then the folder is complete.
+  // Order matters: Herdr watches the visible files, so main.js goes in after everything it needs.
   const changed = [await put($, marker, "tally\n"), await put($, joinPath(dir, SOURCE), source), await put($, joinPath(dir, "mod.json"), mod), await put($, joinPath(dir, "main.js"), main)];
   return changed.some(Boolean) ? "written" : "current";
 }
 
 // $.fs cannot delete, so the folder goes through the CLI's process API; without it, or if that fails, the mod is blanked in place.
 async function removeMod($: Host, dir: string, platform: string, marker: string): Promise<HerdrResult> {
-  const argv = platform === "win32" ? ["cmd", "/c", "rmdir", "/s", "/q", dir] : ["rm", "-rf", dir];
-  try {
-    const r = await $.process.run(argv);
-    if (r.exitCode === 0) return "removed";
-  } catch {
-    /* no process API here: fall through to the stub */
+  // cmd.exe re-parses its command line, so a path holding any of these could run text or expand a variable.
+  const shellUnsafe = platform === "win32" && /[&|<>^%"!()]/.test(dir);
+  if (!shellUnsafe) {
+    const argv = platform === "win32" ? ["cmd", "/c", "rmdir", "/s", "/q", dir] : ["rm", "-rf", dir];
+    try {
+      const r = await $.process.run(argv);
+      if (r.exitCode === 0) return "removed";
+    } catch {
+      /* no process API here: fall through to the stub */
+    }
   }
   await put($, joinPath(dir, "main.js"), STUB_MAIN);
   await put($, joinPath(dir, "mod.json"), STUB_MOD);

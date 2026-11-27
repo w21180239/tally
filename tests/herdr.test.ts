@@ -165,6 +165,17 @@ describe("syncHerdr off", () => {
     expect(runs).toEqual([["cmd", "/c", "rmdir", "/s", "/q", "C:/A/herdr-app/mods/tally"]]);
   });
 
+  test("a Windows path cmd.exe would re-parse is never passed to it", async () => {
+    const w = worldOf();
+    const mod = "C:/Users/a&b/AppData/Roaming/herdr-app/mods/tally";
+    w.put(`${mod}/${MARKER}`, "");
+    w.put(`${mod}/main.js`, MAIN_SRC);
+    const { $, runs } = session(w, { platform: "windows", env: { HOME: undefined, APPDATA: "C:/Users/a&b/AppData/Roaming" } });
+    expect(await syncHerdr($, OFF)).toBe("disabled");
+    expect(runs).toEqual([]);
+    expect(w.text(`${mod}/main.js`)).toBe(STUB_MAIN);
+  });
+
   test("a folder without the marker is not deleted", async () => {
     const w = world();
     w.put(`${MOD}/main.js`, "// theirs");

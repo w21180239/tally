@@ -98,7 +98,7 @@ function promptText(span, view) {
 }
 
 // exec has no stdin, so the text rides in as $0 and a one-line shell pipes it to each candidate in turn.
-const CLIPBOARDS = [["wl-copy"], ["xclip", "-selection", "clipboard"], ["pbcopy"]];
+const CLIPBOARDS = [["pbcopy"], ["xclip", "-selection", "clipboard"], ["wl-copy"]];
 
 async function putOnClipboard(text) {
   for (const argv of CLIPBOARDS) {
@@ -111,69 +111,91 @@ async function putOnClipboard(text) {
   if (!w || w.code !== 0) throw Error("nothing to copy with was found");
 }
 
-// The theme colours under the names used below.
+// Theme slots under the names used below.
 const palette = (t) => ({ page: t.background, ink: t.foreground, muted: t.dim, line: t.border, card: t.raised, over: t.hover, ring: t.accent });
 
-// Drawing helpers; each takes the palette `p`.
-function chip(id, label, on, p, onPress) {
-  const bg = on ? p.card : p.page;
-  const el = div();
-  return el.id(id).bg(bg).rounded(4).py(2).px(7).text_size(10.5).text_color(on ? p.ink : p.muted).cursor_pointer()
-    .on_click((_ev, ctx) => onPress(ctx))
-    .hover((s) => s.bg(p.over))
-    .child(label);
+// Key bindings: each row is the keys that trigger it and the method of Tally it calls.
+const BINDINGS = [
+  { keys: ["1"], run: (v, c) => v.pick("24h", c) },
+  { keys: ["2"], run: (v, c) => v.pick("30d", c) },
+  { keys: ["u"], run: (v, c) => v.reload(c) },
+  { keys: ["y"], run: (v, c) => v.sendToClipboard(c) },
+];
+const ARROWS = ["left", "right", "up", "down"];
+
+// A pressed key as one token: the typed character when there is one, else the key name.
+const tokenOf = (ev) => ev.key_char || ev.key;
+
+// Herdr sends "focus" when pane.go lands on a focusable mod; each one grabs the keyboard for `handle`.
+function followFocusRequests(handle, ctx) {
+  ctx.spawn(async (c) => {
+    for (let cmd = await herdr.nextCommand(); ; cmd = await herdr.nextCommand()) {
+      if (cmd !== "focus") continue;
+      handle.focus();
+      c.notify();
+    }
+  });
 }
 
-function heading(text, p) {
-  return div().text_size(10.5).text_color(p.muted).child(text);
+// A clickable label; `hint` is the key, drawn only while the sidebar owns the keyboard.
+function control(p, { id, label, hint, solid, onPress }) {
+  const face = div().id(id).rounded(4).py(2).px(7).text_size(10.5).cursor_pointer();
+  return face.bg(solid ? p.card : p.page).text_color(solid ? p.ink : p.muted)
+    .hover((st) => st.bg(p.over))
+    .on_click((_ev, c) => onPress(c))
+    .child(label)
+    .child(hint ? div().text_color(p.muted).child(` ${hint}`) : div());
 }
 
-function ranking(title, rows, p) {
-  let box = column().gap(2).child(heading(title, p));
-  for (const r of rows) box = box.child(row().gap(6).child(div().flex_1().child(r.name)).child(div().text_color(p.muted).child(money(r.usd))));
-  return box;
+// Only `.child` is relied on from the builder, so lists are folded in with it.
+const fill = (box, items) => items.reduce((acc, item) => acc.child(item), box);
+
+const spacer = () => div().flex_1();
+const strong = (text) => div().font_semibold().child(text);
+
+const caption = (p, text) => div().text_color(p.muted).text_size(10.5).child(text);
+
+function rankBlock(p, title, rows) {
+  const lines = rows.map((r) => row().gap(6).child(div().child(r.name).flex_1()).child(div().text_color(p.muted).child(money(r.usd))));
+  return fill(column().gap(2).child(caption(p, title)), lines);
 }
 
-function hintCard(h, p) {
-  let box = column().gap(3).p(8).rounded(6).bg(p.card)
-    .child(row().gap(6).child(div().flex_1().font_semibold().child(h.title)).child(div().text_color(p.muted).child(h.usd === null ? "" : money(h.usd))));
-  if (h.why) box = box.child(div().text_size(11).child(h.why));
-  if (h.todo) box = box.child(div().text_size(11).text_color(p.muted).child(`Do: ${h.todo}`));
-  return box;
+function hintBlock(p, h) {
+  const parts = [row().gap(6).child(strong(h.title).flex_1()).child(div().text_color(p.muted).child(h.usd === null ? "" : money(h.usd)))];
+  if (h.why) parts.push(div().text_size(11).child(h.why));
+  if (h.todo) parts.push(div().text_size(11).text_color(p.muted).child(`Do: ${h.todo}`));
+  return fill(column().gap(3).p(8).rounded(6).bg(p.card), parts);
 }
 
-function bodyOf(snap, view, p) {
-  let box = column().id("tally-body").gap(12).p(10).flex_1().overflow_y_scrollbar().min_h(0);
-  if (!snap) return box.child(div().text_color(p.muted).child("Reading the report..."));
-  if (!view) return box.child(div().text_color(p.muted).child(snap.error));
-  if (view.total !== null) {
-    const bits = [view.requests === null ? null : `${view.requests} requests`, view.main === null ? null : `main ${money(view.main)}`, view.sub === null ? null : `sub-agents ${money(view.sub)}`];
-    box = box.child(column().gap(2)
-      .child(div().text_size(20).font_semibold().child(money(view.total)))
-      .child(div().text_size(10.5).text_color(p.muted).child(bits.filter((b) => b !== null).join(", "))));
-  }
-  if (view.models.length > 0) box = box.child(ranking("Top models", view.models, p));
-  if (view.repos.length > 0) box = box.child(ranking("Top repos", view.repos, p));
-  if (view.hints.length === 0) return box.child(div().text_color(p.muted).child("No hints for this span."));
-  let cards = column().gap(6).child(heading(`Hints (${view.hints.length})`, p));
-  for (const h of view.hints) cards = cards.child(hintCard(h, p));
-  return box.child(cards);
+function totalsBlock(p, view) {
+  const facts = [];
+  if (view.requests !== null) facts.push(`${view.requests} requests`);
+  if (view.main !== null) facts.push(`main ${money(view.main)}`);
+  if (view.sub !== null) facts.push(`sub-agents ${money(view.sub)}`);
+  return column().gap(2).child(div().text_size(20).font_semibold().child(money(view.total))).child(caption(p, facts.join(", ")));
+}
+
+// Scrolling content: a status line, or the sections of the report that exist.
+function bodyPanel(p, snap, view) {
+  const panel = column().id("tally-body").gap(12).p(10).overflow_y_scrollbar().flex_1().min_h(0);
+  if (!snap) return panel.child(caption(p, "Reading the report..."));
+  if (!view) return panel.child(caption(p, snap.error));
+  const sections = [];
+  if (view.total !== null) sections.push(totalsBlock(p, view));
+  if (view.models.length > 0) sections.push(rankBlock(p, "Top models", view.models));
+  if (view.repos.length > 0) sections.push(rankBlock(p, "Top repos", view.repos));
+  if (view.hints.length === 0) sections.push(caption(p, "No hints for this span."));
+  else sections.push(fill(column().gap(6).child(caption(p, `Hints (${view.hints.length})`)), view.hints.map((h) => hintBlock(p, h))));
+  return fill(panel, sections);
 }
 
 export default class Tally extends kit.View {
   init(_props, ctx) {
-    this.span = localStorage.getItem("span") === "30d" ? "30d" : "24h";
-    // span -> what loadSpan returned; empty until the first read lands.
-    this.snaps = {};
-    this.note = null;
-    this.anchor = ctx.focus_handle();
-    ctx.spawn(async (c) => {
-      while (true) {
-        if ((await herdr.nextCommand()) !== "focus") continue;
-        this.anchor.focus();
-        c.notify();
-      }
-    });
+    this.span = localStorage.getItem("tally.span") === "30d" ? "30d" : "24h";
+    this.snaps = {}; // span -> loadSpan result; empty until the first read lands
+    this.note = null; // { text, until } shown in place of the age line
+    this.keys = ctx.focus_handle();
+    followFocusRequests(this.keys, ctx);
     ctx.timer.every(READ_MS, (c) => this.reload(c));
     this.reload(ctx);
   }
@@ -188,7 +210,7 @@ export default class Tally extends kit.View {
   pick(span, ctx) {
     if (span === this.span) return;
     this.span = span;
-    localStorage.setItem("span", span);
+    localStorage.setItem("tally.span", span);
     ctx.notify();
   }
 
@@ -207,54 +229,53 @@ export default class Tally extends kit.View {
       } catch (err) {
         text = String((err && err.message) || err);
       }
-      const note = { text, until: Date.now() + NOTE_MS };
-      this.note = note;
+      this.note = { text, until: Date.now() + NOTE_MS };
       c.notify();
       c.timer.after(NOTE_MS + 50, (c2) => c2.notify());
     });
   }
 
   handleKey(ev, ctx) {
-    if (["platform", "control", "alt"].some((m) => ev.modifiers && ev.modifiers[m])) return;
-    const key = ev.key_char || ev.key;
-    const actions = {
-      s: () => this.pick(this.span === "24h" ? "30d" : "24h", ctx),
-      r: () => this.reload(ctx),
-      c: () => this.sendToClipboard(ctx),
-    };
-    let act = actions[key];
-    if (["left", "right", "up", "down"].includes(ev.key)) act = () => herdr.run("pane.go", { direction: ev.key });
-    if (!act) return;
+    const m = ev.modifiers;
+    if (m && (m.control || m.alt || m.platform)) return;
+    const token = tokenOf(ev);
+    if (ARROWS.includes(ev.key)) {
+      ctx.stop_propagation();
+      herdr.run("pane.go", { direction: ev.key });
+      return;
+    }
+    const bound = BINDINGS.find((b) => b.keys.includes(token));
+    if (!bound) return;
     ctx.stop_propagation();
-    act();
+    bound.run(this, ctx);
   }
 
-  render(ctx) {
+  render(_ctx) {
     const p = palette(herdr.theme());
-    const focused = this.anchor.is_focused();
+    const owned = this.keys.is_focused();
     const view = this.view();
     const canCopy = view !== null && view.hints.length > 0;
-    const live = this.note && Date.now() < this.note.until ? this.note.text : null;
-    const withKey = (label, k) => (focused ? `${label} [${k}]` : label);
+    const age = view ? agoText(view.at, Date.now()) : "";
+    const flash = this.note && Date.now() < this.note.until ? this.note.text : null;
+    const hintOf = (k) => (owned ? `[${k}]` : "");
 
-    let top = row().items_center().gap(4).border_b(1).border_color(p.line).px(10).h(34).flex_none()
-      .child(div().px(4).font_semibold().child("Tally"));
-    for (const span of SPANS) top = top.child(chip(`span-${span}`, span, span === this.span, p, (c) => this.pick(span, c)));
-    top = top.child(div().flex_1());
-    top = top.child(chip("reload", withKey("Refresh", "r"), false, p, (c) => this.reload(c)));
+    const title = row().h(34).px(10).gap(8).border_b(1).border_color(p.line).items_center().flex_none()
+      .child(strong("Tally"))
+      .child(spacer())
+      .child(caption(p, flash || age));
 
-    let shell = column().id("tally").track_focus(this.anchor).on_key_down((ev, c) => this.handleKey(ev, c))
-      .bg(p.page).text_color(p.ink).text_size(12).size_full().overflow_hidden().min_h(0)
-      .border_1().border_color(focused ? p.ring : p.page)
-      .child(top);
+    const tabs = fill(row().gap(4).items_center().py(6).px(10).flex_none(),
+      SPANS.map((span, i) => control(p, { id: `span-${span}`, label: span, hint: hintOf(i + 1), solid: span === this.span, onPress: (c) => this.pick(span, c) })));
 
-    const ago = view ? agoText(view.at, Date.now()) : "";
-    if (canCopy || ago) {
-      let strip = row().items_center().gap(8).py(6).px(10).border_b(1).border_color(p.line).flex_none();
-      if (canCopy) strip = strip.child(chip("copy", withKey("Copy as prompt", "c"), false, p, (c) => this.sendToClipboard(c)));
-      strip = strip.child(div().text_size(10.5).text_color(p.muted).child(live || ago));
-      shell = shell.child(strip);
-    }
-    return shell.child(bodyOf(this.snaps[this.span], view, p));
+    const actions = row().gap(6).items_center().py(6).px(10).border_t(1).flex_none().border_color(p.line)
+      .child(control(p, { id: "reload", label: "Refresh", hint: hintOf("u"), solid: false, onPress: (c) => this.reload(c) }));
+    const withCopy = canCopy
+      ? actions.child(control(p, { id: "copy", label: "Copy as prompt", hint: hintOf("y"), solid: true, onPress: (c) => this.sendToClipboard(c) }))
+      : actions;
+
+    const shell = column().id("tally").track_focus(this.keys).on_key_down((ev, c) => this.handleKey(ev, c))
+      .bg(p.page).text_color(p.ink).text_size(12).overflow_hidden().size_full().min_h(0)
+      .border_1().border_color(owned ? p.ring : p.page);
+    return fill(shell, [title, tabs, bodyPanel(p, this.snaps[this.span], view), withCopy]);
   }
 }
