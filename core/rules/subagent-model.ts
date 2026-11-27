@@ -1,13 +1,12 @@
 import type { Evidence, HintRule } from "../hint.ts";
 import { resolvePrice } from "../pricing.ts";
 import type { Summary } from "../summary.ts";
-import { LISTED, pricedTokens as priced, shortModel, usdText } from "./shared.ts";
+import { FLAGSHIP, LISTED, pricedTokens as priced, shortModel, usdText } from "./shared.ts";
 
 const LOOKING: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch", "bash"]);
 // Tools that cannot change anything; a shell can, so a type that runs one fires but is not high confidence.
 const READ_ONLY: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch"]);
 const HANDBACK: ReadonlySet<string> = new Set(["subagenthandback", "structuredoutput"]);
-const BIG = /(opus|fable)/i;
 
 // A type is high confidence when all of these hold, so a cheaper model can be expected to cope with its work.
 const MAX_AVG_OUTPUT = 2000;
@@ -47,7 +46,7 @@ export const subagentModel: HintRule = {
     for (const [type, byModel] of Object.entries(summary.bySubType)) {
       if (type === "unknown") continue;
       for (const [model, m] of Object.entries(byModel)) {
-        if (!BIG.test(model)) continue;
+        if (!FLAGSHIP.test(model)) continue;
         const tools = Object.keys(m.tools).map((n) => n.toLowerCase()).filter((n) => !HANDBACK.has(n));
         // A type that called no tools passes this check vacuously, which is intended.
         if (!tools.every((n) => LOOKING.has(n))) continue;

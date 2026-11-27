@@ -87,6 +87,25 @@ describe("parsePricing", () => {
     expect("error" in parsePricing(md)).toBe(true);
   });
 
+  test("columns are found by header name, so a reordered table parses the same", () => {
+    const reordered = PRICING_MD.split("\n")
+      .map((l) => {
+        if (!/^\| (Model|Claude) /.test(l)) return l;
+        const c = l.replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map((s) => s.trim());
+        if (c.length !== 6) return l;
+        const [n, a, b, cc, d, e] = c;
+        return `| ${[n, e, a, d, cc, b].join(" | ")} |`;
+      })
+      .join("\n");
+    expect(reordered).not.toBe(PRICING_MD);
+    expect(parsed(reordered).models).toEqual(BUILTIN_PRICES.models);
+  });
+
+  test("a table without a recognisable header row is an error", () => {
+    const md = PRICING_MD.replace("| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |", "| Model | A | B | C | D | E |");
+    expect("error" in parsePricing(md)).toBe(true);
+  });
+
   test("a row with a missing price cell is skipped", () => {
     const md = PRICING_MD.replace("| Claude Opus 4.5 | $5 / MTok | $6.25 / MTok | $10 / MTok | $0.50 / MTok | $25 / MTok |", "| Claude Opus 4.5 | soon | $6.25 / MTok | $10 / MTok | $0.50 / MTok | $25 / MTok |");
     expect(Object.keys(parsed(md).models)).not.toContain("claude-opus-4-5");
@@ -127,6 +146,19 @@ describe("acceptable", () => {
     expect(acceptable(u, BUILTIN_PRICES)).toBe(false);
   });
 
+  test("a model whose cache read and output are swapped is rejected", () => {
+    const t = parsed(PRICING_MD);
+    const m = t.models["claude-opus-5"];
+    t.models["claude-opus-5"] = { ...m, cacheRead: m.output, output: m.cacheRead };
+    expect(acceptable(t, BUILTIN_PRICES)).toBe(false);
+  });
+
+  test("a model whose 1h cache write is not 2x input is rejected", () => {
+    const t = parsed(PRICING_MD);
+    t.models["claude-opus-5"] = { ...t.models["claude-opus-5"], cw1h: 7 };
+    expect(acceptable(t, BUILTIN_PRICES)).toBe(false);
+  });
+
   test("a bad fast multiplier is rejected", () => {
     expect(acceptable({ ...parsed(PRICING_MD), fastMul: 0 }, BUILTIN_PRICES)).toBe(false);
   });
@@ -158,6 +190,15 @@ describe("maybeUpdatePrices", () => {
     expect(t.models).toEqual(BUILTIN_PRICES.models);
     expect(w.stored.get(PRICES_KEY)).toEqual(t);
     expect(w.stored.has(PRICE_ERROR_KEY)).toBe(false);
+  });
+
+  test("a fetched table is merged over the builtin: a model the page dropped keeps its builtin price", async () => {
+    const md = PRICING_MD.split("\n").filter((l) => !l.startsWith("| Claude Opus 4.5 |")).join("\n");
+    const { $ } = netWorld(() => okMd(md));
+    const t = await maybeUpdatePrices($, ON);
+    expect(parsed(md).models["claude-opus-4-5"]).toBeUndefined();
+    expect(t.source).toBe("fetched");
+    expect(t.models["claude-opus-4-5"]).toEqual(BUILTIN_PRICES.models["claude-opus-4-5"]);
   });
 
   test("a table fetched less than 7 days ago is not refetched", async () => {

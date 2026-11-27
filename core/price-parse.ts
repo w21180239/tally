@@ -33,6 +33,23 @@ function section(lines: string[], head: string): string[] | null {
   return out;
 }
 
+type Cols = { input: number; cw5m: number; cw1h: number; cacheRead: number; output: number };
+
+// Column positions of the first table row whose cells name all five price kinds.
+function columnsOf(body: string[]): Cols | null {
+  for (const line of body) {
+    if (!line.trim().startsWith("|")) continue;
+    const found: Partial<Cols> = {};
+    cells(line).forEach((cell, i) => {
+      const t = cell.toLowerCase();
+      const kind: keyof Cols | null = /\b5\s*m\b/.test(t) ? "cw5m" : /\b1\s*h\b/.test(t) ? "cw1h" : /hit|read|refresh/.test(t) ? "cacheRead" : /\binput\b/.test(t) ? "input" : /\boutput\b/.test(t) ? "output" : null;
+      if (kind && found[kind] === undefined) found[kind] = i;
+    });
+    if (found.input !== undefined && found.cw5m !== undefined && found.cw1h !== undefined && found.cacheRead !== undefined && found.output !== undefined) return found as Cols;
+  }
+  return null;
+}
+
 type Row = { input: number; cw5m: number; cw1h: number; cacheRead: number; output: number };
 type Tier = { threshold: number; row: Row };
 
@@ -40,6 +57,9 @@ export function parsePricing(md: string, now = 0): PriceTable | { error: string 
   const lines = md.split(/\r?\n/);
   const body = section(lines, "## Model pricing");
   if (!body) return { error: "model pricing section not found" };
+
+  const cols = columnsOf(body);
+  if (!cols) return { error: "model pricing table header not recognised" };
 
   const base = new Map<string, Row>();
   const tiers = new Map<string, Tier>();
@@ -49,8 +69,8 @@ export function parsePricing(md: string, now = 0): PriceTable | { error: string 
     const c = cells(line);
     const name = NAME.exec(c[0] ?? "");
     if (!name) continue;
-    const p = c.slice(1, 6).map(price);
-    if (p.length < 5 || p.some((v) => v === null)) continue;
+    const p = [cols.input, cols.cw5m, cols.cw1h, cols.cacheRead, cols.output].map((i) => price(c[i]));
+    if (p.some((v) => v === null)) continue;
     const [input, cw5m, cw1h, cacheRead, output] = p as number[];
     const row: Row = { input, cw5m, cw1h, cacheRead, output };
     const id = idOf(name[1], name[2]);
@@ -101,12 +121,13 @@ export function parsePricing(md: string, now = 0): PriceTable | { error: string 
 
 const positive = (n: number): boolean => Number.isFinite(n) && n > 0;
 
-// A fetched table replaces `prev` only if it keeps at least 80% of its models and every model is well-formed.
+// A fetched table replaces `prev` only if it keeps at least 80% of its models and every model is well-formed:
+// cache read < input < output, 5m write 1.25x and 1h write 2x input.
 export function acceptable(next: PriceTable, prev: PriceTable): boolean {
   const n = Object.keys(next.models).length;
   if (n === 0 || n * 10 < Object.keys(prev.models).length * 8) return false;
   if (!positive(next.fastMul)) return false;
   return Object.values(next.models).every(
-    (m) => [m.input, m.output, m.cacheRead, m.cw5m, m.cw1h].every(positive) && close(m.cw5m, 1.25 * m.input),
+    (m) => [m.input, m.output, m.cacheRead, m.cw5m, m.cw1h].every(positive) && m.cacheRead < m.input && m.input < m.output && close(m.cw5m, 1.25 * m.input) && close(m.cw1h, 2 * m.input),
   );
 }

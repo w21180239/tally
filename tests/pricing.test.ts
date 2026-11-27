@@ -44,6 +44,23 @@ describe("resolvePrice", () => {
     expect(resolvePrice("claude-haiku-4-5-20251001", BUILTIN_PRICES)!.price.output).toBe(5);
     expect(resolvePrice("claude-opus-4-20250514", BUILTIN_PRICES)!.price.input).toBe(15);
   });
+  test("Bedrock, Vertex and version-suffixed ids resolve to the exact price", () => {
+    const forms: Array<[string, number]> = [
+      ["us.anthropic.claude-sonnet-4-5-20250929-v1:0", 3],
+      ["anthropic.claude-opus-4-1-20250805-v1:0", 15],
+      ["eu.anthropic.claude-haiku-4-5-20251001-v1:0", 1],
+      ["global.anthropic.claude-opus-4-5-20251101-v1:0[1m]", 5],
+      ["claude-opus-4-5@20251101", 5],
+      ["claude-sonnet-4-5-v2", 3],
+      ["claude-sonnet-4-5-v1:0", 3],
+      ["claude-opus-4-5-20251101[1m]", 5],
+    ];
+    const got = forms.map(([id]) => {
+      const r = resolvePrice(id, BUILTIN_PRICES);
+      return [id, r?.exact === true ? r.price.input : null];
+    });
+    expect(got).toEqual(forms);
+  });
   test("unknown version falls back to newest in family", () => {
     const r = resolvePrice("claude-opus-9-9", BUILTIN_PRICES)!;
     expect(r.exact).toBe(false);

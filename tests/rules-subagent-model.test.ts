@@ -157,3 +157,11 @@ describe("subagent-model confidence", () => {
     expect(run({ model: SONNET, tools: { Read: 1 } })).toEqual([]);
   });
 });
+
+describe("subagent-model families", () => {
+  test("a Mythos sub-agent type is flagship like Opus and Fable", () => {
+    const h = one(run({ model: "claude-mythos-5-2" }));
+    expect(h.usd).toBeGreaterThan(0);
+    expect(h.evidence[0]!.detail).toContain("mythos-5-2");
+  });
+});

@@ -362,6 +362,10 @@ describe("main-model-overkill", () => {
     expect(only(fire("main-model-overkill", tools(100, 61, 3))).usd).toBe(1);
     expect(fire("main-model-overkill", tools(100, 61, 2.99))).toEqual([]);
   });
+  test("a Mythos model counts as flagship", () => {
+    const h = only(fire("main-model-overkill", tools(100, 61, 4, "claude-mythos-5-2")));
+    expect(h.summary).toContain("opus, fable and mythos models");
+  });
   test("opus and fable pool their turns; a model already cheaper than sonnet and an unpriceable one add nothing", () => {
     const h = only(
       fire("main-model-overkill", {

@@ -18,9 +18,16 @@ export type PriceTable = {
 
 const FAMILIES = ["opus", "sonnet", "haiku", "fable", "mythos"];
 
-// "claude-opus-4-5-20251101[1m]" -> { family: "opus", version: [4, 5] }
+// "claude-opus-4-5-20251101[1m]" -> { family: "opus", version: [4, 5] }. Also reads Bedrock
+// ("us.anthropic.claude-sonnet-4-5-20250929-v1:0") and Vertex ("claude-opus-4-5@20251101") forms.
 function parseId(model: string): { key: string; family: string; version: number[] } | null {
-  const id = model.toLowerCase().replace(/\[[^\]]*\]$/, "").replace(/-\d{8}$/, "");
+  const id = model
+    .toLowerCase()
+    .replace(/\[[^\]]*\]$/, "")
+    .replace(/^.*?(?=claude-)/, "")
+    .replace(/@\d+$/, "")
+    .replace(/-v\d+(:\d+)?$/, "")
+    .replace(/-\d{8}$/, "");
   if (!id.startsWith("claude-")) return null;
   const parts = id.split("-");
   const family = parts.find((s) => FAMILIES.includes(s));

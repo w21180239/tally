@@ -11,6 +11,8 @@ import type { UsageDetail } from "../usage-detail.ts";
 export const DEFAULT_WINDOW = 1_000_000;
 /** Evidence rows a rule lists per list: the costliest few. */
 export const LISTED = 5;
+/** Top-tier model families: the ones priced well above Sonnet. */
+export const FLAGSHIP = /(opus|fable|mythos)/i;
 
 export const usdText = (usd: number): string => `$${usd.toFixed(2)}`;
 export const percentText = (share: number): string => `${Math.round(share * 100)}%`;
