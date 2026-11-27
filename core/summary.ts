@@ -103,7 +103,7 @@ function slot<V>(rec: Record<string, V>, key: string, make: () => V): V {
 
 type Row = { r: UsageRow; usd: number; repo: string };
 
-const repoFor = (r: UsageRow): string => (r.cwd ? repoOf(r.cwd) || UNKNOWN_REPO : UNKNOWN_REPO);
+export const repoFor = (r: UsageRow): string => (r.cwd ? repoOf(r.cwd) || UNKNOWN_REPO : UNKNOWN_REPO);
 
 export function summarize(shards: Shard[], prices: PriceTable, opts: SummaryOpts): Summary {
   return drain(summarySteps(shards, prices, opts));

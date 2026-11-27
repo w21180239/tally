@@ -35,10 +35,11 @@ export const blank = (t: Table, key: string): RenderElement => {
   return <Text key={`gap-${key}`}> </Text>;
 };
 
-export type Line = { key: string; label: string; amount: string; share?: number | null; quiet?: boolean };
+/** `onPress` makes the label a button that opens what is behind the row. */
+export type Line = { key: string; label: string; amount: string; share?: number | null; quiet?: boolean; onPress?: () => void };
 
 export function amountRow(t: Table, l: Line): RenderElement {
-  const { Box, Text, Svg } = t;
+  const { Box, Text, Button, Svg } = t;
   const share = l.share ?? null;
   const bar =
     share === null ? null : Svg === null ? (
@@ -49,9 +50,15 @@ export function amountRow(t: Table, l: Line): RenderElement {
   return (
     <Box key={l.key} flexDirection="row" columnGap={1}>
       <Box flexGrow={1} flexShrink={1}>
-        <Text wrap="truncate-end" dimColor={l.quiet === true}>
-          {l.label}
-        </Text>
+        {l.onPress === undefined ? (
+          <Text wrap="truncate-end" dimColor={l.quiet === true}>
+            {l.label}
+          </Text>
+        ) : (
+          <Button key={`open-${l.key}`} plain dimColor={l.quiet === true} onPress={l.onPress}>
+            {l.label}
+          </Button>
+        )}
       </Box>
       <Box width={AMOUNT_CELLS} flexShrink={0} justifyContent="flex-end">
         <Text dimColor={l.quiet === true}>{l.amount}</Text>

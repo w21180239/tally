@@ -7,6 +7,7 @@ import type { Span } from "../core/summary.ts";
 import { readAgentStates, readContext, wantContext } from "../engine/context-view.ts";
 import { readSession } from "../engine/session-view.ts";
 import { loadTranscript, needsTranscript, readTranscripts } from "../engine/subagent-transcript.ts";
+import { readHistory, readScanView, wantHistory } from "../engine/history-view.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
 import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setCtxAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, setTranscript, showTab, toggleShown } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
@@ -19,6 +20,7 @@ import { layoutOf } from "./layout.ts";
 import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
 import type { KeyCtx } from "./keys.ts";
 import { drawContext } from "./tabs/context.tsx";
+import { drawHistory } from "./tabs/history.tsx";
 import { drawSession } from "./tabs/session.tsx";
 import { drawUsage } from "./tabs/usage.tsx";
 import { tableOf } from "./table.ts";
@@ -34,8 +36,7 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
 
 // Until each tab has its own body: one dim line saying what it will hold.
-const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage" | "context">, string> = {
-  history: "Spend over the last 30 days.",
+const PLACEHOLDER: Record<Exclude<TabId, "session" | "usage" | "context" | "history">, string> = {
   hints: "Ways to spend less.",
   help: "Keys, prices and settings.",
 };
@@ -233,10 +234,25 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     });
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
+  } else if (tab === "history") {
+    const [data, scan] = await Promise.all([readHistory($), readScanView($)]);
+    // Stale figures, or a scan not looked at lately, are handled off the draw; the tab shows what it has meanwhile.
+    wantHistory($, data, scan, { repoOnly: view.repoOnly }, d.now);
+    const drawn = drawHistory(t, {
+      d,
+      data,
+      scan: scan.scan,
+      repoOnly: view.repoOnly,
+      view: { more: view.more, shown: view.shown },
+      onMore: (more) => attempt($, () => setMore($, more)),
+      onShown: (key) => attempt($, () => toggleShown($, key)),
+    });
+    tabRows = drawn.rows;
+    Object.assign(ctx, drawn.ctx);
   } else {
     tabRows = [
       <Text key="placeholder" dimColor wrap="truncate-end">
-        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage" | "context">]}
+        {PLACEHOLDER[tab as Exclude<TabId, "session" | "usage" | "context" | "history">]}
       </Text>,
     ];
   }

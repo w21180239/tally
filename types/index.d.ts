@@ -1,5 +1,5 @@
 // The values tally keeps in `$.state`, as the engine's plugin contract.
-// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts, SessionData in engine/session-view.ts, UsageData in engine/usage-view.ts, ContextData in core/context.ts, AgentStates in engine/context-view.ts, Transcripts in engine/subagent-transcript.ts; keep them in step.
+// Mirrors LiveState in core/live-state.ts, ViewState in engine/window.ts, Foot and Chart in view/data.ts, SessionData in engine/session-view.ts, UsageData in engine/usage-view.ts, HistoryData in core/history.ts, ScanView in engine/history-view.ts, ContextData in core/context.ts, AgentStates in engine/context-view.ts, Transcripts in engine/subagent-transcript.ts; keep them in step.
 
 export interface TallyTokens {
   input: number;
@@ -105,6 +105,40 @@ export interface TallyUsage {
   failure?: { key: string; why: string };
 }
 
+export interface TallyHistoryAmount {
+  usd: number;
+  tokens: number;
+}
+
+export interface TallyHistory {
+  key: string;
+  at: number;
+  repo: string;
+  requests: number;
+  total: TallyHistoryAmount;
+  kinds: Array<{ kind: "input" | "output" | "cacheRead" | "cacheWrite"; usd: number; tokens: number }>;
+  days: Array<{ day: string; usd: number; tokens: number; requests: number }>;
+  models: Array<{ name: string; usd: number; tokens: number }>;
+  main: TallyHistoryAmount;
+  sub: TallyHistoryAmount;
+  subTypes: Array<{ type: string; model: string; usd: number; requests: number }>;
+  repos: Array<{ name: string; usd: number }>;
+  sessions: Array<{ sessionId: string; repo: string; title?: string; pr?: string; started: number; usd: number; resume: string }>;
+  fill: Array<{ tool: string; tokens: number }>;
+  mcp: Array<{ server: string; usd: number; schemaUsd: number; resultUsd: number; calls: number }>;
+  mcpProxy: boolean;
+  mcpMissing: number;
+  unpriced: string[];
+  unread: number;
+  partial: boolean;
+  failure?: { key: string; why: string; at: number };
+}
+
+export interface TallyHistoryScan {
+  at: number;
+  scan: { percent: number | null } | null;
+}
+
 export interface TallyContextRow {
   name: string;
   tokens: number;
@@ -166,6 +200,8 @@ declare module "claude-code" {
       chart: Shaped<TallyChart>;
       session: Shaped<TallySession>;
       usage: Shaped<TallyUsage>;
+      history: Shaped<TallyHistory>;
+      "history-scan": Shaped<TallyHistoryScan>;
       context: Shaped<TallyContext>;
       "context-agents": Shaped<TallyAgentStates>;
       transcripts: Shaped<TallyTranscripts>;
