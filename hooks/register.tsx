@@ -10,6 +10,7 @@ import { summaryJson } from "../engine/summary-json.ts";
 import { makeSlicer } from "../engine/slicer.ts";
 import { currentPrices } from "../engine/price-update.ts";
 import { locate } from "../engine/locate.ts";
+import { syncHerdr } from "../engine/herdr.ts";
 import { readLive, startLive, updatePrices, wireLive } from "../engine/live.ts";
 import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
 import { startSessionView } from "../engine/session-view.ts";
@@ -52,6 +53,12 @@ export const register: Register = (on, options) => {
     $.clock.after(0, () => {
       void updatePrices($, settings);
     });
+    // The Herdr sidebar mod follows the herdrSidebar setting; like the price refresh it runs off the hook's path.
+    if (e.isInteractive) {
+      $.clock.after(0, () => {
+        syncHerdr($, settings).catch(() => {});
+      });
+    }
     const sessionId = await $.session.id();
     const loc = await locate($);
     stop?.();
@@ -123,6 +130,11 @@ export const register: Register = (on, options) => {
       const done = await applySettings($, a.set);
       settings = { ...settings, ...done.applied };
       useSettings(settings);
+      if (done.applied.herdrSidebar !== undefined) {
+        $.clock.after(0, () => {
+          syncHerdr($, settings).catch(() => {});
+        });
+      }
       invalidateWindow($);
       said.push(...done.said);
       if (done.error !== undefined) return { text: `${said.length === 0 ? "" : `${said.join(", ")}; `}${done.error}` };

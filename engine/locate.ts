@@ -8,7 +8,7 @@ type Host = {
 };
 
 // Each name is its own literal call: the engine rejects a non-literal `$.env.get` argument.
-async function readEnv($: Pick<Host, "env">): Promise<EnvMap> {
+export async function readEnv($: Pick<Host, "env">): Promise<EnvMap> {
   return {
     CLAUDE_CONFIG_DIR: await $.env.get("CLAUDE_CONFIG_DIR"),
     HOME: await $.env.get("HOME"),
@@ -18,7 +18,7 @@ async function readEnv($: Pick<Host, "env">): Promise<EnvMap> {
   };
 }
 
-async function platformOf($: Pick<Host, "session">, env: EnvMap): Promise<Platform> {
+export async function platformOf($: Pick<Host, "session">, env: EnvMap): Promise<Platform> {
   try {
     const p = (await $.session.info()).platform;
     if (p === "macos") return "darwin";
