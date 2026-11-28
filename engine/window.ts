@@ -67,11 +67,13 @@ export type ViewState = {
   ctxAgent: string;
   /** Context: the chosen sub-agent's transcript is in view (`v`). */
   transcript: boolean;
+  /** A docked tab taller than the dock: the index of its first row drawn. Back to 0 whenever the tab or what it lists changes. */
+  scroll: number;
 };
 
-export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false, more: false, agent: "", listing: false, full: false, shown: [], ctxAgent: "", transcript: false };
+export const INITIAL_VIEW: ViewState = { mode: "closed", tab: "session", span: "session", repoOnly: false, machines: "this", hasSent: false, hasWarned: false, hasTipped: false, more: false, agent: "", listing: false, full: false, shown: [], ctxAgent: "", transcript: false, scroll: 0 };
 
-const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-4" });
+const viewAtom = atom({ plugin: "tally", key: "view" } as const, INITIAL_VIEW, { shape: "view-5" });
 const footAtom = atom({ plugin: "tally", key: "foot" } as const, EMPTY_FOOT, { shape: "foot-1" });
 const chartAtom = atom({ plugin: "tally", key: "chart" } as const, EMPTY_CHART, { shape: "chart-1" });
 
@@ -155,14 +157,15 @@ export async function openWindow($: EngineInterface, settings: Settings, o: Open
   // No await may come before the open: the engine links it to the press or command behind it only until the
   // first await, and an open after that counts as unasked.
   const opened = await $.ui.open({ id: PANE_ID, title: PANE_TITLE, closeOnEscape: true, columns: OPEN_COLUMNS, rows: OPEN_ROWS, ...(o.asked === true && { focus: true as const }) });
-  // Not placed means held back (a narrow terminal, or surfaces that place nothing) except `no-surface`: the pane stays open for a surface that attaches later.
-  if (!opened.isPlaced && !opened.reason.startsWith("no-surface")) {
+  // Only an unasked open on a narrow terminal is held back (`unasked below N columns ...`): the window then starts folded.
+  // Any other reason (`no-surface`, a surface that places nothing yet) leaves the pane open for one that attaches later.
+  if (!opened.isPlaced && opened.reason.startsWith("unasked")) {
     // The mode first, so the `ui.close` hook knows the close is ours.
     await changeView($, (v) => ({ ...v, mode: "folded" }));
     await $.ui.close({ id: PANE_ID });
     return;
   }
-  await changeView($, (v) => ({ ...v, mode: "open", ...(o.tab !== undefined && { tab: o.tab }), ...(o.span !== undefined && { span: o.span }) }));
+  await changeView($, (v) => ({ ...v, mode: "open", ...(o.tab !== undefined && { tab: o.tab }), ...(o.span !== undefined && { span: o.span }), ...((o.tab !== undefined || o.span !== undefined) && { scroll: 0 }) }));
   if (o.tab !== undefined) await $.store.set(TAB_KEY, o.tab);
   if (o.span !== undefined) await $.store.set(SPAN_KEY, o.span);
   // The person's open is kept: the next session opens it again.
@@ -210,6 +213,17 @@ export async function keepFolded($: EngineInterface): Promise<void> {
   await rememberFolded($);
 }
 
+/**
+ * The person's Esc with an agent list open closes the list and keeps the window: true when it did, and the caller then
+ * answers the close without `next`. Our own fold (origin plugin) always goes through.
+ */
+export async function closeListFirst($: EngineInterface, origin: string): Promise<boolean> {
+  if (origin !== "person" || !(await readView($)).listing) return false;
+  await setListing($, false);
+  redraw($);
+  return true;
+}
+
 /** The pane's fold button: the same as the person's close mark, for the screens that report no clicks on it. */
 export async function foldByHand($: EngineInterface): Promise<void> {
   await keepFolded($);
@@ -225,6 +239,9 @@ export async function restoreWindow($: EngineInterface, settings: Settings, isIn
   if (!isInteractive || settings.open === "never") return;
   if ((await $.store.get(MODE_KEY)) === "folded") {
     await changeView($, (v) => ({ ...v, mode: "folded" }));
+    // No pane opens or closes on this path, so nothing else asks the band to draw its line: ask now and once the hook is done.
+    redraw($);
+    $.clock.after(0, () => redraw($));
     return;
   }
   await openWindow($, settings);
@@ -247,17 +264,22 @@ export async function reseatView($: EngineInterface): Promise<void> {
 
 
 export async function showTab($: EngineInterface, tab: TabId): Promise<void> {
-  await changeView($, (v) => ({ ...v, tab, more: false, listing: false, shown: [], transcript: false, hasTipped: true }));
+  await changeView($, (v) => ({ ...v, tab, more: false, listing: false, shown: [], transcript: false, scroll: 0, hasTipped: true }));
   await $.store.set(TAB_KEY, tab);
 }
 
+/** Moves a docked tab's window to the row at index `scroll`. */
+export async function setScroll($: EngineInterface, scroll: number): Promise<void> {
+  await changeView($, (v) => (v.scroll === scroll ? v : { ...v, scroll }));
+}
+
 export async function setSpan($: EngineInterface, span: Span): Promise<void> {
-  await changeView($, (v) => ({ ...v, span }));
+  await changeView($, (v) => ({ ...v, span, scroll: 0 }));
   await $.store.set(SPAN_KEY, span);
 }
 
 export async function setRepoOnly($: EngineInterface, repoOnly: boolean): Promise<void> {
-  await changeView($, (v) => ({ ...v, repoOnly }));
+  await changeView($, (v) => ({ ...v, repoOnly, scroll: 0 }));
 }
 
 export async function setMore($: EngineInterface, more: boolean): Promise<void> {
@@ -265,7 +287,7 @@ export async function setMore($: EngineInterface, more: boolean): Promise<void> 
 }
 
 export async function setAgent($: EngineInterface, agent: string): Promise<void> {
-  await changeView($, (v) => ({ ...v, agent, listing: false, shown: [] }));
+  await changeView($, (v) => ({ ...v, agent, listing: false, shown: [], scroll: 0 }));
 }
 
 export async function setListing($: EngineInterface, listing: boolean): Promise<void> {
@@ -274,12 +296,12 @@ export async function setListing($: EngineInterface, listing: boolean): Promise<
 
 /** Context: shows one sub-agent's detail (its id), or the main conversation (empty). Leaves the transcript view. */
 export async function setCtxAgent($: EngineInterface, ctxAgent: string): Promise<void> {
-  await changeView($, (v) => ({ ...v, ctxAgent, listing: false, shown: [], more: false, transcript: false }));
+  await changeView($, (v) => ({ ...v, ctxAgent, listing: false, shown: [], more: false, transcript: false, scroll: 0 }));
 }
 
 /** Context: puts the chosen agent's transcript in view, or goes back to its detail. */
 export async function setTranscript($: EngineInterface, transcript: boolean): Promise<void> {
-  await changeView($, (v) => ({ ...v, transcript, more: false }));
+  await changeView($, (v) => ({ ...v, transcript, more: false, scroll: 0 }));
 }
 
 export async function setFull($: EngineInterface, full: boolean): Promise<void> {
@@ -292,7 +314,7 @@ export async function toggleShown($: EngineInterface, key: string): Promise<void
 }
 
 export async function setMachines($: EngineInterface, machines: "this" | "all"): Promise<void> {
-  await changeView($, (v) => ({ ...v, machines }));
+  await changeView($, (v) => ({ ...v, machines, scroll: 0 }));
 }
 
 // Prompts the engine sends on its own, which do not count as the person's first message.

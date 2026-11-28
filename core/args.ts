@@ -5,7 +5,7 @@ import { COERCE, SETTING_KEYS, SETTING_VALUES } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 
 export type TabId = "session" | "usage" | "context" | "history" | "hints" | "help";
-export type Sub = "report" | "debug" | "sync";
+export type Sub = "report" | "debug" | "sync" | "close";
 
 export type ParsedArgs = {
   set: Partial<Settings>;
@@ -20,7 +20,7 @@ export type ParsedArgs = {
 };
 
 const TABS: readonly string[] = ["session", "usage", "context", "history", "hints", "help"];
-const SUBS: readonly string[] = ["report", "debug", "sync"];
+const SUBS: readonly string[] = ["report", "debug", "sync", "close"];
 const SPANS: readonly string[] = ["24h", "30d"];
 const DAYS = /^(\d+)d?$/;
 
@@ -138,7 +138,7 @@ export function parseArgs(input: string): ParsedArgs {
   return out;
 }
 
-const GENERIC = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), report, sync or debug";
+const GENERIC = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), close, report, sync or debug";
 
 /** The command's answer for input `parseArgs` left unknown words in: the concrete usage of a setting or `report`, else the generic list. */
 export function unknownText(input: string, a: ParsedArgs): string {

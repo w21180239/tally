@@ -28,6 +28,8 @@ describe("parseArgs", () => {
 
   test("subcommands", () => {
     expect(parseArgs("report 7d").sub).toBe("report");
+    expect(parseArgs("close")).toEqual({ set: {}, sub: "close", unknown: [] });
+    expect(parseArgs("CLOSE").sub).toBe("close");
     expect(parseArgs("debug").sub).toBe("debug");
     expect(parseArgs("sync").sub).toBe("sync");
     expect(parseArgs("debug --json")).toEqual({ set: {}, sub: "debug", json: true, unknown: [] });
