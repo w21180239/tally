@@ -23,7 +23,7 @@ export const commandOutput: HintRule = {
         title: `Bash output: over ${percentText(OUTPUT_SHARE)} of re-read spend`,
         usd,
         summary: `Bash results from ${heavy.length === 1 ? "one command" : `${heavy.length} commands`} account for ${usdText(usd)} of cache-read spend, over ${percentText(OUTPUT_SHARE)} of all cache-read spend.`,
-        action: "Redirect the full output to a scratch file and open just the failing part, or limit it up front with a quiet flag or `| head`.",
+        action: "Limit it at the source · a quiet flag, `| tail -n 100` or a grep for errors. Redirect the rest to a file and open just the failing part, run noisy commands through a sub-agent, or add a PreToolUse hook that trims the output.",
         evidence,
         short: `shell output re-read: ${usdText(usd)}`,
       },

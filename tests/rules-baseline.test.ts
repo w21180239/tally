@@ -132,6 +132,13 @@ describe("cache-rebuilt", () => {
     expect(h.evidence.length).toBe(2);
     expect(h.metric).toEqual({ name: "rebuild share of cost", value: 0.1 });
   });
+  test("the action says to compact before stepping away; the 1-hour setting is named only for rebuilds on the 5-minute cache within an hour", () => {
+    const warm = only(fire("cache-rebuilt", { cacheRebuilds: [rebuild(2, 40_000, 2 * HOUR)] }));
+    expect(warm.action).toContain("run /compact while the cache is warm");
+    expect(warm.action).not.toContain("promptCacheTtl");
+    const short = only(fire("cache-rebuilt", { cacheRebuilds: [rebuild(2, 40_000, 20 * 60_000)] }));
+    expect(short.action).toContain("promptCacheTtl to 1h");
+  });
   test("stays quiet below 1 dollar", () => {
     expect(fire("cache-rebuilt", { cacheRebuilds: [rebuild(0.5), rebuild(0.49)] })).toEqual([]);
     expect(fire("cache-rebuilt", { cacheRebuilds: [] })).toEqual([]);
@@ -161,7 +168,12 @@ describe("subagent-model", () => {
     expect(h.evidence.map((e) => e.label)).toEqual(["Explore"]);
     expect(h.evidence[0]!.detail).toContain("$10.50");
     expect(h.evidence[0]!.detail).toContain("sonnet $5.25");
-    expect(h.evidence[0]!.detail).toContain("haiku 31.25\u00a2");
+    // Prompts here average over 100k tokens, where haiku's price step applies: its saving is left out.
+    expect(h.evidence[0]!.detail).not.toContain("haiku");
+  });
+  test("haiku's saving shows for prompts under its 100k price step", () => {
+    const small = { Explore: { [OPUS]: { ...money(10.5, 20, { ...noTokens, input: 1_000_000 }), tools: { Read: 5 } } } };
+    expect(only(fire("subagent-model", { bySubType: small })).evidence[0]!.detail).toContain("on haiku");
   });
   test("fable counts as a big family too", () => {
     const only1m = { Search: { [FABLE]: { ...money(8, 3, { ...noTokens, input: 1_000_000 }), tools: { Glob: 3 } } } };
@@ -283,6 +295,13 @@ describe("costly-attribution", () => {
     expect(h.usd).toBe(21);
     expect(h.evidence.map((e) => e.label)).toEqual(["Skill skill-0"]);
   });
+  test("an entry under 1 dollar stays quiet however big its share; 1 dollar fires; the text says the figure is request cost", () => {
+    expect(fire("costly-attribution", { bySkill: { a: money(0.99) } })).toEqual([]);
+    const h = only(fire("costly-attribution", { bySkill: { a: money(1) } }));
+    expect(h.summary).toContain("Requests that ran under skill a");
+    expect(h.summary).toContain("not the size of its text");
+    expect(h.action).toContain("/usage");
+  });
   test("stays quiet when every entry is at or under 20 percent", () => {
     expect(fire("costly-attribution", { bySkill: skills([20, 20, 20, 20, 20]) })).toEqual([]);
     expect(fire("costly-attribution", {})).toEqual([]);
@@ -372,6 +391,21 @@ describe("thinking-output", () => {
   });
   test("without usage figures the rule has nothing to measure", () => {
     expect(fire("thinking-output", {})).toEqual([]);
+  });
+  const at = (effort: string, thinking: number, reply: number) => ({ byEffort: { [effort]: money(5, 10) }, usage: usageOf(0, [group("thinking", thinking), group("reply", reply)]) });
+  test("xhigh and max fire on the plain test and name /effort high; medium and low never fire", () => {
+    for (const effort of ["xhigh", "max"]) {
+      const h = only(fire("thinking-output", at(effort, 6.5, 3.5)));
+      expect(h.action).toContain("run /effort high");
+      expect(h.action).not.toContain("MAX_THINKING_TOKENS");
+      expect(h.evidence.map((e) => e.label)).toContain("Usual effort");
+    }
+    for (const effort of ["medium", "low"]) expect(fire("thinking-output", at(effort, 9, 1))).toEqual([]);
+  });
+  test("high needs over 70 percent and 3 dollars of thinking, and advises medium", () => {
+    expect(fire("thinking-output", at("high", 6.5, 3.5))).toEqual([]);
+    expect(fire("thinking-output", at("high", 2.9, 0.1))).toEqual([]);
+    expect(only(fire("thinking-output", at("high", 7.5, 2.5))).action).toContain("run /effort medium");
   });
 });
 

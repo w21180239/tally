@@ -226,6 +226,24 @@ describe("wholeReads", () => {
     expect(run(rows, [], [], (r) => r.requestId !== "f").wholeReads).toEqual({ "/p.ts": 2 });
   });
 
+  test("a compaction ends the stretch: 2 reads before and 1 after count 2, not 3; 2 before and 3 after count 3", () => {
+    const compacts: CompactRow[] = [{ sessionId: "s", ts: T0 + 3 * MIN }];
+    const before = [reads("a", 1 * MIN, "/c.ts"), reads("b", 2 * MIN, "/c.ts")];
+    expect(run([...before, reads("c", 4 * MIN, "/c.ts")], [], compacts).wholeReads).toEqual({ "/c.ts": 2 });
+    expect(run([...before, reads("c", 4 * MIN, "/c.ts"), reads("d", 5 * MIN, "/c.ts"), reads("e", 6 * MIN, "/c.ts")], [], compacts).wholeReads).toEqual({ "/c.ts": 3 });
+    // Without the compaction the same three reads are three.
+    expect(run([...before, reads("c", 4 * MIN, "/c.ts")]).wholeReads).toEqual({ "/c.ts": 3 });
+  });
+
+  test("an edit of the file ends its stretch; an edit of another file does not", () => {
+    const edit = (id: string, at: number, target: string) => req({ id, at, tools: [{ name: "Edit", id: `t-${id}`, target, inputChars: 10 }] });
+    const rows = (changed: string) => [reads("a", 1, "/e.ts"), reads("b", 2, "/e.ts"), edit("x", 3, changed), reads("c", 4, "/e.ts")];
+    expect(run(rows("/e.ts")).wholeReads).toEqual({ "/e.ts": 2 });
+    expect(run(rows("/other.ts")).wholeReads).toEqual({ "/e.ts": 3 });
+    const write = req({ id: "w", at: 3, tools: [{ name: "Write", id: "t-w", target: "/e.ts", inputChars: 10 }] });
+    expect(run([reads("a", 1, "/e.ts"), reads("b", 2, "/e.ts"), write, reads("c", 4, "/e.ts")]).wholeReads).toEqual({ "/e.ts": 2 });
+  });
+
   test("a sub-agent transcript is its own conversation", () => {
     const agent = (id: string, at: number, target: string, agentId: string) => reads(id, at, target, true, { sidechain: true, agentId, agentType: "Explore" });
     const rows = [

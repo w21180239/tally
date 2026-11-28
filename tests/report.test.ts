@@ -249,9 +249,17 @@ describe("thinking-output effort floor", () => {
       expect(thinking.run(inputOf(s))).toEqual([]);
     }
   });
-  test("above medium, or with no effort recorded, the hint stays", () => {
-    expect(thinking.run(inputOf(summaryOf(at("high"))))).toHaveLength(1);
+  test("at xhigh or max, or with no effort recorded, the hint stays", () => {
+    expect(thinking.run(inputOf(summaryOf(at("xhigh"))))).toHaveLength(1);
+    expect(thinking.run(inputOf(summaryOf(at("max"))))).toHaveLength(1);
     expect(thinking.run(inputOf(summaryOf(at(undefined))))).toHaveLength(1);
+  });
+  test("at high it needs a stronger case than the other levels: over 70 percent and 3 dollars of thinking", () => {
+    const s = summaryOf(at("high"));
+    const hi = (thinkingUsd: number, replyUsd: number) => ({ ...s, usage: { slices: { main: { totals: { output: { usd: thinkingUsd + replyUsd } }, output: [{ key: "thinking", usd: thinkingUsd }, { key: "reply", usd: replyUsd }] } } } as never });
+    expect(thinking.run(inputOf(hi(6.5, 3.5)))).toHaveLength(0);
+    expect(thinking.run(inputOf(hi(7.5, 2.5)))).toHaveLength(1);
+    expect(thinking.run(inputOf(hi(2.9, 0.1)))).toHaveLength(0);
   });
 });
 

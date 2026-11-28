@@ -96,8 +96,8 @@ const days = (...requests: number[]) => ({ bucketMs: DAY, points: requests.map((
 const metricOf = (id: string, s: Record<string, unknown>): number => ALL_RULES.find((r) => r.id === id)!.metric!(inputOf(s));
 
 describe("rule metrics", () => {
-  test("exactly the six rules named in the plan carry a metric", () => {
-    expect(ALL_RULES.filter((r) => r.metric !== undefined).map((r) => r.id).sort()).toEqual(["big-paste", "cache-rebuilt", "fast-mode", "main-model-overkill", "thinking-output", "whole-reads"]);
+  test("exactly the six rules named in the plan and effort-max carry a metric", () => {
+    expect(ALL_RULES.filter((r) => r.metric !== undefined).map((r) => r.id).sort()).toEqual(["big-paste", "cache-rebuilt", "effort-max", "fast-mode", "main-model-overkill", "thinking-output", "whole-reads"]);
   });
 
   test("cache-rebuilt takes rebuild cost over spend; fast-mode takes fast cost over spend", () => {

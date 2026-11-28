@@ -15,7 +15,7 @@ import type { Summary, SubagentRuns } from "../core/summary.ts";
 import type { Shard } from "../core/shard.ts";
 import type { UsageRow } from "../core/types.ts";
 import { NOW as MONTH_NOW, PRICES } from "./fixtures/month.ts";
-import { MIN, READ_USD, read, req, result, bash } from "./fixtures/rows.ts";
+import { MIN, READ_USD, T0, read, req, result, bash } from "./fixtures/rows.ts";
 
 const NOW = Date.UTC(2026, 10, 27, 12);
 const HOUR = 3_600_000;
@@ -68,6 +68,7 @@ const rule = (id: string): HintRule => {
   return r;
 };
 const fire = (id: string, summary: Partial<Summary>, more: Partial<HintInput> = {}): Hint[] => rule(id).run(inputOf({ summary: summaryOf(summary), ...more }));
+const fireAny = fire;
 const only = (hints: Hint[]): Hint => {
   expect(hints.length).toBe(1);
   return hints[0]!;
@@ -78,11 +79,25 @@ const live = emptyLive("s1", NOW - DAY);
 const THOUSAND = { byModel: { [OPUS]: money(0, 1000) }, main: money(0, 1000) };
 
 describe("rule registry", () => {
-  test("9 new rules, 22 unique ids in the shipped registry", () => {
-    expect(NEW_RULES.map((r) => r.id).sort()).toEqual(["cache-ttl-choice", "huge-tool-result", "ineffective-compaction", "limit-pace", "main-model-overkill", "mcp-schema-heavy", "memory-heavy", "skill-catalog-heavy", "subagent-overhead"]);
+  test("13 new rules, 26 unique ids in the shipped registry", () => {
+    expect(NEW_RULES.map((r) => r.id).sort()).toEqual([
+      "cache-ttl-choice",
+      "effort-max",
+      "huge-tool-result",
+      "idle-loop",
+      "ineffective-compaction",
+      "limit-pace",
+      "long-prompt-tier",
+      "main-model-overkill",
+      "mcp-schema-heavy",
+      "memory-heavy",
+      "mid-session-switch",
+      "skill-catalog-heavy",
+      "subagent-overhead",
+    ]);
     const ids = HINT_RULES.map((r) => r.id);
-    expect(ids.length).toBe(22);
-    expect(new Set(ids).size).toBe(22);
+    expect(ids.length).toBe(26);
+    expect(new Set(ids).size).toBe(26);
     expect(HINT_RULES).toEqual([...BASELINE_RULES, ...NEW_RULES]);
   });
 
@@ -191,6 +206,19 @@ describe("skill-catalog-heavy", () => {
   const skills = { alpha: 3750, beta: 3750, gamma: 3750, delta: 3750 };
   const span = (total: number, over: Partial<Summary> = {}): Partial<Summary> => ({ ...THOUSAND, total: money(total, 1000), ...over });
   const called = (...names: string[]) => Object.fromEntries(names.map((n) => [n, money(1)]));
+  // A window wide enough that the 1% listing budget (100k tokens) is not what the figures below test.
+  const fire = (id: string, s: Partial<Summary>, more: Partial<HintInput>) => fireAny(id, s, { window: 10_000_000, ...more });
+  test("the listing counts only up to 1% of the window: 15000 tokens on a 1M window (10000 budget) cost $2.00, not $3.00, and say so", () => {
+    const h = only(fireAny("skill-catalog-heavy", span(50, { bySkill: called("alpha") }), { live, snaps: [snapOf({ skills })] }));
+    // 3 idle skills of 3750 tokens, scaled by 10000 / 15000: 3 * 3750 * (2/3) * $0.0002 = $1.50.
+    expect(near(h.usd, 1.5)).toBe(true);
+    expect(h.evidence.map((e) => e.label)).toContain("Listing budget");
+    expect(h.action).toContain("skillOverrides");
+    expect(h.action).toContain("/skill-doctor");
+    expect(h.action).toContain("being dropped");
+    // On a wide window the same listing is under its budget: no budget row.
+    expect(only(fire("skill-catalog-heavy", span(50, { bySkill: called("alpha") }), { live, snaps: [snapOf({ skills })] })).evidence.map((e) => e.label)).not.toContain("Listing budget");
+  });
   test("a 3 dollar catalog (6% of spend) with 1 of 4 skills called fires; the amount is the cost of the 3 unused: $2.25", () => {
     const h = only(fire("skill-catalog-heavy", span(50, { bySkill: called("alpha") }), { live, snaps: [snapOf({ skills })] }));
     expect(near(h.usd, 2.25)).toBe(true);
@@ -331,6 +359,14 @@ describe("limit-pace", () => {
     expect(h.short).toBe("7d limit full in 1d 22h");
     expect(rule("limit-pace").run(inputOf({ limits: { sevenDay: win(71, NOW + 2 * DAY) } }))).toEqual([]);
   });
+  // 7d window with 6.5d left: 12h elapsed, 80% used would be full in 3h. A week's first day is too noisy to read.
+  test("the 7d window waits 24 hours before its pace is read; the 5h window has no such wait", () => {
+    expect(rule("limit-pace").run(inputOf({ limits: { sevenDay: win(80, NOW + 6.5 * DAY) } }))).toEqual([]);
+    expect(only(rule("limit-pace").run(inputOf({ limits: { sevenDay: win(80, NOW + 6 * DAY) } }))).short.startsWith("7d")).toBe(true);
+  });
+  test("the action names /usage-credits", () => {
+    expect(only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(81, NOW + HOUR) } }))).action).toContain("/usage-credits");
+  });
   test("with both windows on pace the earlier fill leads and both get a row", () => {
     const h = only(rule("limit-pace").run(inputOf({ limits: { fiveHour: win(81, NOW + HOUR), sevenDay: win(72, NOW + 2 * DAY) } })));
     expect(h.short.startsWith("5h")).toBe(true);
@@ -363,9 +399,18 @@ describe("cache-ttl-choice", () => {
     expect(h.short).toBe("1-hour cache would save $2.00");
     expect(h.evidence).toEqual([
       { label: "Pauses", detail: "30 under 5 minutes, 25 from 5 minutes to 1 hour, 5 over 1 hour", kind: "text" },
-      { label: "5-minute cache", detail: "$10.00 replayed", kind: "text" },
-      { label: "1-hour cache", detail: "$8.00 replayed", kind: "text" },
+      { label: "5-minute cache", detail: "$10.00 replayed at list price", kind: "text" },
+      { label: "1-hour cache", detail: "$8.00 replayed at list price", kind: "text" },
     ]);
+    // The action names the setting for the lifetime to switch to.
+    expect(h.action).toContain("promptCacheTtl");
+    expect(h.action).toContain("1h");
+    expect(h.summary).toContain("list-price equivalents");
+  });
+  test("the 5m advice names promptCacheTtl and FORCE_PROMPT_CACHING_5M", () => {
+    const h = only(fire("cache-ttl-choice", ttl({ actual: "1h", usd5m: 8, usd1h: 10 })));
+    expect(h.action).toContain("promptCacheTtl to 5m");
+    expect(h.action).toContain("FORCE_PROMPT_CACHING_5M=1");
   });
   test("exactly $1 and exactly 10 percent fires; $0.99 or 9.9 percent stays quiet", () => {
     expect(near(only(fire("cache-ttl-choice", ttl({ usd5m: 10, usd1h: 9 }))).usd, 1)).toBe(true);
@@ -387,15 +432,17 @@ describe("subagent-overhead", () => {
   const runs = (over: Partial<SubagentRuns>): Partial<Summary> => ({
     subagentRuns: { runs: 10, small: 6, smallStartupUsd: 1.5, byType: { Explore: { runs: 7, small: 5, startupUsd: 1.2 }, helper: { runs: 3, small: 1, startupUsd: 0.3 } }, ...over },
   });
-  test("6 of 10 runs under 500 tokens with $1.50 of startup fires; the amount is the startup cost", () => {
+  test("6 of 10 small runs with $1.50 of startup fires; the amount is the startup cost", () => {
     const h = only(fire("subagent-overhead", runs({})));
     expect(h.usd).toBe(1.5);
     expect(h.projected).toBeUndefined();
     expect(h.summary).toContain("6 of 10");
+    expect(h.summary).toContain("2 requests or fewer");
     expect(h.evidence).toEqual([
-      { label: "Agent type", detail: "Explore: 5 of 7 runs under 500 tokens, $1.20 startup", kind: "text" },
-      { label: "Agent type", detail: "helper: 1 of 3 runs under 500 tokens, 30\u00a2 startup", kind: "text" },
+      { label: "Agent type", detail: "Explore: 5 of 7 runs with 2 requests or fewer and little tool output, $1.20 startup", kind: "text" },
+      { label: "Agent type", detail: "helper: 1 of 3 runs with 2 requests or fewer and little tool output, 30\u00a2 startup", kind: "text" },
     ]);
+    expect(h.action).toContain("raw output would be large");
   });
   test("exactly half the runs stays quiet", () => {
     expect(fire("subagent-overhead", runs({ small: 5 }))).toEqual([]);
@@ -426,6 +473,19 @@ describe("main-model-overkill", () => {
   test("a saving of exactly $1 fires and $0.99 stays quiet", () => {
     expect(only(fire("main-model-overkill", tools(100, 61, 3))).usd).toBe(1);
     expect(fire("main-model-overkill", tools(100, 61, 2.99))).toEqual([]);
+  });
+  test("the suggestion is low confidence, and under 50 flagship tool turns it stays quiet", () => {
+    const h = only(fire("main-model-overkill", tools(100, 61)));
+    expect(h.confidence).toBe("low");
+    expect(h.action).toContain("run /model sonnet");
+    expect(h.action).toContain("opusplan");
+    expect(h.action).toContain("uncached");
+    expect(fire("main-model-overkill", tools(49, 40))).toEqual([]);
+    expect(only(fire("main-model-overkill", tools(50, 40))).rule).toBe("main-model-overkill");
+  });
+  test("when fable and mythos carry most of the saving, the first step down is the default flagship", () => {
+    expect(only(fire("main-model-overkill", tools(100, 61, 4, FABLE))).action).toContain("default flagship");
+    expect(only(fire("main-model-overkill", tools(100, 61))).action).not.toContain("default flagship");
   });
   test("a Mythos model counts as flagship", () => {
     const h = only(fire("main-model-overkill", tools(100, 61, 4, "claude-mythos-5-2")));
@@ -468,6 +528,7 @@ describe("ranking", () => {
 // Scan figures the rules read.
 const shardOf = (usage: UsageRow[]): Shard => ({ v: 1, project: "p", files: {}, usage, users: [], metas: [], compacts: [], snapshots: [] });
 const run30d = (usage: UsageRow[]): Summary => summarize([shardOf(usage)], PRICES, { span: "30d", nowMs: MONTH_NOW, tzOffsetMin: 0 });
+const run30dWith = (usage: UsageRow[], users: Shard["users"]): Summary => summarize([{ ...shardOf(usage), users }], PRICES, { span: "30d", nowMs: MONTH_NOW, tzOffsetMin: 0 });
 const sub = (id: string, at: number, agentId: string, agentType: string, tokens: Partial<typeof noTokens>): UsageRow => req({ id, at, sidechain: true, agentId, agentType, tokens });
 
 describe("bigResults (flow)", () => {
@@ -569,25 +630,32 @@ describe("ttl model (cache-life)", () => {
 describe("subagentRuns and mainTools (summary)", () => {
   // Opus in the test prices: input $10, output $50, cache read $1, 5m write $12.5 per MTok.
   const agents = (): UsageRow[] => [
-    // Explore a1: two requests, 100 + 150 = 250 output tokens (small). The first one's startup: 1000*10 + 100k*1 + 20k*12.5 = $0.01 + $0.10 + $0.25 = $0.36.
+    // Explore a1: two requests and no tool results (small). The first one's startup: 1000*10 + 100k*1 + 20k*12.5 = $0.01 + $0.10 + $0.25 = $0.36.
     sub("a1-1", 1 * MIN, "a1", "Explore", { input: 1000, cacheRead: 100_000, cw5m: 20_000, output: 100 }),
     sub("a1-2", 2 * MIN, "a1", "Explore", { cacheRead: 120_000, output: 150 }),
-    // Explore a2: exactly 500 output tokens is not small.
-    sub("a2-1", 3 * MIN, "a2", "Explore", { cacheRead: 50_000, output: 500 }),
-    // helper a3: 499 tokens, startup 200k cache read = $0.20.
-    sub("a3-1", 4 * MIN, "a3", "helper", { cacheRead: 200_000, output: 499 }),
-    req({ id: "m1", at: 5 * MIN, tokens: { cacheRead: 1_000_000, output: 90_000 } }),
+    // Explore a2: one request but 20000 chars of tool results is not small, however short its answer.
+    sub("a2-1", 3 * MIN, "a2", "Explore", { cacheRead: 50_000, output: 5 }),
+    // helper a3: one request, a long answer (output size does not matter), startup 200k cache read = $0.20.
+    sub("a3-1", 4 * MIN, "a3", "helper", { cacheRead: 200_000, output: 9000 }),
+    // Explore a4: three requests is not small.
+    sub("a4-1", 5 * MIN, "a4", "Explore", { cacheRead: 10_000, output: 5 }),
+    sub("a4-2", 6 * MIN, "a4", "Explore", { cacheRead: 10_000, output: 5 }),
+    sub("a4-3", 7 * MIN, "a4", "Explore", { cacheRead: 10_000, output: 5 }),
+    req({ id: "m1", at: 8 * MIN, tokens: { cacheRead: 1_000_000, output: 90_000 } }),
   ];
-  test("runs are counted per sub-agent transcript; small ones are under 500 output tokens and their startup is summed", () => {
-    const s = run30d(agents());
-    expect(s.subagentRuns.runs).toBe(3);
+  const agentResults = (): Shard["users"] => [{ sessionId: "s", ts: T0 + 3 * MIN + 1, kind: "toolResult", chars: 20_000, sidechain: true, agentId: "a2" }];
+  test("runs are counted per sub-agent transcript; small ones made 2 requests or fewer with under 20000 chars of tool results, and their startup is summed", () => {
+    const s = run30dWith(agents(), agentResults());
+    expect(s.subagentRuns.runs).toBe(4);
     expect(s.subagentRuns.small).toBe(2);
     expect(near(s.subagentRuns.smallStartupUsd, 0.56)).toBe(true);
-    expect(s.subagentRuns.byType.Explore!.runs).toBe(2);
+    expect(s.subagentRuns.byType.Explore!.runs).toBe(3);
     expect(s.subagentRuns.byType.Explore!.small).toBe(1);
     expect(near(s.subagentRuns.byType.Explore!.startupUsd, 0.36)).toBe(true);
     expect(s.subagentRuns.byType.helper).toMatchObject({ runs: 1, small: 1 });
     expect(near(s.subagentRuns.byType.helper!.startupUsd, 0.2)).toBe(true);
+    // 19999 chars stays small.
+    expect(run30dWith(agents(), [{ ...agentResults()[0]!, chars: 19_999 }]).subagentRuns.small).toBe(3);
   });
   test("a sub-agent row with no type reads as unknown, and no sub-agents give zeros", () => {
     const s = run30d([req({ id: "x", at: 1, sidechain: true, agentId: "q", tokens: { cacheRead: 1000, output: 5 } })]);
@@ -619,5 +687,148 @@ describe("subagentRuns and mainTools (summary)", () => {
     expect([s.hugeResults, s.mainTools]).toEqual([[], {}]);
     expect(s.subagentRuns).toEqual(NO_RUNS);
     expect(s.cacheTtl).toEqual(NO_TTL);
+    expect([s.cacheBreaks, s.loops, s.longPrompts]).toEqual([[], { ticks: 0, light: 0, lightUsd: 0, lightPromptTokens: 0, sessions: 0 }, {}]);
+  });
+});
+
+describe("cacheBreaks (summary)", () => {
+  // Opus in the test prices: cache read $1, 5m write $12.5 per MTok, so rewriting 100k tokens costs 100k * 11.5 / 1e6 = $1.15 over reading them.
+  const warm = req({ id: "p", at: 1 * MIN, tokens: { cacheRead: 100_000 } });
+  const after = (over: Partial<UsageRow>, tokens: Partial<typeof noTokens> = { cw5m: 100_000 }, at = 2 * MIN): UsageRow => ({ ...req({ id: "r", at, tokens }), ...over });
+  test("a model change followed by a rewrite within the cache life is a break, priced over a warm read", () => {
+    const [b, ...rest] = run30d([warm, after({ model: "claude-sonnet-5-5" })]).cacheBreaks!;
+    expect(rest).toEqual([]);
+    expect(b).toMatchObject({ kind: "model", from: OPUS, to: "claude-sonnet-5-5", tokens: 100_000 });
+    // Priced at the request's own model (sonnet 5m write 2.5, read 0.2).
+    expect(near(b!.usd, (100_000 * (2.5 - 0.2)) / 1e6)).toBe(true);
+  });
+  test("a speed change and an effort change are breaks too; the model decides first", () => {
+    expect(run30d([warm, after({ fast: true })]).cacheBreaks![0]).toMatchObject({ kind: "fast", from: "standard", to: "fast" });
+    expect(run30d([{ ...warm, effort: "high" }, after({ effort: "low" })]).cacheBreaks![0]).toMatchObject({ kind: "effort", from: "high", to: "low" });
+    expect(run30d([warm, after({ model: "claude-sonnet-5-5", fast: true })]).cacheBreaks![0]!.kind).toBe("model");
+  });
+  test("no change, no rewrite, a pause past the cache life, growth alone and sub-agent rows are not breaks", () => {
+    expect(run30d([warm, after({})]).cacheBreaks).toEqual([]);
+    expect(run30d([warm, after({ fast: true }, { cacheRead: 100_000 })]).cacheBreaks).toEqual([]);
+    expect(run30d([warm, after({ fast: true }, { cw5m: 100_000 }, 7 * MIN)]).cacheBreaks).toEqual([]);
+    // 25000 written on a prompt that grew by 25000: nothing was rewritten.
+    expect(run30d([warm, after({ fast: true }, { cacheRead: 100_000, cw5m: 25_000 })]).cacheBreaks).toEqual([]);
+    expect(run30d([{ ...warm, sidechain: true, agentId: "a" }, { ...after({ fast: true }), sidechain: true, agentId: "a" }]).cacheBreaks).toEqual([]);
+  });
+  test("what grew with the switch is not counted as rewritten: 130000 written on a prompt 30000 larger is 100000", () => {
+    expect(run30d([warm, after({ fast: true }, { cw5m: 130_000 })]).cacheBreaks![0]!.tokens).toBe(100_000);
+  });
+});
+
+describe("mid-session-switch", () => {
+  const brk = (usd: number, kind: "model" | "fast" | "effort" = "model", at = NOW - HOUR) => ({ sessionId: "s1", ts: at, kind, from: kind === "model" ? OPUS : "a", to: kind === "model" ? "claude-sonnet-5-5" : "b", tokens: 100_000, usd });
+  test("1 dollar over a warm read fires; the amount is their sum", () => {
+    const h = only(fire("mid-session-switch", { cacheBreaks: [brk(0.5), brk(0.5, "fast")] }));
+    expect(h.usd).toBe(1);
+    expect(h.projected).toBeUndefined();
+    expect(h.summary).toContain("1 of model, 1 of speed");
+    expect(h.action).toContain("start of a session");
+    expect(h.evidence[0]!.label).toBe("Switch of model");
+    expect(h.evidence[0]!.detail).toContain("opus-5-5 to sonnet-5-5");
+  });
+  test("under 1 dollar or no breaks stays quiet", () => {
+    expect(fire("mid-session-switch", { cacheBreaks: [brk(0.99)] })).toEqual([]);
+    expect(fire("mid-session-switch", { cacheBreaks: [] })).toEqual([]);
+    expect(fire("mid-session-switch", {})).toEqual([]);
+  });
+  test("the list is capped at five rows, costliest first", () => {
+    const h = only(fire("mid-session-switch", { cacheBreaks: [1, 2, 3, 4, 5, 6, 7].map((n) => brk(n)) }));
+    expect(h.evidence.length).toBe(5);
+    expect(h.evidence[0]!.detail).toContain("$7.00");
+  });
+});
+
+describe("effort-max", () => {
+  const efforts = (max: [number, number], high: [number, number]): Partial<Summary> => ({ byEffort: { max: money(max[0], max[1]), high: money(high[0], high[1]) } });
+  test("over half of the requests at max and 5 dollars fires; the amount is the max spend and the metric the share", () => {
+    const h = only(fire("effort-max", efforts([6, 60], [2, 40])));
+    expect(h.usd).toBe(6);
+    expect(h.action).toContain("run /effort high");
+    expect(h.metric).toEqual({ name: "max-effort share of requests", value: 0.6 });
+    expect(rule("effort-max").metric?.(inputOf({ summary: summaryOf(efforts([6, 60], [2, 40])) }))).toBe(0.6);
+  });
+  test("exactly half, under 5 dollars or no effort figures stays quiet", () => {
+    expect(fire("effort-max", efforts([6, 50], [2, 50]))).toEqual([]);
+    expect(fire("effort-max", efforts([4.99, 60], [2, 40]))).toEqual([]);
+    expect(only(fire("effort-max", efforts([5, 60], [2, 40]))).usd).toBe(5);
+    expect(fire("effort-max", {})).toEqual([]);
+    expect(rule("effort-max").metric?.(inputOf())).toBe(0);
+  });
+});
+
+describe("long-prompt-tier", () => {
+  const lp = (extraUsd: number, over: Partial<{ requests: number; subRequests: number; sessions: number }> = {}) => ({ longPrompts: { "claude-haiku-5-5": { requests: 4, subRequests: 3, sessions: 2, extraUsd, ...over } } });
+  test("a dollar added by the tier fires, naming the threshold from the price table", () => {
+    const h = only(fire("long-prompt-tier", lp(1.5)));
+    expect(h.usd).toBe(1.5);
+    expect(h.projected).toBeUndefined();
+    expect(h.evidence[0]!.detail).toBe("haiku-5-5: 4 requests over 100k tokens (3 from sub-agents) in 2 sessions, $1.50 above the base rates");
+    expect(h.action).toContain("run /compact");
+  });
+  test("under a dollar, or nothing over the tier, stays quiet", () => {
+    expect(fire("long-prompt-tier", lp(0.99))).toEqual([]);
+    expect(fire("long-prompt-tier", {})).toEqual([]);
+    expect(fire("long-prompt-tier", { longPrompts: {} })).toEqual([]);
+  });
+  test("summary counts requests past a model's threshold with the extra they billed: 200000 input at 4x the 0.10 base is $0.08", () => {
+    const haiku = (id: string, input: number, extra: Partial<UsageRow> = {}): UsageRow => ({ ...req({ id, at: MIN, tokens: { input } }), model: "claude-haiku-5-5", ...extra });
+    const s = summarize([shardOf([haiku("a", 200_000), haiku("b", 100_000), haiku("c", 200_000, { sidechain: true, agentId: "x" })])], BUILTIN_PRICES, { span: "30d", nowMs: MONTH_NOW, tzOffsetMin: 0 });
+    const m = s.longPrompts!["claude-haiku-5-5"]!;
+    // 100000 is at the threshold, not over it.
+    expect(m).toMatchObject({ requests: 2, subRequests: 1, sessions: 1 });
+    expect(near(m.extraUsd, 0.16)).toBe(true);
+    expect(run30d([req({ id: "o", at: MIN, tokens: { input: 5_000_000 } })]).longPrompts).toEqual({});
+  });
+});
+
+describe("loops (summary) and idle-loop", () => {
+  const wake = { name: "ScheduleWakeup", inputChars: 1 };
+  const bashTool = { name: "Bash", inputChars: 1 };
+  // Opus: 100k cache read = $0.10 per request. Tick 1 (b, c): 2 requests. Tick 2 (d to h): 5 requests. Tick 3 (i): 1 request.
+  const loop = (): UsageRow[] => {
+    const at = (id: string, min: number, tools: UsageRow["tools"]) => req({ id, at: min * MIN, tokens: { cacheRead: 100_000 }, tools });
+    return [
+      at("a", 0, [wake]),
+      at("b", 5, [bashTool]),
+      at("c", 5.2, [wake]),
+      at("d", 10, [bashTool]),
+      at("e", 11, [bashTool]),
+      at("f", 12, [bashTool]),
+      at("g", 13, [bashTool]),
+      at("h", 14, [wake]),
+      at("i", 20, [bashTool]),
+    ];
+  };
+  test("a tick runs from the request after a wake-up call to the call that schedules the next; ticks of 3 requests or fewer and little output are light", () => {
+    const l = run30d(loop()).loops!;
+    expect(l).toMatchObject({ ticks: 3, light: 2, lightPromptTokens: 100_000, sessions: 1 });
+    expect(near(l.lightUsd, 0.1 * 3)).toBe(true);
+  });
+  test("a request right after the wake-up call, a sub-agent and a stream with no wake-up are not ticks", () => {
+    const quick = [req({ id: "a", at: 0, tools: [wake] }), req({ id: "b", at: 10_000, tools: [bashTool] })];
+    expect(run30d(quick).loops!.ticks).toBe(0);
+    expect(run30d(loop().map((r) => ({ ...r, sidechain: true, agentId: "z" }))).loops!.ticks).toBe(0);
+    expect(run30d([req({ id: "x", at: MIN, tools: [bashTool] })]).loops!.ticks).toBe(0);
+  });
+  test("a long answer makes a tick heavy: 1500 output tokens is not light", () => {
+    const rows = loop();
+    rows[8] = { ...rows[8]!, tokens: { ...rows[8]!.tokens, output: 1500 } };
+    expect(run30d(rows).loops!.light).toBe(1);
+  });
+  test("3 light ticks and a dollar fire; the amount is their cost, and Esc stops the loop", () => {
+    const l = { ticks: 10, light: 3, lightUsd: 1, lightPromptTokens: 300_000, sessions: 2 };
+    const h = only(fire("idle-loop", { loops: l }));
+    expect(h.usd).toBe(1);
+    expect(h.summary).toContain("3 of 10");
+    expect(h.action).toContain("Esc");
+    expect(h.evidence.map((e) => e.label)).toEqual(["Light ticks", "Largest prompt"]);
+    expect(fire("idle-loop", { loops: { ...l, light: 2 } })).toEqual([]);
+    expect(fire("idle-loop", { loops: { ...l, lightUsd: 0.99 } })).toEqual([]);
+    expect(fire("idle-loop", {})).toEqual([]);
   });
 });

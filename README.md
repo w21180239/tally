@@ -144,13 +144,16 @@ The window picks a drawing from its width: under 40 columns a compact card, 40 t
 Every hint states a saving and links to its evidence. The rules:
 
 - `near-limit`, `limit-pace`: you are close to a 5-hour or 7-day limit, or the current pace will use it up before it resets.
-- `cache-rebuilt`, `cache-ttl-choice`: caches that expired during pauses and were rewritten, and whether the 5-minute or the 1-hour cache is cheaper for your pauses.
-- `subagent-model`, `subagent-overhead`, `main-model-overkill`: work on a larger model than the task needs, many tiny subagent tasks, and long read-only stretches on the main model. A low-confidence suggestion says "try it" and never "downgrade".
+- `cache-rebuilt`, `cache-ttl-choice`: caches that expired during pauses and were rewritten (the fix is compacting before you step away), and whether the 5-minute or the 1-hour cache is cheaper for your pauses (it names `promptCacheTtl`).
+- `mid-session-switch`: a change of model, speed (fast mode) or effort in the middle of a session that made the next request write the whole prompt into the cache again.
+- `subagent-model`, `subagent-overhead`, `main-model-overkill`: work on a larger model than the task needs (the built-in Explore agent follows the main model, so the action names an Explore override), sub-agent runs of two requests or fewer that took in little tool output, and long read-only stretches on the main model (at least 50 tool turns). A low-confidence suggestion says "try it" and never "downgrade".
 - `memory-heavy`, `skill-catalog-heavy`, `mcp-schema-heavy`, `unused-plugin`, `unused-mcp-server`: standing context you pay for on every request.
 - `long-session`, `ineffective-compaction`: sessions that grow past 70% of the window (the fix is compacting earlier, at a task boundary), and compactions that left the context at 60% or more of its size were followed by another within three requests, or began after the cache had expired. Compaction that sheds context is a saving; the report's Summary shows its estimated size.
 - `costly-attribution`: one skill or plugin accounts for over 20% of attributed cost.
-- `whole-reads`, `command-output`, `tool-output`, `huge-tool-result`, `big-paste`: the same file read in full three times, commands and tools whose output is re-read on every request, a single giant tool result, a large paste.
-- `thinking-output`, `fast-mode`: thinking above 60% of output, and fast mode above 20% of cost.
+- `whole-reads`, `command-output`, `tool-output`, `huge-tool-result`, `big-paste`: the same file read in full three times between compactions and edits of it, commands and tools whose output is re-read on every request, a single giant tool result, a large paste.
+- `thinking-output`, `effort-max`, `fast-mode`: thinking above 60% of output at `xhigh` or `max` effort (at `high` only above 70% and $3), most requests at `max` effort, and fast mode above 20% of cost.
+- `long-prompt-tier`: prompts past a model's long-context price step (Haiku above 100k tokens), with the extra it billed.
+- `idle-loop`: self-paced `/loop` ticks that did little yet sent the whole conversation again.
 
 On the Hints tab, `y` adopts a hint. tally records the rule's metric, the expected saving and the date. After `recheckDays` it reminds you and shows expected against actual saving, for the rules that have a before-and-after metric.
 
