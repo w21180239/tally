@@ -67,6 +67,29 @@ describe("buildReport", () => {
     expect(md).not.toMatch(/^- Prompt$/m);
   });
 
+  test("the report file is ASCII: window-style cents, dots and ellipses in hint text are spelled out", async () => {
+    const rule: HintRule = {
+      id: "stub-rule",
+      run: () => [
+        {
+          rule: "stub-rule",
+          title: "Cache · rebuilt",
+          usd: 1.5,
+          summary: "45.53¢ of $3.10 · 0.2¢ a call…",
+          action: "Compact first · then “step away” → later",
+          evidence: [{ label: "Spend", detail: "98.19¢ — 3 × sessions", kind: "text" }],
+          short: "stub",
+        },
+      ],
+    };
+    const md = renderMarkdown(await withRule(rule, () => buildReport(inputOf(summaryOf([usageRow("a", 1)])), OPTS)));
+    expect(md).not.toMatch(/[^\x00-\x7F]/);
+    expect(md).toMatch(/^### \d+\. Cache - rebuilt$/m);
+    expect(md).toContain("$0.46 of $3.10 - $0.0020 a call...");
+    expect(md).toContain('Action: Compact first - then "step away" -> later');
+    expect(md).toContain("- Spend: $0.98 - 3 x sessions");
+  });
+
   test("a hint whose only evidence was blanked prints no empty Evidence heading", async () => {
     const rule = stub([{ label: "Prompt", detail: "private", kind: "title" }]);
     const md = renderMarkdown(await withRule(rule, () => buildReport(inputOf(summaryOf([usageRow("a", 1)])), OPTS)));

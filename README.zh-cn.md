@@ -177,7 +177,7 @@ claude plugin marketplace remove tally
 | `shareDetail` | numbers | `numbers`、`repos` 或 `full`，见[隐私](#隐私)。 |
 | `redactEvidence` | false | 窗口里的证据也像报告一样脱敏：命令只留程序名，标题清空，路径只留文件名。 |
 | `recheckDays` | 14 | 采纳一条提示后过多少天，tally 去核对节省是否真的保持住了。 |
-| `open` | before-first-message | `before-first-message` 在会话开始时打开、你发出第一条消息后折叠；`always` 一直保持打开；`never` 只在 `/tally` 时打开。 |
+| `open` | before-first-message | `before-first-message` 在会话开始时打开、你发出第一条消息后折叠；`always` 一直保持打开；`never` 会话开始时什么都不显示，折叠线也不显示，直到你运行 `/tally`。 |
 | `money` | cents-and-dollars | `cents-and-dollars` 在 1 美元以下显示美分、以上显示美元；`cents` 和 `dollars` 全程使用同一个单位。 |
 | `decimals` | auto | `auto` 去掉末尾多余的零；`0` 到 `4` 让每个金额固定显示该位数。 |
 | `desktopRow` | true | 桌面应用里 prompt 上方的一行摘要栏。 |

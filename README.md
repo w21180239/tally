@@ -177,7 +177,7 @@ Set the options through the plugin settings (`userConfig` in `plugin.json`), for
 | `shareDetail` | numbers | `numbers`, `repos` or `full`. See [Privacy](#privacy). |
 | `redactEvidence` | false | Redact the evidence in the window the way the report does: commands keep only the program name, titles are blank, paths keep only the file name. |
 | `recheckDays` | 14 | Days after you adopt a hint before tally checks whether the saving held. |
-| `open` | before-first-message | `before-first-message` opens at session start and folds on your first message; `always` keeps it open; `never` opens it only on `/tally`. |
+| `open` | before-first-message | `before-first-message` opens at session start and folds on your first message; `always` keeps it open; `never` shows nothing at session start, not even the folded line, until you run `/tally`. |
 | `money` | cents-and-dollars | `cents-and-dollars` shows cents under $1 and dollars above; `cents` and `dollars` use one unit throughout. |
 | `decimals` | auto | `auto` trims trailing zeros; `0` to `4` fixes the decimals on every amount. |
 | `desktopRow` | true | A one-line summary strip over the prompt in the desktop app. |
