@@ -41,6 +41,9 @@ let resolve = memoResolver(prices);
 // False until the table in effect (builtin joined with the stored fetch) has been read once.
 let pricesRead = false;
 let pending: { id: string; done: Promise<void> } | undefined;
+// The session id the live state and the window's view were last seated for, and a seating in flight.
+let seated = "";
+let seating = false;
 let ledgerAt = 0;
 
 function takePrices(table: PriceTable): void {
@@ -110,6 +113,7 @@ async function noteLimits($: EngineInterface): Promise<void> {
 // Starts over for `id`: zeroed, then the earlier launches' cost and cache life from the index in the background.
 async function begin($: EngineInterface, id: string): Promise<void> {
   const now = await $.clock.now();
+  seated = id;
   await update($, liveAtom, () => emptyLive(id, now, 0));
   ledgerAt = now;
   inBackground($, () => refresh($, id));
@@ -136,6 +140,27 @@ async function ensure($: EngineInterface): Promise<LiveState> {
     throw err;
   }
   return read($, liveAtom);
+}
+
+/**
+ * /clear, /resume and /branch change the session id with no `session.start`. Called from a redraw and shortly after
+ * `session.end`, this seats the live state and the window's view for the new id at once, so a folded line or an open
+ * window is back without waiting for the next prompt. Does nothing before the first seating. Never rejects.
+ */
+export async function watchSession($: EngineInterface): Promise<void> {
+  if (seated === "" || seating) return;
+  seating = true;
+  try {
+    const id = await idOf($);
+    if (id === "" || id === seated) return;
+    await ensure($);
+    await reseatView($);
+    invalidateWindow($);
+  } catch {
+    /* the next draw or prompt tries again */
+  } finally {
+    seating = false;
+  }
 }
 
 /** Sets the live state up for the session that just started; `session.start`'s own handler calls it after `next`. */

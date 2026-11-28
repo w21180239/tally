@@ -149,14 +149,14 @@ async function build($: EngineInterface, want: HintsWant, now: number): Promise<
     span: await runRules(HINT_RULES, inputOf(sh, "span", spanSummary, want.sessionId), tick),
   };
   await update($, hintsAtom, () => data);
-  if (want.sessionId !== "") await update($, topAtom, () => ({ sessionId: want.sessionId, at: now, hint: session[0] ?? null }));
+  if (want.sessionId !== "") await update($, topAtom, () => ({ sessionId: want.sessionId, at: now, hint: session[0] ?? null, count: session.length }));
   invalidateWindow($);
 }
 
 /** The live session's leading hint, kept apart from the tab's findings so the folded line needs no span scan. */
-export type TopHint = { sessionId: string; at: number; hint: Hint | null };
-const EMPTY_TOP: TopHint = { sessionId: "", at: 0, hint: null };
-const topAtom = atom({ plugin: "tally", key: "top-hint" } as const, EMPTY_TOP, { shape: "top-hint-1" });
+export type TopHint = { sessionId: string; at: number; hint: Hint | null; /** How many hints the session has. */ count: number };
+const EMPTY_TOP: TopHint = { sessionId: "", at: 0, hint: null, count: 0 };
+const topAtom = atom({ plugin: "tally", key: "top-hint" } as const, EMPTY_TOP, { shape: "top-hint-2" });
 
 export function readTopHint($: EngineInterface): Promise<TopHint> {
   return read($, topAtom);
@@ -178,7 +178,7 @@ async function buildTop($: EngineInterface, sessionId: string, now: number): Pro
   const sh = await sharedOf($, loc.cfg, snaps, now, tick);
   const own = await summarizeAsync(shard === null ? [] : [shard], sh.prices, { span: "session", sessionId, nowMs: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), usage: true }, tick);
   const hints = await runRules(HINT_RULES, inputOf(sh, "session", own, sessionId), tick);
-  await update($, topAtom, () => ({ sessionId, at: now, hint: hints[0] ?? null }));
+  await update($, topAtom, () => ({ sessionId, at: now, hint: hints[0] ?? null, count: hints.length }));
   invalidateWindow($);
 }
 
@@ -192,7 +192,7 @@ export async function refreshTop($: EngineInterface, sessionId: string): Promise
       .catch(async () => {
         // Try again after the retry gap; the line shows no hint meanwhile.
         try {
-          await update($, topAtom, () => ({ sessionId, at: now - HINTS_INTERVAL_MS + HINTS_RETRY_MS, hint: null }));
+          await update($, topAtom, () => ({ sessionId, at: now - HINTS_INTERVAL_MS + HINTS_RETRY_MS, hint: null, count: 0 }));
         } catch {
           /* nothing to keep it in */
         }

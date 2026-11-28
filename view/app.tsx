@@ -18,7 +18,8 @@ import { attempt, foldByHand, inBackground, openWindow, readChart, readFoot, rea
 import { drawInfoRow } from "./desktop-row.tsx";
 import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
-import { readLive } from "../engine/live.ts";
+import { readLive, watchSession } from "../engine/live.ts";
+import { noteMetrics } from "../engine/scroll.ts";
 import { glanceLines, glanceOf, moneyOf, windowData } from "./data.ts";
 import type { WindowData } from "./data.ts";
 import { layoutOf } from "./layout.ts";
@@ -32,7 +33,24 @@ import { drawSession } from "./tabs/session.tsx";
 import { drawUsage } from "./tabs/usage.tsx";
 import { tableOf } from "./table.ts";
 import type { Table } from "./table.ts";
+import { hintLine, heightOf, windowOf, withAutoFocus } from "./scroll.ts";
+import { tabFaces } from "./tabbar.ts";
 import { SEP } from "./theme.ts";
+
+/** How many hints the session has, as the Hints tab's face shows it; 0 until the leading hint is built. */
+async function hintCount($: EngineInterface): Promise<number> {
+  const [live, top] = await Promise.all([readLive($), readTopHint($)]);
+  return top.sessionId === live.sessionId ? top.count : 0;
+}
+
+/** The rows with `autoFocus` on the first Button among them, so the focus ring starts in the content and not on the tab bar. */
+function focusFirst(rows: RenderElement[]): RenderElement[] {
+  for (let i = 0; i < rows.length; i++) {
+    const hit = withAutoFocus(rows[i] as RenderElement);
+    if (hit !== null) return [...rows.slice(0, i), hit, ...rows.slice(i + 1)];
+  }
+  return rows;
+}
 
 /** Everything a drawing reads, built from the atoms and the clock. */
 async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "decimals">): Promise<WindowData> {
@@ -133,23 +151,31 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   const span = spanFor(tab, view.span);
   const ctx: KeyCtx = { machines: settings.syncDir !== "" };
 
+  // On the terminal the bar is one row at any width: digits shown, names shortened as the width falls, the Hints face
+  // carrying the session's hint count. Elsewhere the buttons wrap as before.
+  const bar = t.hasKeys ? tabFaces(cols, await hintCount($)) : null;
   const tabBar = (
-    <Box key="tabs" flexDirection="row" columnGap={1} flexWrap="wrap">
-      {TABS.map((s) => (
-        <Button
-          key={`tab-${s.tab}`}
-          label={isNarrow ? s.short : s.label}
-          hotkey={s.hotkey}
-          {...(t.hasKeys && !isNarrow && { plain: true as const })}
-          {...(s.tab === tab ? { variant: "primary" as const } : { dimColor: true })}
-          onPress={() => attempt($, () => showTab($, s.tab))}
-        >
-          {isNarrow ? s.short : s.label}
+    <Box key="tabs" flexDirection="row" columnGap={1} {...(bar === null && { flexWrap: "wrap" as const })}>
+      {TABS.map((s) => {
+        const text = bar === null ? (isNarrow ? s.short : s.label) : bar.faces[s.tab];
+        return (
+          <Button
+            key={`tab-${s.tab}`}
+            label={text}
+            hotkey={s.hotkey}
+            {...(bar !== null && { plain: true as const })}
+            {...(s.tab === tab ? { variant: "primary" as const } : { dimColor: true })}
+            onPress={() => attempt($, () => showTab($, s.tab))}
+          >
+            {text}
+          </Button>
+        );
+      })}
+      {(bar === null || bar.fold !== "") && (
+        <Button key="tally-pane-fold" label="fold" dimColor {...(bar !== null && { plain: true as const })} onPress={() => attempt($, () => foldByHand($))}>
+          {bar === null ? "\u{00d7} fold" : bar.fold}
         </Button>
-      ))}
-      <Button key="tally-pane-fold" label="fold" dimColor onPress={() => attempt($, () => foldByHand($))}>
-        {"\u{00d7} fold"}
-      </Button>
+      )}
     </Box>
   );
 
@@ -304,6 +330,33 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   const head = [tabBar, ...switches, ...(switches.length > 0 ? [rule(t, cols)] : [])];
   const foots = [...(keys === null ? [] : [keys]), rule(t, cols), ...drawFoot(t, d, cols)];
 
+  if (placement === "dock" && t.hasKeys) {
+    // Docked, the tree is the dock's height: head and foot stay put and the tab's rows scroll between them. Rows are
+    // windowed here, a row at a time; `ui.scroll` (wheel, PgUp/PgDn) moves the window (engine/scroll.ts).
+    const fixed = [...head, ...foots].reduce((n, el) => n + heightOf(el, cols), 0);
+    const win = windowOf(tabRows, cols, rows - fixed, view.scroll);
+    noteMetrics({ active: win.overflows, heights: win.heights, capacity: win.capacity, maxOffset: win.maxOffset });
+    return (
+      <Box key="window" flexDirection="column" height={rows}>
+        <Box flexDirection="column" flexShrink={0}>
+          {head}
+        </Box>
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          <Box key={`body-${tab}`} flexDirection="column" flexShrink={0}>
+            {focusFirst(win.rows)}
+          </Box>
+        </Box>
+        <Box flexDirection="column" flexShrink={0}>
+          {win.overflows && (
+            <Text key="scroll-hint" dimColor wrap="truncate-end">
+              {hintLine(win, cols)}
+            </Text>
+          )}
+          {foots}
+        </Box>
+      </Box>
+    );
+  }
   if (placement === "dock") {
     // Docked, the tree is the dock's height: the foot stays at the bottom whatever the tab holds.
     return (
@@ -350,6 +403,8 @@ export async function drawBand(
   settings: Settings,
 ): Promise<RenderElement> {
   if (e.props.hasSurvey || (e.surface !== "terminal" && e.surface !== "desktop")) return next(e);
+  // A /clear or /resume changes the session id with no start event: seat the view for it on this draw.
+  attempt($, () => watchSession($));
   const onOpen = () => attempt($, () => openWindow($, settings, { asked: true }));
   if (e.surface === "desktop" && settings.desktopRow) return drawInfoRow($, e, await loadData($, settings), onOpen);
   if ((await readView($)).mode !== "folded") return next(e);

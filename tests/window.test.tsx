@@ -96,6 +96,7 @@ function rig(on: On, store: Record<string, unknown> = {}, world?: World): Rig {
     r.redraws.n++;
     return { value: undefined };
   });
+  on("ui.scroll", () => ({}));
   on("ui.panes", () => ({ value: r.opened.length > 0 && r.closed.length < r.opened.length ? [{ id: PLUGIN, title: PLUGIN, isShown: true, isFocused: false, isPlaced: true }] : [] }));
   on("session.id", () => ({ value: r.sid.v }));
   on("session.cwd", () => ({ value: CWD }));
@@ -276,18 +277,35 @@ describe("window: layouts", () => {
     await ui.unmount();
   });
 
-  test("a body of 40 to 69 columns draws the tab faces without their digits", async ($, on) => {
+  test("on the terminal the tab bar is one row with its digits at every dock width (U3)", async ($, on) => {
     const r = rig(on);
     await start($);
     await r.clock.settle();
-    const narrow: Omit<RenderInput<"Pane">, "surface"> = { ...PANE, props: { ...PANE.props, bodyColumns: 50 } };
-    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...narrow });
-    // Narrow, the faces are plain labels; at 70 columns and up on the terminal each also shows its digit.
+    for (const bodyColumns of [40, 47, 55, 62, 89]) {
+      const dock: Omit<RenderInput<"Pane">, "surface"> = { ...PANE, props: { ...PANE.props, bodyColumns } };
+      const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...dock });
+      const bar = await ui.find({ key: "tabs" });
+      expect(bar?.props.flexWrap).toBeUndefined();
+      const buttons = await ui.findAll({ type: "Button" });
+      const faces = buttons.filter((b) => String(b.props.key).startsWith("tab-"));
+      expect(faces).toHaveLength(6);
+      expect(faces.every((b) => b.props.plain === true && typeof b.props.hotkey === "string")).toBe(true);
+      // Each button draws `key: text`, one cell apart, and the fold button after them.
+      const fold = buttons.find((b) => b.props.key === "tally-pane-fold");
+      const width = faces.reduce((n, b) => n + String(b.props.hotkey).length + 2 + b.text.length, 0) + faces.length - 1 + (fold === undefined ? 0 : 1 + fold.text.length);
+      expect(width).toBeLessThanOrEqual(bodyColumns);
+      await ui.unmount();
+    }
+  });
+
+  test("the non-terminal surfaces keep wrapping bracketed tab buttons", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "vscode", ...PANE });
+    expect((await ui.find({ key: "tabs" }))?.props.flexWrap).toBe("wrap");
     expect((await ui.find({ key: "tab-session" }))?.props.plain).toBeUndefined();
     await ui.unmount();
-    const ui2 = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect((await ui2.find({ key: "tab-session" }))?.props.plain).toBe(true);
-    await ui2.unmount();
   });
 
   test("a docked body does not shrink at any width: rows keep their height and the dock clips (issue #7)", async ($, on) => {
@@ -493,7 +511,8 @@ describe("window: open, fold, remember", () => {
     await r.clock.settle();
     expect(r.opened).toHaveLength(0);
     const out = await $.command.run(run(""));
-    expect(out.text).toBe("tally opened.");
+    // The host puts "tally:" before a reply: it does not repeat in the text.
+    expect(out.text).toBe("opened.");
     expect(r.opened).toHaveLength(1);
     expect(r.opened[0]?.focus).toBe(true);
   });
@@ -594,7 +613,7 @@ describe("/tally routing", () => {
     await start($);
     await r.clock.settle();
     const out = await $.command.run(run("hints 24h"));
-    expect(out.text).toBe("tally opened on hints 24h.");
+    expect(out.text).toBe("opened hints 24h.");
     expect(r.opened).toHaveLength(1);
     expect(r.stored.get("tab")).toBe("hints");
     expect(r.stored.get("span")).toBe("24h");
@@ -626,7 +645,7 @@ describe("/tally routing", () => {
     expect(r.config.sets).toEqual([{ key: "tally.money", value: "dollars" }]);
     expect(r.opened.length).toBe(before);
     const both = await $.command.run(run("usage money dollars"));
-    expect(both.text).toBe("tally opened on usage, money set to dollars.");
+    expect(both.text).toBe("opened usage, money set to dollars.");
     expect(r.opened.length).toBe(before + 1);
   });
 
@@ -771,15 +790,29 @@ describe("window: the chart reads only the days it draws", () => {
 });
 
 describe("window: held back or not placed", () => {
-  test("a held-back open with any reason but no-surface starts folded", async ($, on) => {
+  test("only an unasked hold-back starts folded", async ($, on) => {
     const r = rig(on);
-    r.place.v = () => ({ isPlaced: false, reason: "terminal 120 columns, floor 144" });
+    r.place.v = () => ({ isPlaced: false, reason: "unasked below 144 columns (120 now): placed when the person opens it" });
     await start($);
     await r.clock.settle();
     expect(r.closed).toEqual([PLUGIN]);
     const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
-    expect(await band.find({ key: "tally-fold" })).toBeDefined();
+    expect(await band.find({ key: "tally-fold" }))
+      .toBeDefined();
     await band.unmount();
+  });
+
+  test("any other not-placed reason leaves the pane open and the person's choice unwritten (U9)", async ($, on) => {
+    const r = rig(on);
+    r.place.v = () => ({ isPlaced: false, reason: "refused: another plugin holds the pane" });
+    await start($);
+    await r.clock.settle();
+    expect(r.closed).toEqual([]);
+    expect(r.stored.get("mode")).toBeUndefined();
+    // An asked open (the command) that is not placed does not fold either, and keeps no folded mode.
+    await $.command.run(run(""));
+    expect(r.closed).toEqual([]);
+    expect(r.stored.get("mode")).not.toBe("folded");
   });
 
   test("no-surface keeps the pane open for a surface that attaches later", async ($, on) => {
@@ -853,5 +886,177 @@ describe("window: the leading hint", () => {
     await r.clock.settle();
     expect((await band.find({ key: "tally-fold" }))?.props.label).not.toContain("\u{25b2}");
     await band.unmount();
+  });
+
+  test("the Hints face carries the session's hint count (U27)", async ($, on) => {
+    const world = worldOf();
+    await seedFast(world);
+    const r = rig(on, {}, world);
+    await start($);
+    await r.clock.settle();
+    const pane = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await r.clock.settle();
+    expect(String((await pane.find({ key: "tab-hints" }))?.props.label)).toMatch(/^Hints\(\d+\)$/);
+    expect(String((await pane.find({ key: "tab-help" }))?.props.label)).toBe("Help");
+    await pane.unmount();
+  });
+
+  test("the focus ring starts on the first button of the content, not on the tab bar (U10)", async ($, on) => {
+    const world = worldOf();
+    await seedFast(world);
+    const r = rig(on, {}, world);
+    await start($);
+    await r.clock.settle();
+    const pane = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await pane.press({ key: "tab-hints" });
+    await r.clock.settle();
+    const auto = (await pane.findAll({ type: "Button" })).filter((b) => b.props.autoFocus === true);
+    expect(auto).toHaveLength(1);
+    expect(String(auto[0]?.props.key).startsWith("tab-")).toBe(false);
+    expect(auto[0]?.props.key).not.toBe("tally-pane-fold");
+    await pane.unmount();
+  });
+});
+
+const dockOf = (bodyRows: number, bodyColumns = 62): Omit<RenderInput<"Pane">, "surface"> => ({ ...PANE, props: { ...PANE.props, bodyColumns, scroll: { offset: 0, bodyRows } } });
+const scrollOf = (by: number, bodyRows: number, extra: Record<string, unknown> = {}) => ({ component: "Pane" as const, requestId: PLUGIN, offset: 0, by, bodyRows, contentRows: bodyRows, origin: { kind: "person" as const }, ...extra });
+// A Text's key does not reach the tree (only Box and Button keep theirs), so the hint line is found by what it says.
+const HINT_LINE = /^[\u{2191}\u{2193}] \d+ (above|more)/u;
+const hintOf = async (ui: { find: (q: { type: string; text: RegExp }) => Promise<{ text: string } | undefined> }): Promise<string> => (await ui.find({ type: "Text", text: HINT_LINE }))?.text ?? "";
+
+describe("window: scrolling a docked tab (U1)", () => {
+  test("a tab taller than the dock shows a window of its rows with a line saying how much lies beyond", async ($, on) => {
+    const r = rig(on, { tab: "help" });
+    await start($);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...dockOf(24) });
+    await r.clock.settle();
+    expect(await hintOf(ui)).toMatch(/^\u{2193} \d+ more/u);
+    expect(await ui.find(TEXT(/^Data sources$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Version$/))).toBeUndefined();
+    // Head and foot stay: the tab bar and the key line are drawn whatever the window shows.
+    expect(await ui.find({ key: "tabs" })).toBeDefined();
+    expect(await ui.find(TEXT(/^keys active \u{b7} /u))).toBeDefined();
+    expect((await ui.find({ key: "window" }))?.props.height).toBe(24);
+    await ui.unmount();
+  });
+
+  test("page and wheel moves reach the last row, count above and below, and a tab change starts at the top", async ($, on) => {
+    const r = rig(on, { tab: "help" });
+    await start($);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...dockOf(24) });
+    await r.clock.settle();
+    // A wheel notch moves a few rows and the hint then counts rows above.
+    await $.ui.scroll(scrollOf(1, 24, { pointer: { column: 3, row: 5 } }));
+    await r.clock.settle();
+    expect(await hintOf(ui)).toMatch(/^\u{2191} \d+ above \u{b7} \u{2193} \d+ more/u);
+    // Pages (a move of the pane's height) reach the end, where only "above" is left.
+    for (let i = 0; i < 20; i++) {
+      await $.ui.scroll(scrollOf(24, 24));
+      await r.clock.settle();
+    }
+    expect(await hintOf(ui)).toMatch(/^\u{2191} \d+ above/u);
+    expect(await hintOf(ui)).not.toContain("more");
+    expect(await ui.find(TEXT(/^Version$/))).toBeDefined();
+    // A page up moves back.
+    await $.ui.scroll(scrollOf(-24, 24));
+    await r.clock.settle();
+    expect(await hintOf(ui)).toContain("more");
+    // Another tab starts at the top.
+    await ui.press({ key: "tab-usage" });
+    await ui.press({ key: "tab-help" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/^Data sources$/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("a tab that fits draws no hint line and the scroll hook leaves the move to the engine", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const roomy = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await r.clock.settle();
+    expect(await hintOf(roomy)).toBe("");
+    expect(await $.ui.scroll(scrollOf(3, 40))).toEqual({});
+    await roomy.unmount();
+  });
+
+  test("an inline frame is not windowed: the whole tab is drawn and the engine scrolls it", async ($, on) => {
+    const r = rig(on, { tab: "help" });
+    await start($);
+    await r.clock.settle();
+    const inline: Omit<RenderInput<"Pane">, "surface"> = { ...PANE, viewport: { columns: 200, rows: 50, isFullscreen: false }, props: { ...PANE.props, placement: "inline", bodyColumns: 100, scroll: { offset: 0, bodyRows: 12 } } };
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...inline });
+    await r.clock.settle();
+    expect(await hintOf(ui)).toBe("");
+    expect(await ui.find(TEXT(/^Version$/))).toBeDefined();
+    await ui.unmount();
+  });
+});
+
+describe("window: /clear, Esc with a list open, close (U2, U5, #15)", () => {
+  const clear = ($: Engine, r: Rig) => $.session.end({ reason: "clear", sessionId: r.sid.v, resume: { id: r.sid.v } } as never);
+
+  test("a /clear is noticed on the next draw, with no prompt: the stored fold shows its line (U2)", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    await clear($, r);
+    // The person had folded the window: the store says so, the view still says open.
+    r.stored.set("mode", "folded");
+    r.sid.v = "s-2";
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    await r.clock.settle();
+    expect(await band.find({ key: "tally-fold" })).toBeDefined();
+    await band.unmount();
+  });
+
+  test("session.end with clear looks for the new id shortly after, with no draw and no prompt (U2)", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    await clear($, r);
+    r.stored.set("tab", "hints");
+    r.sid.v = "s-2";
+    await r.clock.advance(400);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    expect(await ui.find({ key: "body-hints" })).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("a session that starts with the stored fold asks the band to draw its line at once (#15)", async ($, on) => {
+    const r = rig(on, { mode: "folded" });
+    await start($);
+    // Before any timer: the redraw request is already out.
+    expect(r.redraws.n).toBeGreaterThan(0);
+    await r.clock.settle();
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect(await band.find({ key: "tally-fold" })).toBeDefined();
+    await band.unmount();
+  });
+
+  test("/tally close folds as Esc does, keeps it for the next session and shows the line", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const out = await $.command.run(run("close"));
+    expect(out.text).toBe("folded.");
+    expect(r.closed).toEqual([PLUGIN]);
+    expect(r.stored.get("mode")).toBe("folded");
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect(await band.find({ key: "tally-fold" })).toBeDefined();
+    await band.unmount();
+  });
+
+  test("/money with no value answers with the concrete usage (U15 wiring)", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const out = await $.command.run(run("money"));
+    expect(out.text).toContain("needs a value");
+    expect(out.text).toContain("cents");
+    expect(out.text).not.toContain("is not a tab");
   });
 });

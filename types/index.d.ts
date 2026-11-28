@@ -59,6 +59,7 @@ export interface TallyView {
   shown: string[];
   ctxAgent: string;
   transcript: boolean;
+  scroll: number;
 }
 
 export interface TallyFoot {
@@ -244,6 +245,7 @@ export interface TallyTopHint {
   sessionId: string;
   at: number;
   hint: TallyHint | null;
+  count: number;
 }
 
 export interface TallyAdopted {

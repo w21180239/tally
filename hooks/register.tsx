@@ -1,5 +1,5 @@
 import type { Register } from "claude-code";
-import { parseArgs } from "../core/args.ts";
+import { parseArgs, unknownText } from "../core/args.ts";
 import { openTarget } from "../core/open-target.ts";
 import { readSettings } from "../core/settings.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
@@ -15,8 +15,9 @@ import { syncHerdr } from "../engine/herdr.ts";
 import { REPORT_TOOL_FULL, argsOf, registerReportTool, reportCommand, reportText, snapshotSoon } from "../engine/report-tool.ts";
 import { resetSync, runSync, syncSoon } from "../engine/sync.ts";
 import { syncExtra } from "../engine/sync-extra.ts";
-import { readLive, startLive, updatePrices, wireLive } from "../engine/live.ts";
-import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, logIssue, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
+import { readLive, startLive, updatePrices, watchSession, wireLive } from "../engine/live.ts";
+import { wireScroll } from "../engine/scroll.ts";
+import { COMMAND, PANE_ID, applySettings, attempt, closeListFirst, foldByHand, invalidateWindow, keepFolded, logIssue, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
 import { startSessionView } from "../engine/session-view.ts";
 import { startTimers } from "../engine/timers.ts";
 import { drawBand, drawPane } from "../view/app.tsx";
@@ -24,7 +25,6 @@ import { drawBand, drawPane } from "../view/app.tsx";
 const RECHECK_DELAY_MS = 10_000;
 // The 24h snapshot slides with the clock even when a scan finds nothing new, so the owner refreshes it on this beat too.
 const SNAPSHOT_EVERY_MS = 600_000;
-const USAGE = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), report, sync or debug";
 
 export const register: Register = (on, options) => {
   // A change in the config menu reloads the module with the new options, so this runs again.
@@ -37,12 +37,13 @@ export const register: Register = (on, options) => {
   let gen = 0;
   useSettings(settings);
   wireLive(on);
+  wireScroll(on);
   on("session.start", async ($, e, next) => {
     const started = await next(e);
     await $.command.register({
       name: COMMAND,
-      description: "Open the tally window: spend, context and hints. A tab or 24h/30d opens it there; money, decimals, open or row sets an option; report [days] [repo] writes a spend report file; debug shows the scan",
-      argumentHint: "[session|usage|context|history|hints|help|24h|30d] or money <cents-and-dollars|cents|dollars> or decimals <auto|0-4> or row <on|off> or report [days] [repo]",
+      description: "Open the tally window: spend, context and hints. A tab or 24h/30d opens it there; close folds it; money, decimals, open or row sets an option; report [days] [repo] writes a spend report file; debug shows the scan",
+      argumentHint: "[session|usage|context|history|hints|help|24h|30d] or money <cents-and-dollars|cents|dollars> or decimals <auto|0-4> or row <on|off> or close or report [days] [repo]",
     });
     // The report tool is optional too: without it the window and the command still work.
     await registerReportTool($).catch(() => {});
@@ -107,7 +108,11 @@ export const register: Register = (on, options) => {
     return started;
   });
 
-  on("session.end", async (_$, e, next) => {
+  on("session.end", async ($, e, next) => {
+    // The new id is not known here, and no session.start follows: look again shortly, and every redraw looks too.
+    if (e.reason === "clear" || e.reason === "resume") {
+      $.clock.after(300, () => attempt($, () => watchSession($)));
+    }
     // /clear and an in-process /resume end the session but the process goes on with no session.start: the scanner
     // (and its lease heartbeat) and the redraw timers keep running, and a start still waiting on its delay stays
     // valid. Only the reasons that end the process stop them.
@@ -128,6 +133,8 @@ export const register: Register = (on, options) => {
   on("ui.close", { id: PANE_ID }, async ($, e, next) => {
     // Whatever goes wrong here, the close itself goes through: a hook that fails is skipped, and the fold would be lost silently.
     try {
+      // Esc with the agent list open closes the list first; a second Esc folds. Answering without `next` keeps the pane open.
+      if (await closeListFirst($, e.origin.kind)) return;
       // The person's close always counts, even with the view already folded (the first-message fold sets only the view).
       // Our own fold, origin plugin, set its mode before it closed the pane.
       if (e.origin.kind === "person" || (e.origin.kind !== "unload" && (await readView($)).mode !== "folded")) await keepFolded($);
@@ -151,7 +158,7 @@ export const register: Register = (on, options) => {
 
   on("command.run", { command: COMMAND }, async ($, e) => {
     const a = parseArgs(e.args);
-    if (a.unknown.length > 0) return { text: `"${a.unknown[0]}" is not ${USAGE}.` };
+    if (a.unknown.length > 0) return { text: unknownText(e.args, a) };
     if (a.sub === "debug") {
       const loc = await locate($);
       const projects = await listProjects($, loc.roots);
@@ -162,6 +169,11 @@ export const register: Register = (on, options) => {
         return { text: await summaryJson($, loc.cfg, projects, now, -new Date(now).getTimezoneOffset(), await currentPrices($), progress, tick) };
       }
       return { text: await debugText($, loc.cfg, projects, progress, await $.clock.now(), () => $.clock.sleep(0)) };
+    }
+    // The typed way to fold, as Esc does (the main screen reports no clicks): the fold is kept for the next session too.
+    if (a.sub === "close") {
+      await foldByHand($);
+      return { text: "folded." };
     }
     if (a.sub === "report") return { text: await reportCommand($, { ...(a.days !== undefined && { days: a.days }), ...(a.repo !== undefined && { repo: a.repo }) }) };
     if (a.sub === "sync") {
@@ -190,7 +202,8 @@ export const register: Register = (on, options) => {
       said.push(...done.said);
       if (done.error !== undefined) return { text: `${said.length === 0 ? "" : `${said.join(", ")}; `}${done.error}` };
     }
-    if (opens) said.unshift(target.tab === undefined && target.span === undefined ? "tally opened" : `tally opened on ${[target.tab, target.span].filter((x) => x !== undefined).join(" ")}`);
+    // The host puts `tally:` before a reply, so the text itself starts with the verb.
+    if (opens) said.unshift(target.tab === undefined && target.span === undefined ? "opened" : `opened ${[target.tab, target.span].filter((x) => x !== undefined).join(" ")}`);
     return { text: `${said.join(", ")}.` };
   });
 };

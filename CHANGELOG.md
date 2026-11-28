@@ -4,6 +4,11 @@ Release notes are cut from this file. Newest first.
 
 ## Unreleased
 
+- A docked tab taller than the dock now scrolls under a fixed tab bar and foot: mouse wheel, `PgUp`, `PgDn` and the arrow keys while the window holds the keyboard, with a line saying how many rows lie above and below. The Help tab reaches its version line and Usage 30d reaches its cache write section. The scroll resets when the tab, span or list changes.
+- The tab bar stays on one row at any dock width with its digits shown, shortens the tab names as the width falls, and the Hints tab shows the session's hint count. The focus ring starts on the first row of the content.
+- `/tally close` folds the window as `esc` does and keeps it folded for the next session.
+- A session that starts with the window folded draws the folded line at once (#15), and a `/clear` or `/resume` brings the line or window back without waiting for the next message.
+- `esc` with the agent list open closes the list first. An open the engine did not hold back for width no longer folds the window. The reply to `/tally` no longer repeats the `tally:` prefix, and a missing or wrong setting value answers with the values it takes.
 - The Usage tab on the session span now fills from the live session, so a new session no longer reads "No requests" while the Session tab already shows cost; it refreshes every 10 seconds, and the index's own rows take over once it has caught up.
 - Hints worth under a cent are no longer listed, and their amounts follow the shared money format (cents under a dollar). tally no longer reports itself as an unused plugin or MCP server.
 - `/tally` accepts `tokens` (Usage), `settings` (Help), `money both|dollar|cent|dollars only` and `row show|hide`. Command errors give the concrete usage and the allowed values.
@@ -13,7 +18,6 @@ Release notes are cut from this file. Newest first.
 - The cache countdown shows whole minutes and `<1m` instead of seconds.
 - The recheck toast names the hint's title and follows the `money` and `decimals` settings (`tally: Cache expired while idle: expected save $7.13, actual $5.80`).
 - README and docs: key and word tables (English and Chinese), `/tally close` and `PgUp`/`PgDn` scrolling.
-
 - Fixed the window coming back every session after it was closed: a fold the store refused (a locked file on Windows, a full disk) is now logged and written again, and the person's close always counts. The pane has a fold button, and on the main screen, where Claude Code reports no clicks, the folded line names `/tally to open`.
 
 ## 1.0.0 - 2026-11-28
