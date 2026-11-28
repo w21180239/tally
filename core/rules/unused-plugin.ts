@@ -1,11 +1,11 @@
 import type { HintRule } from "../hint.ts";
-import { LISTED, residentUsdPerToken, tokensText, usdText } from "./shared.ts";
+import { LISTED, isSelf, residentUsdPerToken, tokensText, usdText } from "./shared.ts";
 
 export const unusedPlugin: HintRule = {
   id: "unused-plugin",
   run: ({ summary, plugins, prices }) => {
     const perToken = residentUsdPerToken(summary, prices);
-    const idle = plugins.filter((p) => !p.used && p.tokensPerRequest > 0);
+    const idle = plugins.filter((p) => !p.used && p.tokensPerRequest > 0 && !isSelf(p.name));
     if (idle.length === 0 || perToken <= 0) return [];
     const rows = idle.map((p) => ({ p, usd: p.tokensPerRequest * perToken })).sort((a, b) => b.usd - a.usd || (a.p.name < b.p.name ? -1 : 1));
     const usd = rows.reduce((n, r) => n + r.usd, 0);

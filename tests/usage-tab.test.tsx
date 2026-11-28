@@ -4,7 +4,7 @@ import { describe, expect, mock, test } from "claude-code/testing";
 import type { Shard } from "../core/shard.ts";
 import type { ToolUse } from "../core/types.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
-import { needsUsage } from "../engine/usage-view.ts";
+import { USAGE_INTERVAL_MS, needsUsage } from "../engine/usage-view.ts";
 import { keyLine } from "../view/keys.ts";
 import { stepAgent } from "../view/tabs/usage.tsx";
 import { bash, inAgent, prompt, req, result } from "./fixtures/rows.ts";
@@ -79,6 +79,13 @@ function rig(on: On): Rig {
   });
   on("tool.call", () => ({ result: {}, text: "ok" }));
   return r;
+}
+
+// A step is tallied once its stream has been read to the end.
+async function stepOnce($: Engine, input: Parameters<Engine["turn"]["step"]>[0]): Promise<void> {
+  const stream = $.turn.step(input);
+  for await (const chunk of stream) void chunk;
+  await stream.result;
 }
 
 const start = ($: Engine) => $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
@@ -288,7 +295,7 @@ describe("usage tab", () => {
     await start($);
     await r.clock.settle();
     await $.prompt.submit({ text: "go", wait: false, origin: { kind: "composer" } } as never);
-    await $.turn.step({ turnId: "t1", index: 0, model: OPUS, messageCount: 2 } as never).result;
+    await stepOnce($, { turnId: "t1", index: 0, model: OPUS, messageCount: 2 } as never);
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     await ui.press({ key: "kind-cacheRead" });
@@ -296,6 +303,44 @@ describe("usage tab", () => {
     expect(await ui.find({ key: "body-usage" })).toBeDefined();
     expect(r.stored.get("span")).toBe("session");
     expect(await ui.find(TEXT(/^Cache read$/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("a new session shows its live requests before the index has read any", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    await $.prompt.submit({ text: "go", wait: false, origin: { kind: "composer" } } as never);
+    await stepOnce($, { turnId: "t1", index: 0, model: OPUS, messageCount: 2 } as never);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/^No requests in this session\.$/))).toBeUndefined();
+    expect(await ui.find(TEXT(/^112k tokens in this session$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Main conversation \u{b7} opus-5-5 \u{b7} 1 write$/u))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("live requests add to the index's earlier ones, and a later step shows within the interval", async ($, on) => {
+    const r = rig(on);
+    await seed(r.world);
+    await start($);
+    await r.clock.settle();
+    await $.prompt.submit({ text: "go", wait: false, origin: { kind: "composer" } } as never);
+    await stepOnce($, { turnId: "t1", index: 0, model: OPUS, messageCount: 2 } as never);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    // 104,600 in the index before this launch plus 111,500 live.
+    expect(await ui.find(TEXT(/^216k tokens in this session$/))).toBeDefined();
+    await stepOnce($, { turnId: "t1", index: 1, model: OPUS, messageCount: 4 } as never);
+    await r.clock.advance(USAGE_INTERVAL_MS.session + 1000);
+    await r.clock.settle();
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/^328k tokens in this session$/))).toBeDefined();
     await ui.unmount();
   });
 
@@ -314,8 +359,8 @@ describe("usage tab", () => {
 describe("usage tab helpers", () => {
   test("figures are due when they are of another span or older than their interval", () => {
     const data = { key: "session:s-1", at: 1000 };
-    expect(needsUsage(data, { span: "session", sessionId: "s-1" }, 1000 + 59_000)).toBe(false);
-    expect(needsUsage(data, { span: "session", sessionId: "s-1" }, 1000 + 60_000)).toBe(true);
+    expect(needsUsage(data, { span: "session", sessionId: "s-1" }, 1000 + 9_000)).toBe(false);
+    expect(needsUsage(data, { span: "session", sessionId: "s-1" }, 1000 + 10_000)).toBe(true);
     expect(needsUsage(data, { span: "session", sessionId: "s-2" }, 2000)).toBe(true);
     expect(needsUsage(data, { span: "24h", sessionId: "s-1" }, 2000)).toBe(true);
     expect(needsUsage({ key: "30d:", at: 1000 }, { span: "30d", sessionId: "s-9" }, 2000)).toBe(false);

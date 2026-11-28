@@ -1,5 +1,5 @@
 import { describe, expect, test } from "claude-code/testing";
-import { parseArgs } from "../core/args.ts";
+import { parseArgs, unknownText } from "../core/args.ts";
 import { readSettings } from "../core/settings.ts";
 
 describe("parseArgs", () => {
@@ -107,6 +107,57 @@ describe("parseArgs", () => {
 
   test("bare numbers are unknown outside report", () => {
     expect(parseArgs("history 7d").unknown).toEqual(["7d"]);
+  });
+
+  test("the old word tokens means the Usage tab", () => {
+    expect(parseArgs("tokens")).toEqual({ set: {}, tab: "usage", unknown: [] });
+    expect(parseArgs("tokens 24h")).toEqual({ set: {}, tab: "usage", span: "24h", unknown: [] });
+  });
+
+  test("money accepts both|mixed|auto, dollar(s), cent(s) and an `only` after them", () => {
+    for (const w of ["both", "mixed", "auto"]) expect(parseArgs(`money ${w}`).set).toEqual({ money: "cents-and-dollars" });
+    for (const w of ["dollar", "dollars"]) expect(parseArgs(`money ${w}`).set).toEqual({ money: "dollars" });
+    for (const w of ["cent", "cents"]) expect(parseArgs(`money ${w}`).set).toEqual({ money: "cents" });
+    expect(parseArgs("money dollars only")).toEqual({ set: { money: "dollars" }, unknown: [] });
+    expect(parseArgs("money cents only history")).toEqual({ set: { money: "cents" }, tab: "history", unknown: [] });
+    expect(parseArgs("money Both").set).toEqual({ money: "cents-and-dollars" });
+  });
+
+  test("row accepts show and hide", () => {
+    expect(parseArgs("row show").set).toEqual({ desktopRow: true });
+    expect(parseArgs("row hide").set).toEqual({ desktopRow: false });
+    expect(parseArgs("desktopRow hide").set).toEqual({ desktopRow: false });
+    // show/hide are not boolean words for the other settings.
+    expect(parseArgs("priceUpdate hide").unknown).toEqual(["priceUpdate", "hide"]);
+  });
+
+  test("a leading settings word is noise; alone it opens Help", () => {
+    expect(parseArgs("settings money cents")).toEqual({ set: { money: "cents" }, unknown: [] });
+    expect(parseArgs("settings")).toEqual({ set: {}, tab: "help", unknown: [] });
+  });
+});
+
+describe("unknownText", () => {
+  const say = (input: string): string => unknownText(input, parseArgs(input));
+  test("a setting with no value names the allowed values and an example", () => {
+    expect(say("money")).toBe('"money" needs a value: cents-and-dollars, cents or dollars (for example /tally money cents).');
+    expect(say("decimals")).toContain("auto or 0 to 4");
+    expect(say("row")).toContain("on or off");
+    expect(say("money history")).toContain('"money" needs a value');
+  });
+  test("a setting with a wrong value says which value and what is allowed", () => {
+    expect(say("money bogus")).toBe('"bogus" is not a value for money: use cents-and-dollars, cents or dollars.');
+    expect(say("decimals 9")).toBe('"9" is not a value for decimals: use auto or 0 to 4.');
+    expect(say("open sometimes")).toContain("before-first-message, always or never");
+  });
+  test("a bad report day count is explained", () => {
+    expect(say("report 0")).toContain("report 7");
+    expect(say("report 0d")).toContain('"0d"');
+  });
+  test("any other word gets the list of what the command takes", () => {
+    const t = say("foo history");
+    expect(t.startsWith('"foo" is not a tab')).toBe(true);
+    expect(t).toContain("report");
   });
 });
 

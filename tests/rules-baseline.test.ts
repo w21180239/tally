@@ -5,6 +5,7 @@ import type { Hint, HintInput, HintRule } from "../core/hint.ts";
 import type { InstalledPlugin } from "../core/plugins.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { BASELINE_RULES } from "../core/rules/index.ts";
+import { usdText } from "../core/rules/shared.ts";
 import type { FlowItem, Paste } from "../core/flow.ts";
 import type { Summary } from "../core/summary.ts";
 import type { UsageDetail, UsageGroup } from "../core/usage-detail.ts";
@@ -160,7 +161,7 @@ describe("subagent-model", () => {
     expect(h.evidence.map((e) => e.label)).toEqual(["Explore"]);
     expect(h.evidence[0]!.detail).toContain("$10.50");
     expect(h.evidence[0]!.detail).toContain("sonnet $5.25");
-    expect(h.evidence[0]!.detail).toContain("haiku $0.31");
+    expect(h.evidence[0]!.detail).toContain("haiku 31.25\u00a2");
   });
   test("fable counts as a big family too", () => {
     const only1m = { Search: { [FABLE]: { ...money(8, 3, { ...noTokens, input: 1_000_000 }), tools: { Glob: 3 } } } };
@@ -184,6 +185,37 @@ describe("subagent-model", () => {
   });
   test("hand-back tools do not count against a type", () => {
     expect(fire("subagent-model", { bySubType: sub(OPUS, { Read: 2, SubagentHandback: 1 }) }).length).toBe(1);
+  });
+});
+
+describe("tally is not its own finding", () => {
+  test("unused-plugin skips tally itself", () => {
+    expect(fire("unused-plugin", HUNDRED, { plugins: [plugin("tally", 5000, false)] })).toEqual([]);
+    const h = only(fire("unused-plugin", HUNDRED, { plugins: [plugin("tally", 5000, false), plugin("a", 5000, false)] }));
+    expect(h.evidence.map((e) => e.label)).toEqual(["a"]);
+  });
+  test("unused-mcp-server skips tally's own server", () => {
+    const s = [snapOf({ mcp: { tally: { tokens: 1000, deferred: 0 }, plugin_tally_tally: { tokens: 1000, deferred: 0 }, solo: { tokens: 1000, deferred: 0 } } })];
+    const h = only(fire("unused-mcp-server", HUNDRED, { live: { sessionId: "s1" } as never, snaps: s }));
+    expect(h.evidence.map((e) => e.label)).toEqual(["solo"]);
+  });
+});
+
+describe("hint amounts", () => {
+  const stub = (rule: string, usd: number, over: Partial<Hint> = {}): HintRule => ({ id: rule, run: () => [{ rule, title: rule, usd, summary: "s", action: "a", evidence: [], short: "s", ...over }] });
+  test("a hint worth under a cent is dropped; zero-figure and urgent hints stay", async () => {
+    const rules = [stub("tiny", 0.004), stub("cent", 0.01), stub("none", 0), stub("urgent", 0.001, { urgent: true })];
+    expect((await runRules(rules, inputOf())).map((h) => h.rule).sort()).toEqual(["cent", "none", "urgent"]);
+  });
+  test("unused-plugin and unused-mcp-server write amounts in the shared money format", () => {
+    expect(only(fire("unused-plugin", HUNDRED, { plugins: [plugin("a", 5000, false)] })).summary).toContain("10\u00a2 went to carrying");
+    expect(only(fire("unused-plugin", HUNDRED, { plugins: [plugin("a", 5000, false)] })).evidence[0]!.detail).toBe("5k tokens per request, 10\u00a2");
+  });
+  test("usdText follows the shared format: cents under a dollar, dollars from a dollar", () => {
+    expect(usdText(0.0032)).toBe("0.32\u00a2");
+    expect(usdText(0.5)).toBe("50\u00a2");
+    expect(usdText(2)).toBe("$2.00");
+    expect(usdText(1234.5)).toBe("$1,235");
   });
 });
 

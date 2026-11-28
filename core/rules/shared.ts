@@ -2,6 +2,7 @@
 import type { BreakdownSnapshot } from "../breakdown.ts";
 import type { FlowItem } from "../flow.ts";
 import type { Evidence } from "../hint.ts";
+import { formatMoney } from "../money.ts";
 import { resolvePrice } from "../pricing.ts";
 import type { ModelPrice, PriceTable } from "../pricing.ts";
 import type { Summary } from "../summary.ts";
@@ -14,7 +15,15 @@ export const LISTED = 5;
 /** Top-tier model families: the ones priced well above Sonnet. */
 export const FLAGSHIP = /(opus|fable|mythos)/i;
 
-export const usdText = (usd: number): string => `$${usd.toFixed(2)}`;
+/** Amounts in a hint's wording: the shared money format at its defaults (cents under a dollar, then dollars). */
+export const usdText = (usd: number): string => formatMoney(usd, "cents-and-dollars", "auto");
+/** Hints worth less than this (and more than nothing) are not worth a row. */
+export const MIN_HINT_USD = 0.01;
+/** The plugin itself: its own listings and server are never a finding. */
+export const isSelf = (name: string): boolean => {
+  const n = name.toLowerCase();
+  return n === "tally" || n.startsWith("tally@") || n.startsWith("plugin_tally_");
+};
 export const percentText = (share: number): string => `${Math.round(share * 100)}%`;
 
 /** 700000 -> 700k, 1000000 -> 1M, 1250000 -> 1.25M, 3016010000 -> 3.02B. A unit that rounds to 1000 steps up. */

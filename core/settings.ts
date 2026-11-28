@@ -48,6 +48,26 @@ const oneOf =
     const w = v.trim().toLowerCase();
     return opts.find((o) => o === w);
   };
+// desktopRow also reads show and hide.
+const shown = (v: unknown): boolean | undefined => {
+  const w = typeof v === "string" ? v.trim().toLowerCase() : "";
+  return w === "show" ? true : w === "hide" ? false : bool(v);
+};
+const MONEY_WORDS: Record<string, Settings["money"]> = {
+  "cents-and-dollars": "cents-and-dollars",
+  both: "cents-and-dollars",
+  mixed: "cents-and-dollars",
+  auto: "cents-and-dollars",
+  cents: "cents",
+  cent: "cents",
+  dollars: "dollars",
+  dollar: "dollars",
+};
+const money = (v: unknown): Settings["money"] | undefined => {
+  if (typeof v !== "string") return undefined;
+  const w = v.trim().toLowerCase();
+  return Object.hasOwn(MONEY_WORDS, w) ? MONEY_WORDS[w] : undefined;
+};
 const days = (v: unknown): number | undefined => {
   const n = typeof v === "number" ? v : typeof v === "string" && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN;
   return Number.isInteger(n) && n > 0 ? n : undefined;
@@ -65,10 +85,25 @@ export const COERCE: { [K in keyof Settings]: (v: unknown) => Settings[K] | unde
   redactEvidence: bool,
   recheckDays: days,
   open: oneOf("before-first-message", "always", "never"),
-  money: oneOf("cents-and-dollars", "cents", "dollars"),
+  money,
   decimals,
-  desktopRow: bool,
+  desktopRow: shown,
   herdrSidebar: bool,
+};
+
+/** What each setting accepts, worded for a command error. */
+export const SETTING_VALUES: { [K in keyof Settings]: string } = {
+  priceUpdate: "on or off",
+  syncDir: "a folder path",
+  machineName: "a name",
+  shareDetail: "numbers, repos or full",
+  redactEvidence: "on or off",
+  recheckDays: "a whole number of days above 0",
+  open: "before-first-message, always or never",
+  money: "cents-and-dollars, cents or dollars",
+  decimals: "auto or 0 to 4",
+  desktopRow: "on or off",
+  herdrSidebar: "on or off",
 };
 
 export const SETTING_KEYS = Object.keys(COERCE) as (keyof Settings)[];

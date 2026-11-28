@@ -9,8 +9,12 @@ import type { Shard } from "../core/shard.ts";
 import { STEP_ROWS } from "../core/steps.ts";
 import { summarizeAsync } from "../core/summary.ts";
 import type { Span } from "../core/summary.ts";
+import { stepRow } from "../core/live-state.ts";
+import type { LiveState } from "../core/live-state.ts";
+import type { UsageRow } from "../core/types.ts";
 import { agentLabel, usageAgents, usageDetail, usageTotals, USAGE_KINDS, writeParts } from "../core/usage-detail.ts";
 import type { Amount, DetailRow, UsageKind } from "../core/usage-detail.ts";
+import { readLive } from "./live.ts";
 import { locate } from "./locate.ts";
 import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
@@ -40,7 +44,7 @@ export type UsageData = {
 export const EMPTY_USAGE: UsageData = { key: "", at: 0, requests: 0, agents: [], by: {}, snapshot: null };
 
 /** Figures older than this are rebuilt when the tab is drawn: the live session's sooner than a span of days. */
-export const USAGE_INTERVAL_MS = { session: 60_000, "24h": 300_000, "30d": 300_000 } as const;
+export const USAGE_INTERVAL_MS = { session: 10_000, "24h": 300_000, "30d": 300_000 } as const;
 /** After a failed build, the next try waits this long. */
 export const USAGE_RETRY_MS = 30_000;
 /** Agents with figures of their own (the costliest). */
@@ -87,6 +91,31 @@ const sectionsOf = (s: Parameters<typeof usageDetail>[0], agent: string | undefi
     return { kind, total, rows: usageDetail(s, kind, agent, opts) };
   });
 
+/**
+ * The session's rows with this launch's requests taken from the live tally when the index has not caught up with it:
+ * the index's rows from before the launch, plus one row per live request (the launch's tokens per model shared out
+ * evenly; the live tally holds no per-request figures, and sub-agent requests count as the main thread's). Once the
+ * index holds as many of the launch's requests as the live tally does, its own rows stand.
+ */
+export function withLive(own: UsageRow[], live: Pick<LiveState, "sessionId" | "startedAt" | "stepped">, now: number): UsageRow[] {
+  const since = own.filter((r) => r.ts >= live.startedAt).length;
+  const models = Object.entries(live.stepped).filter(([, m]) => m.requests > 0);
+  const total = models.reduce((n, [, m]) => n + m.requests, 0);
+  if (since >= total) return own;
+  const out = own.filter((r) => r.ts < live.startedAt);
+  const ts = Math.max(now, live.startedAt);
+  for (const [model, m] of models) {
+    const n = m.requests;
+    for (let i = 0; i < n; i++) {
+      const part = (v: number): number => Math.floor(v / n) + (i === 0 ? v % n : 0);
+      const t = m.tokens;
+      const tokens = { input: part(t.input), output: part(t.output), cacheRead: part(t.cacheRead), cw5m: part(t.cw5m), cw1h: part(t.cw1h) };
+      out.push({ ...stepRow(live.sessionId, ts, undefined, model, tokens), requestId: `live-${model}-${i}` });
+    }
+  }
+  return out;
+}
+
 let builtAt = 0;
 let builtKey = "";
 let failedAt = 0;
@@ -106,20 +135,20 @@ async function build($: EngineInterface, want: UsageWant, now: number): Promise<
 
   if (isSession) {
     const shard = await loadProject($, loc.cfg, project, now, tick);
-    if (shard !== null) {
-      const id = want.sessionId;
-      sessionOnly = {
-        v: 1,
-        project,
-        files: {},
-        usage: await ownOf(shard.usage, id, tick),
-        users: await ownOf(shard.users, id, tick),
-        metas: [],
-        compacts: await ownOf(shard.compacts, id, tick),
-        snapshots: [],
-      };
-      shards = [sessionOnly];
-    }
+    const id = want.sessionId;
+    const own = shard === null ? [] : await ownOf(shard.usage, id, tick);
+    const live = await readLive($).catch(() => undefined);
+    sessionOnly = {
+      v: 1,
+      project,
+      files: {},
+      usage: live !== undefined && live.sessionId === id ? withLive(own, live, now) : own,
+      users: shard === null ? [] : await ownOf(shard.users, id, tick),
+      metas: [],
+      compacts: shard === null ? [] : await ownOf(shard.compacts, id, tick),
+      snapshots: [],
+    };
+    shards = [sessionOnly];
   } else {
     for (const p of await listProjects($, loc.roots)) {
       await tick();

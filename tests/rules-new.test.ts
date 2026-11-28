@@ -104,7 +104,7 @@ describe("memory-heavy", () => {
     expect(h.short).toBe("memory files cost $1.00");
     // Costliest file first: 3000 tokens = $0.60.
     expect(h.evidence[0]).toEqual({ label: "Memory file", detail: "/p/CLAUDE.md", kind: "path" });
-    expect(h.evidence[1]).toEqual({ label: "Per request", detail: "3k tokens, $0.60 over the span", kind: "text" });
+    expect(h.evidence[1]).toEqual({ label: "Per request", detail: "3k tokens, 60\u00a2 over the span", kind: "text" });
     for (const text of [h.title, h.summary, h.action, h.short]) expect(text).not.toContain("/p/");
   });
   test("5 percent of spend exactly stays quiet (20 dollars total)", () => {
@@ -132,7 +132,7 @@ describe("skill-catalog-heavy", () => {
     expect(h.projected).toBeUndefined();
     expect(h.summary).toContain("1 of 4");
     expect(h.evidence.map((e) => e.label)).toEqual(["Never called", "Never called", "Never called"]);
-    expect(h.evidence[0]!.detail).toBe("beta: 4k tokens, $0.75");
+    expect(h.evidence[0]!.detail).toBe("beta: 4k tokens, 75\u00a2");
   });
   test("half the skills called stays quiet; a plugin prefix on the called name still matches", () => {
     expect(fire("skill-catalog-heavy", span(50, { bySkill: called("alpha", "beta") }), { live, snaps: [snapOf({ skills })] })).toEqual([]);
@@ -329,7 +329,7 @@ describe("subagent-overhead", () => {
     expect(h.summary).toContain("6 of 10");
     expect(h.evidence).toEqual([
       { label: "Agent type", detail: "Explore: 5 of 7 runs under 500 tokens, $1.20 startup", kind: "text" },
-      { label: "Agent type", detail: "helper: 1 of 3 runs under 500 tokens, $0.30 startup", kind: "text" },
+      { label: "Agent type", detail: "helper: 1 of 3 runs under 500 tokens, 30\u00a2 startup", kind: "text" },
     ]);
   });
   test("exactly half the runs stays quiet", () => {

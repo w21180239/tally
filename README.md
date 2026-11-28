@@ -156,8 +156,8 @@ Set the options through the plugin settings (`userConfig` in `plugin.json`), for
 | `/tally` | Opens the window, or unfolds it. |
 | `/tally <tab>` | Opens on `session`, `usage`, `context`, `history`, `hints` or `help`. |
 | `/tally 24h` or `30d` | Opens with that time span. |
-| `/tally money dollars` | Sets a display option; also `decimals`, `open`, `row`. Word order is free. |
-| `/tally report [days] [repo]` | Writes a markdown spend report to `api-spend-<date>.md` in the working folder. |
+| `/tally money dollars` | Sets a display option; also `decimals`, `open`, `row`. Word order is free. `money` also takes `both`, `dollar` and `cent`, and `row` takes `show` and `hide`. `tokens` opens the Usage tab, and `settings` opens Help. A setting with a missing or wrong value answers with the values it accepts. |
+| `/tally report [days] [repo]` | Writes a markdown spend report to `api-spend-<date>.md` in the working folder. A repository with no requests in the window writes nothing and names the repositories that have data. |
 | `/tally sync` | Runs one sync now (needs `syncDir`) and lists the machines it saw. |
 | `/tally debug` | Shows scan progress and totals; `--json` prints them as JSON. |
 

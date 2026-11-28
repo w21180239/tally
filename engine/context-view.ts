@@ -76,6 +76,8 @@ async function usedFromIndex($: EngineInterface, now: number, tick: Tick): Promi
 /** The index's names and the live tally's, together. */
 export function mergeUsed(indexed: UsedNames, live: Pick<LiveState, "toolCalls" | "agents">): UsedNames {
   const mcp = new Set(indexed.mcp);
+  // tally's own server is never reported unused, whatever the index shows.
+  mcp.add("tally");
   for (const tool of Object.keys(live.toolCalls)) {
     const server = mcpServerOf(tool);
     if (server !== null) mcp.add(server);
