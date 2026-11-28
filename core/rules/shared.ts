@@ -17,8 +17,9 @@ export const FLAGSHIP = /(opus|fable|mythos)/i;
 
 /** Amounts in a hint's wording: the shared money format at its defaults (cents under a dollar, then dollars). */
 export const usdText = (usd: number): string => formatMoney(usd, "cents-and-dollars", "auto");
-/** Hints worth less than this (and more than nothing) are not worth a row. */
-export const MIN_HINT_USD = 0.01;
+/** A hint with a dollar figure needs at least this many dollars and this share of the window's spend, whichever is larger; below it the finding is noise. */
+export const MIN_HINT_USD = 1;
+export const MIN_HINT_SHARE = 0.0005;
 /** The plugin itself: its own listings and server are never a finding. */
 export const isSelf = (name: string): boolean => {
   const n = name.toLowerCase();
@@ -107,4 +108,16 @@ const text = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 export function heavyParts(flow: FlowItem[], sources: readonly FlowItem["source"][], total: number, share: number, minUsd: number): FlowItem[] {
   if (total <= 0) return [];
   return flow.filter((f) => sources.includes(f.source) && f.rereadUsd >= minUsd && f.rereadUsd / total > share).sort((a, b) => b.rereadUsd - a.rereadUsd || text(a.label, b.label));
+}
+
+/**
+ * The evidence rows that name a session: its short id and repo (the Costliest sessions columns), then its title as a row `redact` blanks.
+ * The id row always carries a value, so a redacted report never prints a bare label.
+ */
+export function sessionEvidence(s: Summary, sessionId: string): Evidence[] {
+  const top = s.topSessions.find((t) => t.sessionId === sessionId);
+  const id = sessionId.slice(0, 8);
+  const rows: Evidence[] = [{ label: "Session", detail: top === undefined || top.repo === "" ? id : `${id} (${top.repo})`, kind: "text" }];
+  if (top?.title !== undefined && top.title !== "") rows.push({ label: "Title", detail: top.title, kind: "title" });
+  return rows;
 }

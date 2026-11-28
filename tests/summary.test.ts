@@ -4,8 +4,8 @@ import { STEP_ROWS } from "../core/steps.ts";
 import { activeHours, localDay, localDayStart, utcHour } from "../core/time.ts";
 import { month, usage, NOW, OPUS, PRICES, SONNET, TZ } from "./fixtures/month.ts";
 import type { Shard } from "../core/shard.ts";
-import { read, req } from "./fixtures/rows.ts";
-import type { UserRow } from "../core/types.ts";
+import { MIN, read, req, T0 } from "./fixtures/rows.ts";
+import type { UsageRow, UserRow } from "../core/types.ts";
 
 const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 const usd = (m: { usd: number }) => Math.round(m.usd * 1e6) / 1e6;
@@ -212,6 +212,28 @@ describe("repo filter", () => {
     expect(s.topSessions.map((t) => t.sessionId)).toEqual(["s1", "s4", "s6"]);
     expect(s.unpriced).toEqual([]);
     expect(s.hourBands[4]).toBe(8_300_000);
+  });
+
+  test("elsewhere lists what the other repos used inside the window; only a repo filter on a 30d or 24h span asks for it", () => {
+    const NOW2 = T0 + 24 * 60 * MIN;
+    const use = (id: string, at: number, cwd: string, extra: Partial<UsageRow> = {}, tools: UsageRow["tools"] = []) => ({ ...req({ id, at, cwd, tokens: { input: 10 }, tools }), ...extra });
+    const rows = [
+      use("a", 0, "/work/alpha"),
+      use("b", MIN, "/work/beta", { skill: "tool-a:run", plugin: "tool-a@m" }, [{ name: "mcp__srv__q", mcpServer: "srv", inputChars: 1 }]),
+      use("c", 2 * MIN, "/work/gamma", {}),
+      use("d", 3 * MIN, "/work/beta", { agentType: "tool-b:scout", sidechain: true, agentId: "g1" }),
+      { ...use("old", -40 * 24 * 60 * MIN, "/work/delta", { skill: "tool-z:run" }) },
+    ];
+    const sh: Shard = { v: 1, project: "q", files: {}, usage: rows, users: [], metas: [], compacts: [], snapshots: [] };
+    const s = summarize([sh], PRICES, { span: "30d", nowMs: NOW2, tzOffsetMin: 0, repo: "alpha" });
+    expect(s.elsewhere).toEqual([
+      { repo: "beta", plugins: ["tool-a@m"], skills: ["tool-a:run"], agents: ["tool-b:scout"], mcp: ["srv"] },
+      { repo: "gamma", plugins: [], skills: [], agents: [], mcp: [] },
+    ]);
+    expect(Object.keys(s.byRepo)).toEqual(["alpha"]);
+    expect(summarize([sh], PRICES, { span: "30d", nowMs: NOW2, tzOffsetMin: 0 }).elsewhere).toBeUndefined();
+    expect(summarize([sh], PRICES, { span: "session", sessionId: "s", nowMs: NOW2, tzOffsetMin: 0, repo: "alpha" }).elsewhere).toBeUndefined();
+    expect(summarize([sh], PRICES, { span: "24h", nowMs: T0 + 10 * MIN, tzOffsetMin: 0, repo: "alpha" }).elsewhere?.map((e) => e.repo)).toEqual(["beta", "gamma"]);
   });
 
   test("unknown repo gives an empty summary", () => {

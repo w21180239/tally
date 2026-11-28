@@ -32,12 +32,16 @@ export type Piece = { source: FlowSource; label: string; chars: number; paste: b
  * compaction, the context it did not carry compared with before the compaction (max(0, pre - request context)), priced at that
  * request's cache-read rate; a lower bound, since the context would have kept growing. `ineffective`: the context stayed at
  * EFFECTIVE_SHARE of its old size or more, another compaction followed within QUICK_REPEAT requests (`repeated`), or it began after the cache expired (`cold`).
- * `keptTokens`/`keptUsd`: the part of the post-compaction context above the EFFECTIVE_SHARE line, and its cache-read cost over the counted requests until the next compaction.
+ * `baseTokens`: the conversation's fixed opening context (system prompt, tools, memory, listings), which no compaction can shed: the prompt of its first request on the model the compaction ran on
+ * (the flow's `fixed` part leaves memory out, which arrives as a user message; a conversation with no such request falls back to it). Effectiveness is judged on the rest:
+ * `(post - base) / (pre - base)`, and a compaction whose `pre - base` is under MIN_COMPRESSIBLE_TOKENS is never flagged.
+ * `keptTokens`/`keptUsd`: the part of the compressible context left above the EFFECTIVE_SHARE line, and its cache-read cost over the counted requests until the next compaction.
  */
 export type CompactionEffect = {
   sessionId: string;
   ts: number;
   trigger?: "manual" | "auto";
+  baseTokens: number;
   preTokens: number;
   postTokens: number | null;
   requests: number;
@@ -53,8 +57,10 @@ export type CompactionEffect = {
   cold: boolean;
 };
 
-/** A compaction that leaves at least this share of the old context in place did not shed enough. */
+/** A compaction that leaves at least this share of the compressible context (above the fixed base) in place did not shed enough. */
 export const EFFECTIVE_SHARE = 0.6;
+/** Context above the fixed base that a compaction must have had to work on, in tokens; below it nothing is flagged. */
+export const MIN_COMPRESSIBLE_TOKENS = 20_000;
 /** A compaction followed by another within this many main-thread requests counts as ineffective. */
 export const QUICK_REPEAT = 3;
 
@@ -243,6 +249,9 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     let prevPrompt = 0;
     let prevOutput = 0;
     let prevTs: number | null = null;
+    // Prompt of the first request per model, and the model of the latest request: the opening context a compaction cannot shed.
+    const firstPrompt = new Map<string, number>();
+    let lastModel = "";
     // Life of the cache the stream's latest cache write went to.
     let life: CacheLife = "5m";
     // Whole reads of a file since the last compaction or edit of it: a read after either is not a duplicate.
@@ -286,13 +295,16 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       const e = cur;
       cur = null;
       e.repeated = followed && e.requests <= QUICK_REPEAT;
-      // Integer arithmetic keeps the 60 percent edge exact.
-      const stayed = e.postTokens !== null && e.preTokens > 0 && e.postTokens * 10 >= e.preTokens * 6;
+      // Only the part above the fixed base can shrink. Integer arithmetic keeps the 60 percent edge exact.
+      const room = e.preTokens - e.baseTokens;
+      const big = e.preTokens > 0 && room >= MIN_COMPRESSIBLE_TOKENS;
+      const left = e.postTokens === null ? 0 : Math.max(0, e.postTokens - e.baseTokens);
+      const stayed = big && e.postTokens !== null && left * 10 >= room * 6;
       if (stayed) {
-        e.keptTokens = (e.postTokens! * 10 - e.preTokens * 6) / 10;
+        e.keptTokens = (left * 10 - room * 6) / 10;
         e.keptUsd = e.keptTokens * curRate;
       }
-      e.ineffective = stayed || e.repeated || e.cold;
+      e.ineffective = big && (stayed || e.repeated || e.cold);
       effects.push(e);
     };
 
@@ -315,7 +327,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
           // Idle time before the compaction began (the boundary is written when it ends); a compaction after the cache expired re-reads the whole prefix uncached.
           const idleMs = prevTs === null ? 0 : Math.max(0, k.ts - (k.durationMs ?? 0) - prevTs);
           const cold = idleMs > (life === "1h" ? HOUR_MS : FIVE_MIN_MS);
-          cur = { sessionId: c.sessionId, ts: k.ts, ...(k.trigger !== undefined && { trigger: k.trigger }), preTokens: pre, postTokens: null, requests: 0, savedTokens: 0, savedUsd: 0, keptTokens: 0, keptUsd: 0, ineffective: false, repeated: false, idleMs, cold };
+          cur = { sessionId: c.sessionId, ts: k.ts, ...(k.trigger !== undefined && { trigger: k.trigger }), baseTokens: firstPrompt.get(lastModel) ?? ownFixed ?? cap, preTokens: pre, postTokens: null, requests: 0, savedTokens: 0, savedUsd: 0, keptTokens: 0, keptUsd: 0, ineffective: false, repeated: false, idleMs, cold };
           curRate = 0;
         }
         dropAll();
@@ -334,6 +346,8 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       const prompt = promptOf(row.tokens);
       input.onRequest?.({ row, counted, pieces: waiting, opening, afterCompact, prevTs });
       prevTs = row.ts;
+      if (!firstPrompt.has(row.model)) firstPrompt.set(row.model, prompt);
+      lastModel = row.model;
       if (row.tokens.cw5m + row.tokens.cw1h > 0) life = cacheLife([{ ts: row.ts, cw5m: row.tokens.cw5m, cw1h: row.tokens.cw1h }]);
       if (cur !== null) {
         const e: CompactionEffect = cur;

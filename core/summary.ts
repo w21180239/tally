@@ -62,6 +62,8 @@ export type Summary = {
   byPlugin: Record<string, Money>;
   /** Spend of the requests that called the server, so entries overlap when one request calls several. */
   byMcp: Record<string, Money & { calls: number }>;
+  /** Only with a repo filter on a 30d or 24h span: what the other repos used in the window, by repo, so a plugin unused here can be told from one unused everywhere. */
+  elsewhere?: Array<{ repo: string; plugins: string[]; skills: string[]; agents: string[]; mcp: string[] }>;
   timeline: { bucketMs: number; points: Money[] };
   /** Nearest-rank [p30, p50, p70, p90, max] of token totals per local clock hour, over hours with a request. */
   hourBands: number[];
@@ -472,5 +474,24 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
   }
   stats.ineffective.sort((a, b) => b.keptUsd - a.keptUsd || a.ts - b.ts || (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0));
   stats.ineffective = stats.ineffective.slice(0, FLOW_ITEMS);
+  if (opts.repo !== undefined && span !== "session") {
+    type Use = { plugins: Set<string>; skills: Set<string>; agents: Set<string>; mcp: Set<string> };
+    const others = new Map<string, Use>();
+    for (const r of everyRow) {
+      if (++n % STEP_ROWS === 0) yield;
+      if (r.ts < from || r.ts > to) continue;
+      const repo = repoFor(r);
+      if (repo === opts.repo) continue;
+      let u = others.get(repo);
+      if (!u) others.set(repo, (u = { plugins: new Set(), skills: new Set(), agents: new Set(), mcp: new Set() }));
+      if (r.plugin) u.plugins.add(r.plugin);
+      if (r.skill) u.skills.add(r.skill);
+      if (r.agentType) u.agents.add(r.agentType);
+      for (const t of r.tools) if (t.mcpServer) u.mcp.add(t.mcpServer);
+    }
+    out.elsewhere = [...others]
+      .map(([repo, u]) => ({ repo, plugins: [...u.plugins].sort(), skills: [...u.skills].sort(), agents: [...u.agents].sort(), mcp: [...u.mcp].sort() }))
+      .sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0));
+  }
   return out;
 }

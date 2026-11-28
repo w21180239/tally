@@ -1,5 +1,5 @@
 import type { Evidence, HintRule } from "../hint.ts";
-import { DEFAULT_WINDOW, LISTED, percentText, sessionsUsd, titleOf, tokensText } from "./shared.ts";
+import { DEFAULT_WINDOW, LISTED, percentText, sessionEvidence, sessionsUsd, tokensText } from "./shared.ts";
 
 /** A session counts as long when its largest prompt exceeds this fraction of the window. */
 export const FULL_SHARE = 0.7;
@@ -14,8 +14,7 @@ export const longSession: HintRule = {
     if (long.length === 0) return [];
     const evidence: Evidence[] = [];
     for (const [id, peak] of long.slice(0, LISTED)) {
-      const title = titleOf(summary, id);
-      if (title !== undefined && title !== "") evidence.push({ label: "Session", detail: title, kind: "title" });
+      evidence.push(...sessionEvidence(summary, id));
       evidence.push({ label: "Peak context", detail: `${percentText(peak / size)} full: ${tokensText(peak)} tokens in a ${tokensText(size)} window`, kind: "text" });
       // An automatic compaction fires when the context runs to the host's limit: the compaction came late.
       const auto = summary.compaction?.bySession[id]?.autoPeak;

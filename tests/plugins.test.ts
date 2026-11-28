@@ -46,6 +46,18 @@ describe("pluginsFrom", () => {
     expect(pluginsFrom(inv, s, used({ bySkill: { review: money, plan: money } })).map((p) => p.used)).toEqual([false, false]);
   });
 
+  test("a plugin unused here but used in other repos names them in usedIn; a used plugin and one used nowhere carry none", () => {
+    const elsewhere = [
+      { repo: "other", plugins: [], skills: ["alpha:review"], agents: [], mcp: [] },
+      { repo: "third", plugins: ["alpha@market"], skills: [], agents: [], mcp: [] },
+      { repo: "quiet", plugins: [], skills: ["user-skill"], agents: [], mcp: [] },
+    ];
+    const got = pluginsFrom(inv, s, { ...used(), elsewhere });
+    expect(got.map((p) => [p.used, p.usedIn])).toEqual([[false, ["other", "third"]], [false, undefined]]);
+    const here = pluginsFrom(inv, s, { ...used({ bySkill: { "alpha:review": money } }), elsewhere });
+    expect(here.map((p) => [p.used, p.usedIn])).toEqual([[true, undefined], [false, undefined]]);
+  });
+
   test("the wire name of a plugin's server folds punctuation like the engine does", () => {
     expect(pluginServerName("my-plugin", "the.server")).toBe("plugin_my_plugin_the_server");
   });

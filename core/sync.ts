@@ -48,7 +48,7 @@ export type MachineFile = {
 export const repoAlias = (repo: string, salt: string): string => `r-${hmacSha256Hex(salt, repo).slice(0, 10)}`;
 
 /** Summary blocks no file carries at any detail level; a merged view shows them as this machine only. */
-export const NEVER_SYNCED = ["bySkill", "byPlugin", "byMcp", "hourBands", "unpriced", "cacheRebuilds", "peakContext", "flow", "flowByAgent", "mcpReread", "usage", "pastes", "wholeReads", "compactions", "compaction"] as const;
+export const NEVER_SYNCED = ["bySkill", "byPlugin", "byMcp", "elsewhere", "hourBands", "unpriced", "cacheRebuilds", "peakContext", "flow", "flowByAgent", "mcpReread", "usage", "pastes", "wholeReads", "compactions", "compaction"] as const;
 
 /** What the engine supplies beyond the shards: the sections only the engine's rules and flow pass can produce. Used for `full` only. */
 export type Extra = { hints?: Hint[]; toolFill?: Record<string, number> };

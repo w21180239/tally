@@ -112,6 +112,7 @@ describe("ineffective-compaction", () => {
     sessionId: "s1",
     ts: NOW - HOUR,
     trigger: "manual",
+    baseTokens: 80_000,
     preTokens: 300_000,
     postTokens: 270_000,
     requests: 40,
@@ -134,19 +135,29 @@ describe("ineffective-compaction", () => {
     expect(h.projected).toBeUndefined();
     expect(h.summary).toContain("2 of 5 compactions");
     expect(h.short).toBe("2 compactions left the context large");
-    expect(h.evidence.map((e) => e.detail)).toEqual(["300k tokens before, 270k after (90%)", "300k tokens before, 270k after (90%)"]);
+    expect(h.evidence.filter((e) => e.label === "Compaction").map((e) => e.detail)).toEqual([
+      "300k tokens before, 270k after; 86% of the 220k above the 80k fixed base left",
+      "300k tokens before, 270k after; 86% of the 220k above the 80k fixed base left",
+    ]);
+    expect(h.summary).toContain("above the fixed opening part (system prompt, tools, memory, listings)");
+    expect(h.summary).toContain("only compactions with 20k+ tokens above that base are judged");
+  });
+
+  test("the share is measured on what can be shed: 103k to 86k over an 80k base reads 26 percent, not 83", () => {
+    const h = only(fire("ineffective-compaction", { compaction: stats([effect({ preTokens: 103_000, postTokens: 86_000, repeated: true, keptTokens: 0, keptUsd: 0 })], 3) }));
+    expect(h.evidence.find((e) => e.label === "Compaction")!.detail).toBe("103k tokens before, 86k after; 26% of the 23k above the 80k fixed base left; compacted again after 40 requests");
   });
 
   test("a compaction followed by another within a few requests is flagged even when it shrank the context", () => {
     const h = only(fire("ineffective-compaction", { compaction: stats([effect({ postTokens: 50_000, keptTokens: 0, keptUsd: 0, requests: 2, repeated: true })], 3) }));
     expect(h.usd).toBe(0);
-    expect(h.evidence[0]!.detail).toBe("300k tokens before, 50k after (17%); compacted again after 2 requests");
+    expect(h.evidence.find((e) => e.label === "Compaction")!.detail).toBe("300k tokens before, 50k after; 0% of the 220k above the 80k fixed base left; compacted again after 2 requests");
   });
 
   test("a compaction that began after the cache expired is flagged with its idle time, and the action says to compact before stepping away", () => {
     const h = only(fire("ineffective-compaction", { compaction: stats([effect({ postTokens: 50_000, keptTokens: 0, keptUsd: 0, cold: true, idleMs: 2 * HOUR })], 3) }));
     expect(h.usd).toBe(0);
-    expect(h.evidence[0]!.detail).toBe("300k tokens before, 50k after (17%); began after 2h 00m idle, past the cache life");
+    expect(h.evidence.find((e) => e.label === "Compaction")!.detail).toBe("300k tokens before, 50k after; 0% of the 220k above the 80k fixed base left; began after 2h 00m idle, past the cache life");
     expect(h.summary).toContain("began after the cache had expired (1)");
     expect(h.action).toContain("before stepping away, not after");
   });
@@ -159,16 +170,21 @@ describe("ineffective-compaction", () => {
     expect(h.action).toContain("task boundary");
   });
 
-  test("a titled session shows its title, and the list is capped", () => {
+  test("each session shows its short id and repo (never a bare label), then its title when it has one, and the list is capped", () => {
     const top = { sessionId: "s1", repo: "r", started: 0, usd: 5, resume: "claude --resume s1", title: "Fix it" };
     const many = Array.from({ length: 9 }, (_, i) => effect({ sessionId: `s${i}` }));
     const h = only(fire("ineffective-compaction", { compaction: stats(many, 20), topSessions: [top] }));
     const at = h.evidence.findIndex((e) => e.kind === "title");
-    expect(h.evidence[at]).toEqual({ label: "Session", detail: "Fix it", kind: "title" });
+    expect(h.evidence[at]).toEqual({ label: "Title", detail: "Fix it", kind: "title" });
+    expect(h.evidence[at - 1]).toEqual({ label: "Session", detail: "s1 (r)", kind: "text" });
     // The title sits right before its own compaction row.
     expect(h.evidence[at + 1]!.label).toBe("Compaction");
-    // The costliest five, plus the title row of the one that has a title.
-    expect(h.evidence.length).toBe(6);
+    // The costliest five: a Session row and a Compaction row each, plus the title row of the one that has a title.
+    expect(h.evidence.length).toBe(11);
+    // A session outside the costliest table has no repo to show: the short id alone.
+    expect(h.evidence[0]).toEqual({ label: "Session", detail: "s0", kind: "text" });
+    // Redacted, no row is left without a value except the title.
+    expect(h.evidence.filter((e) => e.kind !== "title").every((e) => e.detail !== "")).toBe(true);
   });
 });
 
@@ -279,6 +295,29 @@ describe("mcp-schema-heavy", () => {
   test("a span with no spend is quiet", () => {
     expect(fire("mcp-schema-heavy", { ...THOUSAND, ...calls(1) }, { live, snaps: [server(5000)] })).toEqual([]);
   });
+  test("a tool a plugin registers itself (its wire name is the plugin's name) is no MCP server the user can defer: left out, a real server beside it stays", () => {
+    const snap = snapOf({ mcp: { alpha: { tokens: 5000, deferred: 0 }, "my-plugin": { tokens: 50_000, deferred: 0 } } });
+    const byMcp = { alpha: { ...money(0), calls: 5 }, "my-plugin": { ...money(0), calls: 3 } };
+    const plugins = [{ name: "my-plugin", tokensPerRequest: 0, used: true }];
+    const h = only(fire("mcp-schema-heavy", { ...MAIN, byMcp }, { live, snaps: [snap], plugins }));
+    expect(h.evidence.map((e) => e.detail.split(":")[0])).toEqual(["alpha"]);
+    expect(near(h.usd, 1)).toBe(true);
+    // Without the plugin in the inventory the same name is judged as a server.
+    expect(fire("mcp-schema-heavy", { ...MAIN, byMcp }, { live, snaps: [snap] })[0]!.evidence.length).toBe(2);
+    // A plugin's shipped MCP server (plugin_<plugin>_<server>) is a real server.
+    const shipped = snapOf({ mcp: { plugin_my_plugin_db: { tokens: 5000, deferred: 0 } } });
+    expect(only(fire("mcp-schema-heavy", { ...MAIN, byMcp: { plugin_my_plugin_db: { ...money(0), calls: 5 } } }, { live, snaps: [shipped], plugins })).evidence.length).toBe(1);
+  });
+  test("a server that is called at all must cost 25 dollars per 30 days to carry: $20 over 30 days stays quiet, $25 fires; a shorter window scales the bar", () => {
+    const month = { from: NOW - 30 * DAY, to: NOW };
+    // 1000 main requests: 5000 resident tokens cost $1.
+    const costly = (usd: number) => snapOf({ mcp: { alpha: { tokens: usd * 5000, deferred: 0 } } });
+    const span = { ...THOUSAND, total: money(2000, 1000), ...month, ...calls(3) };
+    expect(fire("mcp-schema-heavy", span, { live, snaps: [costly(24)] })).toEqual([]);
+    expect(only(fire("mcp-schema-heavy", span, { live, snaps: [costly(25)] })).rule).toBe("mcp-schema-heavy");
+    // A day is 1/30 of the bar: $0.83, floored at 1 dollar, so $1 fires.
+    expect(only(fire("mcp-schema-heavy", { ...MAIN, ...calls(3) }, { live, snaps: [costly(1)] })).rule).toBe("mcp-schema-heavy");
+  });
   test("each server is judged alone, and the amount sums the ones that fire", () => {
     const snap = snapOf({ mcp: { alpha: { tokens: 5000, deferred: 0 }, busy: { tokens: 10_000, deferred: 0 }, small: { tokens: 100, deferred: 0 } } });
     const byMcp = { alpha: { ...money(0), calls: 5 }, busy: { ...money(0), calls: 500 }, small: { ...money(0), calls: 1 } };
@@ -298,7 +337,8 @@ describe("huge-tool-result", () => {
     expect(h.usd).toBe(1.5);
     expect(h.projected).toBeUndefined();
     expect(h.evidence).toEqual([
-      { label: "Session", detail: "Private title", kind: "title" },
+      { label: "Session", detail: "s1 (r)", kind: "text" },
+      { label: "Title", detail: "Private title", kind: "title" },
       { label: "File", detail: "/p/dump.log", kind: "path" },
       { label: "Size", detail: "25k tokens, $1.50 re-read", kind: "text" },
     ]);
@@ -318,7 +358,8 @@ describe("huge-tool-result", () => {
       }),
     );
     expect(near(h.usd, 1.25)).toBe(true);
-    expect(h.evidence.map((e) => `${e.label}:${e.kind}`)).toEqual(["Tool:text", "Size:text", "Command:command", "Size:text"]);
+    // Each result is named by its session (an id even when the session is outside the costliest table), then what it was.
+    expect(h.evidence.map((e) => `${e.label}:${e.kind}`)).toEqual(["Session:text", "Tool:text", "Size:text", "Session:text", "Command:command", "Size:text"]);
   });
   test("results that re-read for under 1 dollar in all stay quiet: $0.99 vs $1.00", () => {
     const small = { total: money(100) };

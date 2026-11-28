@@ -1,6 +1,6 @@
 import { PASTE_MIN_TOKENS } from "../flow.ts";
 import type { Evidence, HintInput, HintRule } from "../hint.ts";
-import { activeDays, LISTED, titleOf, tokensText, usdText } from "./shared.ts";
+import { activeDays, LISTED, sessionEvidence, tokensText, usdText } from "./shared.ts";
 
 /** Dollar floor on a paste's re-read cost; the token floor from flow.ts applies as well. */
 export const PASTE_MIN_USD = 1;
@@ -20,8 +20,7 @@ export const bigPaste: HintRule = {
     const usd = heavy.reduce((n, p) => n + p.rereadUsd, 0);
     const evidence: Evidence[] = [];
     for (const p of heavy.slice(0, LISTED)) {
-      const title = titleOf(summary, p.sessionId);
-      if (title !== undefined && title !== "") evidence.push({ label: "Session", detail: title, kind: "title" });
+      evidence.push(...sessionEvidence(summary, p.sessionId));
       evidence.push({ label: "Pasted prompt", detail: `${tokensText(p.tokens)} tokens, ${usdText(p.rereadUsd)} re-read`, kind: "text" });
     }
     return [

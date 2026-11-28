@@ -132,12 +132,26 @@ describe("cache-rebuilt", () => {
     expect(h.evidence.length).toBe(2);
     expect(h.metric).toEqual({ name: "rebuild share of cost", value: 0.1 });
   });
-  test("the action says to compact before stepping away; the 1-hour setting is named only for rebuilds on the 5-minute cache within an hour", () => {
-    const warm = only(fire("cache-rebuilt", { cacheRebuilds: [rebuild(2, 40_000, 2 * HOUR)] }));
-    expect(warm.action).toContain("run /compact while the cache is warm");
-    expect(warm.action).not.toContain("promptCacheTtl");
+  test("the action leads with compact or clear; the 1-hour setting is named only when most rebuilds came on the 5-minute cache within an hour", () => {
     const short = only(fire("cache-rebuilt", { cacheRebuilds: [rebuild(2, 40_000, 20 * 60_000)] }));
+    expect(short.action).toMatch(/^Compact before you step away/);
     expect(short.action).toContain("promptCacheTtl to 1h");
+    // 2 of 3 within an hour: most. 1 of 3: not most.
+    const gaps = (...g: number[]) => g.map((m) => rebuild(1, 40_000, m * 60_000));
+    expect(only(fire("cache-rebuilt", { cacheRebuilds: gaps(20, 30, 180) })).action).toContain("promptCacheTtl to 1h");
+    expect(only(fire("cache-rebuilt", { cacheRebuilds: gaps(20, 180, 240) })).action).not.toContain("promptCacheTtl");
+  });
+  test("gaps of hours on a 1-hour cache: no TTL advice, and the action leads with compact or clear before stepping away", () => {
+    const hourly = (gapH: number): Rebuild => ({ ...rebuild(1, 40_000, gapH * HOUR), ttl: "1h" });
+    const h = only(fire("cache-rebuilt", { cacheRebuilds: [hourly(1.5), hourly(4), hourly(13)] }));
+    expect(h.action).toMatch(/^Compact or \/clear before you step away/);
+    expect(h.action).toContain("outlasted even the 1-hour cache");
+    expect(h.action).not.toContain("promptCacheTtl");
+    // The same on the 5-minute cache: gaps over an hour are beyond what a 1-hour setting could keep.
+    expect(only(fire("cache-rebuilt", { cacheRebuilds: [rebuild(2, 40_000, 2 * HOUR)] })).action).not.toContain("promptCacheTtl");
+  });
+  test("the summary says a subscription's dollar figures are API-list equivalents", () => {
+    expect(only(fire("cache-rebuilt", { cacheRebuilds: [rebuild(2)] })).summary).toContain("On a subscription these dollar figures are API-list equivalents");
   });
   test("stays quiet below 1 dollar", () => {
     expect(fire("cache-rebuilt", { cacheRebuilds: [rebuild(0.5), rebuild(0.49)] })).toEqual([]);
@@ -215,9 +229,12 @@ describe("tally is not its own finding", () => {
 
 describe("hint amounts", () => {
   const stub = (rule: string, usd: number, over: Partial<Hint> = {}): HintRule => ({ id: rule, run: () => [{ rule, title: rule, usd, summary: "s", action: "a", evidence: [], short: "s", ...over }] });
-  test("a hint worth under a cent is dropped; zero-figure and urgent hints stay", async () => {
-    const rules = [stub("tiny", 0.004), stub("cent", 0.01), stub("none", 0), stub("urgent", 0.001, { urgent: true })];
-    expect((await runRules(rules, inputOf())).map((h) => h.rule).sort()).toEqual(["cent", "none", "urgent"]);
+  test("a hint with a figure needs the larger of 1 dollar and 0.05% of the window's spend; zero-figure and urgent hints stay", async () => {
+    const rules = [stub("tiny", 0.004), stub("cent", 0.99), stub("dollar", 1), stub("none", 0), stub("urgent", 0.001, { urgent: true })];
+    expect((await runRules(rules, inputOf())).map((h) => h.rule).sort()).toEqual(["dollar", "none", "urgent"]);
+    // On a 10000-dollar window the bar is 5 dollars.
+    const big = inputOf({ summary: summaryOf({ total: money(10_000) }) });
+    expect((await runRules([stub("under", 4.99), stub("at", 5)], big)).map((h) => h.rule)).toEqual(["at"]);
   });
   test("unused-plugin and unused-mcp-server write amounts in the shared money format", () => {
     expect(only(fire("unused-plugin", HUNDRED, { plugins: [plugin("a", 5000, false)] })).summary).toContain("10\u00a2 went to carrying");
@@ -228,6 +245,47 @@ describe("hint amounts", () => {
     expect(usdText(0.5)).toBe("50\u00a2");
     expect(usdText(2)).toBe("$2.00");
     expect(usdText(1234.5)).toBe("$1,235");
+  });
+});
+
+describe("unused-plugin elsewhere", () => {
+  test("a plugin another repo used is named with that repo and the project-scoped install; one used nowhere keeps the plain advice", () => {
+    const here: InstalledPlugin = { ...plugin("tool-a", 5000, false), usedIn: ["site-x"] };
+    const h = only(fire("unused-plugin", HUNDRED, { plugins: [here, plugin("tool-b", 3000, false)] }));
+    expect(h.action).toContain("tool-a was used in site-x: disable it here and run `claude plugin install tool-a -s project` in that repo");
+    expect(h.action).not.toContain("tool-b was used");
+    expect(h.evidence.find((e) => e.label === "tool-a")!.detail).toBe(`5k tokens per request, ${usdText(0.1)}; used in site-x`);
+    expect(h.evidence.find((e) => e.label === "tool-b")!.detail).toBe(`3k tokens per request, ${usdText(0.06)}`);
+    expect(h.summary).toContain("some are used in other repos");
+    const plain = only(fire("unused-plugin", HUNDRED, { plugins: [plugin("tool-b", 3000, false)] }));
+    expect(plain.action).not.toContain("claude plugin install");
+    expect(plain.summary).not.toContain("other repos");
+  });
+  test("several repos: install in each of them", () => {
+    const here: InstalledPlugin = { ...plugin("tool-a", 5000, false), usedIn: ["site-x", "site-y"] };
+    expect(only(fire("unused-plugin", HUNDRED, { plugins: [here] })).action).toContain("was used in site-x, site-y: disable it here and run `claude plugin install tool-a -s project` in each of them");
+  });
+});
+
+describe("near-limit and limit-pace together", () => {
+  const limits = (percent: number, elapsedH: number) => ({ fiveHour: { percentUsed: percent, resetsAt: NOW + (5 - elapsedH) * HOUR } });
+  test("both firing give one hint: the pace projection, with the near-limit window facts in its evidence", async () => {
+    // 91% used 4h into the 5h window: past 80, and on course to run out in about 24 minutes.
+    const out = await runRules(HINT_RULES, inputOf({ limits: limits(91, 4) }));
+    expect(out.map((h) => h.rule)).toEqual(["limit-pace"]);
+    const h = out[0]!;
+    expect(h.title).toBe("Rate limit on course to run out");
+    expect(h.urgent).toBe(true);
+    // The window row is the pace's (one row per window); the near-limit wording joins as a Limit row.
+    expect(h.evidence.filter((e) => e.label === "5-hour window").length).toBe(1);
+    expect(h.evidence.find((e) => e.label === "Limit")!.detail).toContain("5-hour window: 91% used. At 100% requests pause");
+  });
+  test("near-limit alone stays, and a window only near-limit knows is added to the merged evidence", async () => {
+    const alone = await runRules(HINT_RULES, inputOf({ limits: limits(85, 4.5) }));
+    expect(alone.map((h) => h.rule)).toEqual(["near-limit"]);
+    const both = await runRules(HINT_RULES, inputOf({ limits: { ...limits(91, 4), sevenDay: { percentUsed: 85, resetsAt: NOW + 3 * DAY } } }));
+    expect(both.map((h) => h.rule)).toEqual(["limit-pace"]);
+    expect(both[0]!.evidence.map((e) => e.label)).toEqual(["5-hour window", "7-day window", "Limit"]);
   });
 });
 
@@ -252,7 +310,8 @@ describe("long-session", () => {
   test("fires when a peak passes 70 percent on a 1M window", () => {
     const h = only(fire("long-session", { peakContext: { s1: 700_001 } }));
     expect(h.usd).toBe(0);
-    expect(h.evidence[0]!.detail).toContain("700k");
+    expect(h.evidence.find((e) => e.label === "Peak context")!.detail).toContain("700k");
+    expect(h.evidence[0]).toEqual({ label: "Session", detail: "s1", kind: "text" });
   });
   test("stays quiet at 70 percent", () => {
     expect(fire("long-session", { peakContext: { s1: 700_000 } })).toEqual([]);
@@ -275,16 +334,17 @@ describe("long-session", () => {
   test("a session that ran into automatic compaction cites where it fired", () => {
     const compaction = { count: 2, savedTokens: 0, savedUsd: 0, bySession: { s1: { count: 2, savedTokens: 0, savedUsd: 0, autoPeak: 940_000, autoCount: 1 } }, ineffective: [] };
     const h = only(fire("long-session", { peakContext: { s1: 900_000, s2: 800_000 }, compaction }));
-    expect(h.evidence.map((e) => e.label)).toEqual(["Peak context", "Auto-compaction", "Peak context"]);
-    expect(h.evidence[1]!.detail).toBe("ran to the automatic limit at 940k tokens");
+    expect(h.evidence.map((e) => e.label)).toEqual(["Session", "Peak context", "Auto-compaction", "Session", "Peak context"]);
+    expect(h.evidence[2]!.detail).toBe("ran to the automatic limit at 940k tokens");
     expect(h.summary).toContain("1 of them ran into automatic compaction");
   });
-  test("a titled session shows its title before the peak row", () => {
+  test("a session shows its id and repo, then its title when it has one, before the peak row", () => {
     const top = { sessionId: "s1", repo: "r", started: 0, usd: 5, resume: "claude --resume s1", title: "Fix it" };
     const h = only(fire("long-session", { peakContext: { s1: 900_000, s2: 100 }, topSessions: [top, { ...top, sessionId: "s2", usd: 9 }] }));
     expect(h.usd).toBe(5);
-    expect(h.evidence.map((e) => e.kind)).toEqual(["title", "text"]);
-    expect(h.evidence[0]!.detail).toBe("Fix it");
+    expect(h.evidence.map((e) => e.kind)).toEqual(["text", "title", "text"]);
+    expect(h.evidence[0]).toEqual({ label: "Session", detail: "s1 (r)", kind: "text" });
+    expect(h.evidence[1]!.detail).toBe("Fix it");
   });
 });
 
@@ -298,18 +358,36 @@ describe("costly-attribution", () => {
   test("an entry under 1 dollar stays quiet however big its share; 1 dollar fires; the text says the figure is request cost", () => {
     expect(fire("costly-attribution", { bySkill: { a: money(0.99) } })).toEqual([]);
     const h = only(fire("costly-attribution", { bySkill: { a: money(1) } }));
-    expect(h.summary).toContain("Requests that ran under skill a");
-    expect(h.summary).toContain("not the size of its text");
+    expect(h.summary).toContain("Skill a accounts for $1.00");
+    expect(h.summary).toContain("the cost of the requests it was active in, not the size of its text");
+    expect(h.evidence[0]!.detail).toContain("in the requests it ran in");
     expect(h.action).toContain("/usage");
   });
   test("stays quiet when every entry is at or under 20 percent", () => {
     expect(fire("costly-attribution", { bySkill: skills([20, 20, 20, 20, 20]) })).toEqual([]);
     expect(fire("costly-attribution", {})).toEqual([]);
   });
-  test("plugins are judged against plugin spend on their own, and the larger kind sets the amount", () => {
-    const h = only(fire("costly-attribution", { bySkill: skills([10, 10, 10, 10, 10, 10, 10, 10, 10, 10]), byPlugin: { p: money(30), q: money(70) } }));
-    expect(h.usd).toBe(70);
-    expect(h.evidence.map((e) => e.label)).toEqual(["Plugin q", "Plugin p"]);
+  // One resident token costs 100 * 0.2 / 1e6 (HUNDRED): a 1M-token listing is 20 dollars.
+  const agent = (usd: number) => ({ "q:helper": { [OPUS]: { ...money(usd, 0), tools: {} } } });
+  test("a plugin is charged its own listings plus the requests of its own skills and agents, judged against other plugins' own cost; the larger kind sets the amount", () => {
+    const h = only(
+      fire(
+        "costly-attribution",
+        { ...HUNDRED, bySkill: { "p:run": money(30) }, bySubType: agent(10) },
+        { plugins: [plugin("p", 1_000_000, true), plugin("q", 0, true)] },
+      ),
+    );
+    expect(h.usd).toBe(50);
+    expect(h.evidence.map((e) => e.label)).toEqual(["Plugin p", "Skill p:run"]);
+    expect(h.evidence[0]!.detail).toBe("$50.00 ($20.00 listings in every request + $30.00 in requests of its own skills and agents), 83% of plugin-owned spend");
+    expect(h.summary).toContain("not the requests it was only loaded in");
+  });
+  test("requests a plugin was merely loaded in are not its cost: an always-on plugin with no listings and no calls stays quiet", () => {
+    expect(fire("costly-attribution", { ...HUNDRED, byPlugin: { p: money(500), q: money(70) } }, { plugins: [plugin("p", 0, true), plugin("q", 0, true)] })).toEqual([]);
+  });
+  test("an unused plugin (unused-plugin's finding) and the tally plugin itself are left out", () => {
+    const plugins = [plugin("p", 1_000_000, false), plugin("tally", 1_000_000, true), plugin("tally@m", 1_000_000, true)];
+    expect(fire("costly-attribution", HUNDRED, { plugins })).toEqual([]);
   });
 });
 
@@ -329,8 +407,19 @@ describe("whole-reads", () => {
   test("two whole reads are not enough", () => {
     expect(fire("whole-reads", { wholeReads: { "/w/a.ts": 2 }, flow })).toEqual([]);
   });
-  test("a file outside the costliest parts still counts, with no amount", () => {
-    expect(only(fire("whole-reads", { wholeReads: { "/w/z.ts": 4 }, flow })).usd).toBe(0);
+  test("a figure that rounds to zero hides the hint: a file outside the costliest parts, or one worth under half a cent", () => {
+    expect(fire("whole-reads", { wholeReads: { "/w/z.ts": 4 }, flow })).toEqual([]);
+    expect(fire("whole-reads", { wholeReads: { "/w/a.ts": 3 }, flow: [item("read", "/w/a.ts", 0.004)] })).toEqual([]);
+    expect(Math.round(only(fire("whole-reads", { wholeReads: { "/w/a.ts": 3 }, flow: [item("read", "/w/a.ts", 0.009)] })).usd * 1e9) / 1e9).toBe(0.006);
+  });
+  test("images and PDFs are skipped, in the findings and in the metric; text files beside them still count", () => {
+    const media = ["/w/base.png", "/w/shot.JPG", "/w/a.jpeg", "/w/b.gif", "/w/c.webp", "/w/doc.pdf"];
+    const reads = Object.fromEntries(media.map((p) => [p, 5]));
+    const f = media.map((p) => item("read", p, 9));
+    expect(fire("whole-reads", { wholeReads: reads, flow: f })).toEqual([]);
+    const h = only(fire("whole-reads", { wholeReads: { ...reads, "/w/a.ts": 3 }, flow: [...f, item("read", "/w/a.ts", 3)] }));
+    expect(h.evidence.map((e) => e.detail)).toEqual(["/w/a.ts", "3 complete Read calls"]);
+    expect(h.metric?.value).toBe(2 / 1);
   });
 });
 
