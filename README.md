@@ -91,7 +91,7 @@ The first scan of a large history takes a minute or two (see [Performance](#perf
 
 ## What you see
 
-`/tally` opens a window with six tabs. The keys `1` to `5` and `0` switch tabs; `Esc` shrinks the window to a single line over the prompt, and `ctrl+x` then `tab` hands it the keyboard.
+`/tally` opens a window with six tabs. The keys `1` to `5` and `0` switch tabs; `Esc` folds the window to a single line over the prompt, and `ctrl+x` then `tab` hands it the keyboard.
 
 | Tab | Key | What it shows |
 | --- | --- | --- |
@@ -102,11 +102,42 @@ The first scan of a large history takes a minute or two (see [Performance](#perf
 | Hints | `5` | Hints for this session and for the past 24 hours or 30 days: title, amount, summary, action and evidence |
 | Help | `0` | Data sources, color legend, keys, settings, version, price source and date, unpriced models |
 
-The foot of the window shows cache timers with the cost to refill them, a context bar with the compact threshold, and your 5-hour and 7-day limits with reset times. Each session gets one toast when a limit goes above 80%.
+The foot of the window shows cache timers with the rewrite cost, a context bar with the compact threshold, and your 5-hour and 7-day limits with reset times. Each session gets one toast when a limit goes above 80%.
 
 ### Layouts
 
-The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. Folded, the window leaves one line over the prompt: the best hint and its saving, a character chart of the past 8 hours, cost, context and cache timer, with parts dropped as the terminal narrows. The desktop app adds a low-key summary strip, and in VS Code the window draws without the key bar. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock. Close the window with `esc`, its close mark or its `× fold` button; tally remembers that and starts folded next time until you open it again with `/tally` or a click on the line. Claude Code reports clicks only in fullscreen (`/tui fullscreen`); on the main screen use `esc` and `/tally`, which the folded line names.
+The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. Folded, the window leaves one line over the prompt, most important first: `session $1.16 · ctx 21% · cache expired · ▲ 1 installed plugin never used, save ~$0.03`. Every amount carries its word (`session`, `save`), and the line gives way from the right as the terminal narrows: the entry words, the 8-hour chart (`8h`), the hint's saving, the cache, the hint down to its marker, then the context; the session cost stays. The desktop app adds a low-key summary strip (its `details ▸` button opens the window), and in VS Code the window draws without the key bar. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock. Fold the window with `esc` (or `/tally close`); tally remembers that and starts folded next time until you open it again with `/tally` or a click on the line. Claude Code reports clicks only in fullscreen (`/tui fullscreen`). On the main screen the folded line ends with `ctrl+x tab, enter or /tally: open` until you have opened the window from it once: `ctrl+x` then `tab` hands the line the keyboard, `enter` opens the window, and `/tally` opens it from anywhere.
+
+### Keys
+
+| Key | What it does |
+| --- | --- |
+| `1`-`5`, `0` | Switch tab (`0` is Help). |
+| `tab`, `enter` | Move to and open rows. |
+| `PgUp`, `PgDn` | PgUp/PgDn scroll the docked window. |
+| `esc` | Folds the window. |
+| `ctrl+x` then `tab` | Hands the folded line or the window the keyboard, on the main screen. |
+| `s` | Time span (Usage, Hints). |
+| `r` | Repository filter (History, Hints). |
+| `t` | This computer or all computers (History, Hints, with `syncDir`). |
+| `a`, `p`, `n` | Choose an agent, previous, next (Usage, Context). |
+| `v`, `b` | Full text or transcript, back (Usage, Context). |
+| `m` | Expand a truncated list. |
+| `y` | Adopt the hint (Hints). |
+
+### Words
+
+| Word | Meaning |
+| --- | --- |
+| `expired` | The prompt cache has run out. The next request writes it again at the `rewrite cost`. |
+| `rewrite cost` | What writing the whole context to the cache again costs on the main model. |
+| `this session` | The Claude Code session you are in, including the launches before a resume. |
+| `save ~$0.03` | The saving a hint estimates; `~` marks an estimate. |
+| `fold`, `folded` | Shrink the window to its one line, and that state. |
+| `sub-agent` | A task run by another agent that the main conversation started. |
+| `computer` | One machine whose totals are merged through `syncDir`. |
+| `▂▃▅▇█` | One hour's token total in the past 8 hours, oldest first; `·` is an hour with no request. |
+| `⧗` | A cache timer. |
 
 ### Hints
 
@@ -154,6 +185,7 @@ Set the options through the plugin settings (`userConfig` in `plugin.json`), for
 | Command | What it does |
 | --- | --- |
 | `/tally` | Opens the window, or unfolds it. |
+| `/tally close` | `close`: folds the window (same as `esc`). |
 | `/tally <tab>` | Opens on `session`, `usage`, `context`, `history`, `hints` or `help`. |
 | `/tally 24h` or `30d` | Opens with that time span. |
 | `/tally money dollars` | Sets a display option; also `decimals`, `open`, `row`. Word order is free. `money` also takes `both`, `dollar` and `cent`, and `row` takes `show` and `hide`. `tokens` opens the Usage tab, and `settings` opens Help. A setting with a missing or wrong value answers with the values it accepts. |

@@ -99,11 +99,10 @@ export { tokensText };
 
 export const percentText = (share: number): string => `${Math.round(share * 100)}%`;
 
-/** A cache's time left: seconds under 5 minutes, then minutes, then hours and minutes. */
+/** A cache's time left: `<1m`, whole minutes, then hours and minutes. No seconds: the display is redrawn at most every 15 s. */
 export function leftText(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 300) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  if (s < 60) return "<1m";
   const m = Math.floor(s / 60);
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
@@ -137,17 +136,17 @@ export function contextWords(d: WindowData): string {
 
 export function cacheWords(d: WindowData): string | null {
   if (d.cache === null) return null;
-  return d.cache.isExpired ? `${CACHE_MARK} cold` : `${CACHE_MARK} ${leftText(d.cache.leftMs)}`;
+  return d.cache.isExpired ? `${CACHE_MARK} expired` : `${CACHE_MARK} ${leftText(d.cache.leftMs)}`;
 }
 
 /** The short view's lines: cost, context and limits, cache, then the chart and hint; each cut to `cols`. */
 export function glanceLines(d: WindowData, cols: number): string[] {
   const cut = (s: string): string => (s.length > cols ? `${s.slice(0, Math.max(0, cols - 1))}\u{2026}` : s);
   const lines: string[] = [];
-  lines.push(`${moneyOf(d, d.costUsd)} session${d.agents > 0 ? `${SEP}${d.agents} subagent${d.agents === 1 ? "" : "s"}` : ""}`);
+  lines.push(`${moneyOf(d, d.costUsd)} session${d.agents > 0 ? `${SEP}${d.agents} sub-agent${d.agents === 1 ? "" : "s"}` : ""}`);
   const ctx = [contextWords(d), ...d.limits.map((l) => `${limitName(l.kind, true)} ${Math.round(l.percentUsed)}%`)];
   lines.push(ctx.join(SEP));
-  const cache = d.cache === null ? null : `cache ${d.cache.isExpired ? "cold" : leftText(d.cache.leftMs)}${d.cache.refillUsd === null ? "" : `${SEP}refill ${moneyOf(d, d.cache.refillUsd)}`}`;
+  const cache = d.cache === null ? null : `cache ${d.cache.isExpired ? "expired" : leftText(d.cache.leftMs)}${d.cache.refillUsd === null ? "" : `${SEP}rewrite cost ${moneyOf(d, d.cache.refillUsd)}`}`;
   if (cache !== null) lines.push(cache);
   if (d.chart !== null) lines.push(`8h ${d.chart}`);
   if (d.hint !== null) lines.push(`${HINT_MARK} ${d.hint.found}${d.hint.saving === null ? "" : `${SEP}${d.hint.saving}`}`);

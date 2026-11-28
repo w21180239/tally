@@ -116,9 +116,15 @@ The `tally_report` tool takes `days`, `repo`, `compare` and `saveBaseline` and r
 
 After each scan, tally writes 24-hour and 30-day report snapshots to `<config>/tally/report-<span>.json`. The Herdr sidebar only reads and draws those files and shows how old they are; it bundles none of `core/`. With no Claude Code session running, it shows the last snapshot. Turning `herdrSidebar` off removes the folder tally created, identified by a marker file.
 
+## Fold line and vocabulary
+
+The folded line orders its parts by importance: `session` cost, context share, cache, the 8-hour chart, the top hint. Each amount carries a word (`session $1.16`, `save ~$0.03`). A width ladder drops parts from the right (entry words, chart, the hint's saving, cache, the hint down to its marker, context) and the first try that fits wins; the cost alone is cut to fit. On the main screen, where Claude Code reports no clicks, the line ends with how to reach it (`ctrl+x tab, enter or /tally: open`) until the person has opened the window from it once; that fact is kept in the store (`fold-entry-seen`). A focused line is drawn without tone colours, so the terminal's inverse video does not make patches.
+
+One word per concept across the views: `expired` (cache), `rewrite cost`, `this session`, `sub-agent`, `computer`, `fold` and `folded`. The cache countdown shows whole minutes, `<1m` under one minute and no seconds; the 15 s timer under 5 minutes is only there to catch the move to `expired` promptly.
+
 ## Hint adoption and recheck
 
-Adopting a hint stores the rule's metric, the expected saving and the date. A rule can provide a before-and-after metric, for example cache-rebuilt uses rebuild cost per active hour and fast-mode uses the fast cost share. After `recheckDays` (default 14), a toast reminds you and shows expected against actual saving. Rules without a metric record the adoption and nothing else. Low-confidence model-change hints say "try it" and never "downgrade".
+Adopting a hint stores the rule's metric, the expected saving and the date. A rule can provide a before-and-after metric, for example cache-rebuilt uses rebuild cost per active hour and fast-mode uses the fast cost share. After `recheckDays` (default 14), a toast names the hint's title (stored with the adoption; older records show the rule id) and shows expected against actual saving, formatted by the `money` and `decimals` settings in force when it appears. Rules without a metric record the adoption and nothing else. Low-confidence model-change hints say "try it" and never "downgrade".
 
 ## Privacy invariants
 

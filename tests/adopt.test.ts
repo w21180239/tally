@@ -76,9 +76,17 @@ describe("adoption records", () => {
     expect(parseAdoptions({})).toEqual([]);
   });
 
-  test("the toast names the rule, the expected and the actual saving", () => {
-    expect(recheckText("fast-mode", { expectedUsd: 10, actualUsd: 6 })).toBe("tally: you adopted fast-mode; expected save $10.00, actual save $6.00.");
-    expect(recheckText("fast-mode", { expectedUsd: 10, actualUsd: -1.2 })).toBe("tally: you adopted fast-mode; expected save $10.00, actual save -$1.20.");
+  test("the toast names the title, the expected and the actual saving, in the money setting's format", () => {
+    const dollars = { money: "dollars", decimals: "auto" } as const;
+    expect(recheckText("Fast-mode surcharge", { expectedUsd: 10, actualUsd: 6 }, dollars)).toBe("tally: Fast-mode surcharge: expected save $10.00, actual $6.00");
+    expect(recheckText("Fast-mode surcharge", { expectedUsd: 10, actualUsd: -1.2 }, dollars)).toBe("tally: Fast-mode surcharge: expected save $10.00, actual -$1.20");
+    expect(recheckText("Cache expired while idle", { expectedUsd: 0.07, actualUsd: 0.05 }, { money: "cents", decimals: "auto" })).toBe("tally: Cache expired while idle: expected save 7\u{a2}, actual 5\u{a2}");
+    expect(recheckText("x", { expectedUsd: 0.07, actualUsd: 0.05 }, { money: "cents-and-dollars", decimals: "auto" })).toBe("tally: x: expected save 7\u{a2}, actual 5\u{a2}");
+  });
+
+  test("a stored title survives parsing; a record without one stays without", () => {
+    const titled = adoption({ title: "Fast-mode surcharge" });
+    expect(parseAdoptions([titled, { ...adoption(), title: 7 }])).toEqual([titled, adoption()]);
   });
 });
 
@@ -273,6 +281,7 @@ describe("adopting a hint", () => {
     expect(list.length).toBe(1);
     const a = list[0]!;
     expect(a.rule).toBe("fast-mode");
+    expect(a.title).toBe("Fast-mode surcharge");
     expect(a.at).toBe(NOW);
     expect(a.metricName).toBe("fast share of cost");
     expect(a.before).toBeGreaterThan(0.99);
@@ -320,11 +329,20 @@ describe("recheck", () => {
     await start($);
     await afterStart(r);
     // base = 4 / 2 = 2 dollars per unit; fast share is now about 1: (2 - 1) * 2
-    expect(r.toasts).toEqual(["tally: you adopted fast-mode; expected save $4.00, actual save $2.00."]);
+    expect(r.toasts).toEqual(["tally: fast-mode: expected save $4.00, actual $2.00"]);
     expect(stored.get(CHECKED_KEY)).toEqual([adoptionId(due())]);
     await start($);
     await afterStart(r);
     expect(r.toasts.length).toBe(1);
+  });
+
+  test("the toast follows the money setting and names the stored title", { options: { money: "cents" } }, async ($, on) => {
+    const stored = new Map<string, unknown>([[ADOPTIONS_KEY, [due({ title: "Fast-mode surcharge" })]]]);
+    const r = rig(on, stored);
+    await seed(r.world);
+    await start($);
+    await afterStart(r);
+    expect(r.toasts).toEqual(["tally: Fast-mode surcharge: expected save 400\u{a2}, actual 200\u{a2}"]);
   });
 
   test("a session that is not interactive neither toasts nor marks the adoption done", async ($, on) => {

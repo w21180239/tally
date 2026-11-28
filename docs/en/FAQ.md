@@ -30,7 +30,13 @@
 
 **A hint looks wrong for my case.** Open its evidence on the Hints tab (`tab`/`enter`). Each hint shows the numbers it was computed from. If the numbers are right and the advice does not fit, open an issue with the rule name and the figures, with private text removed.
 
-**What does `y` do?** It adopts the hint: tally stores the rule's metric, the expected saving and the date. After `recheckDays` it reminds you and shows expected against actual saving, for rules that have a before-and-after metric.
+**What does `y` do?** It adopts the hint: tally stores the rule's metric, the expected saving and the date. After `recheckDays` a toast shows the hint's title with expected against actual saving (`tally: Cache expired while idle: expected save $7.13, actual $5.80`), written in your `money` and `decimals` format, for rules that have a before-and-after metric.
+
+**How do I reach the folded line on the main screen?** Claude Code reports no clicks there. Press `ctrl+x`, then `tab` to focus the line and `enter` to open the window, or run `/tally`. The line says so until you have opened the window from it once.
+
+**What do `expired` and `rewrite cost` mean?** `expired`: the prompt cache ran out while you were away, so the next request writes the context again. `rewrite cost` is the price of that write. The countdown shows whole minutes (`4m`, then `<1m`), not seconds.
+
+**What are the keys for closing and scrolling?** `esc` or `/tally close` fold the window. `PgUp` and `PgDn` scroll a docked window.
 
 **Can I hide titles and commands from the window?** Set `redactEvidence` to true. Commands keep only the program name, titles are blank and paths keep only the file name.
 
