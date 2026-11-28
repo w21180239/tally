@@ -9,7 +9,7 @@ import { formatMoney } from "../core/money.ts";
 import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import type { Shard } from "../core/shard.ts";
 import type { UsageRow, UserRow } from "../core/types.ts";
-import { EMPTY_HINTS, HINTS_INTERVAL_MS, HINTS_RETRY_MS, hintsKeyOf, needsHints } from "../engine/hints-view.ts";
+import { EMPTY_HINTS, HINTS_INTERVAL_MS, HINTS_MIN_MS, HINTS_RETRY_MS, hintsKeyOf, needsHints } from "../engine/hints-view.ts";
 import type { HintsData, HintsWant } from "../engine/hints-view.ts";
 import { LAST_LIMITS_KEY } from "../engine/live.ts";
 import { registryPath } from "../engine/plugins.ts";
@@ -17,7 +17,7 @@ import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { saveSnapshot } from "../engine/snapshot.ts";
 import { keyLine } from "../view/keys.ts";
 import { tableOf } from "../view/table.ts";
-import { drawHints, hintRowKey } from "../view/tabs/hints.tsx";
+import { NO_ADOPT, NO_EVIDENCE, drawHints, hintRowKey } from "../view/tabs/hints.tsx";
 import { prompt, req } from "./fixtures/rows.ts";
 import { worldOf } from "./world.ts";
 import type { World } from "./world.ts";
@@ -163,7 +163,7 @@ function hintsHost(on: On, o: { span?: Hint[]; shown?: string[]; redact?: boolea
     const t = tableOf($, e as RenderInput<"Pane">);
     const { Box } = t;
     const drawn = drawHints(t, { d: { money: DEFAULT_SETTINGS.money, decimals: DEFAULT_SETTINGS.decimals }, data, want: HOST_WANT, view: { shown: o.shown ?? [] }, redact: o.redact === true, onShown: () => {} });
-    return (<Box key="host" flexDirection="column">{drawn.rows}</Box>) as never;
+    return (<Box key="host" flexDirection="column">{drawn.rows}{drawn.pinned?.(drawn.rows)}</Box>) as never;
   });
 }
 const mountHost = ($: Engine) => $.ui.mount({ plugin: "hints-host", surface: "terminal", ...PANE, requestId: "hints-host" });
@@ -304,6 +304,16 @@ describe("hints refresh rules", () => {
     expect(needsHints(base, { ...want, repoOnly: true }, NOW)).toBe(true);
     expect(needsHints(base, { ...want, sessionId: "s-2" }, NOW)).toBe(true);
     expect(needsHints({ key: "", at: 0 }, want, NOW)).toBe(true);
+  });
+
+  test("findings built before new requests arrived are rebuilt once HINTS_MIN_MS old, not on every draw", () => {
+    const built = { ...base, stamp: 4 };
+    expect(needsHints(built, { ...want, stamp: 4 }, NOW + HINTS_MIN_MS)).toBe(false);
+    expect(needsHints(built, { ...want, stamp: 5 }, NOW + HINTS_MIN_MS - 1)).toBe(false);
+    expect(needsHints(built, { ...want, stamp: 5 }, NOW + HINTS_MIN_MS)).toBe(true);
+    // Findings from before stamps existed count as moved; a want with no stamp never asks.
+    expect(needsHints(base, { ...want, stamp: 5 }, NOW + HINTS_MIN_MS)).toBe(true);
+    expect(needsHints(built, want, NOW + HINTS_MIN_MS)).toBe(false);
   });
 
   test("a failed key waits out the retry gap, while another key does not", () => {
@@ -501,6 +511,24 @@ describe("hints tab", () => {
 });
 
 describe("hints drawing", () => {
+  test("with nothing to adopt or open, y and e are held by a status row, not left for the prompt", async ($, on) => {
+    hintsHost(on, { span: [] });
+    const ui = await mountHost($);
+    expect((await ui.find({ key: "held-y" }))?.props.hotkey).toBe("y");
+    expect((await ui.find({ key: "held-e" }))?.props.hotkey).toBe("e");
+    expect((await ui.find({ key: "held-y" }))?.props.label).toBe(NO_ADOPT);
+    expect((await ui.find({ key: "held-e" }))?.props.label).toBe(NO_EVIDENCE);
+    await ui.unmount();
+  });
+
+  test("a hint with evidence takes e; with no adopt button y stays held", async ($, on) => {
+    hintsHost(on, { span: [hintOf("big", 5, { evidence: EVIDENCE })] });
+    const ui = await mountHost($);
+    expect(await ui.find({ key: "held-e" })).toBeUndefined();
+    expect((await ui.find({ key: "held-y" }))?.props.hotkey).toBe("y");
+    await ui.unmount();
+  });
+
   test("a low-confidence hint says so; others do not", async ($, on) => {
     hintsHost(on, { span: [hintOf("a", 3, { confidence: "low" }), hintOf("b", 2, { confidence: "high" }), hintOf("c", 1)] });
     const ui = await mountHost($);

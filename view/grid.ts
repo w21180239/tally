@@ -66,9 +66,9 @@ export function titleParts(name: string, note: string | undefined, width: number
   const shown = cut(name, width);
   let room = width - shown.length;
   let noteText = "";
-  // The note keeps at least a short rule after it: gap, 3 note cells, gap, 2 rule cells.
-  if (note !== undefined && note !== "" && room >= 7) {
-    noteText = cut(note, room - 4);
+  // The note is shown whole or dropped, never cut mid-phrase; it keeps a short rule after it (gap, note, gap, 2 rule cells).
+  if (note !== undefined && note !== "" && note.length <= room - 4) {
+    noteText = note;
     room -= noteText.length + 1;
   }
   const rule = room >= 3 ? "\u{2500}".repeat(room - 1) : "";

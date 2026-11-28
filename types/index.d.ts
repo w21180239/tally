@@ -229,6 +229,7 @@ export interface TallyHints {
   session: TallyHint[];
   span: TallyHint[];
   failure?: { key: string; why: string; at: number };
+  stamp?: number;
 }
 
 export interface TallyHelp {
