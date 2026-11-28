@@ -295,12 +295,14 @@ const start = ($: Engine) => $.session.start({ cwd: CWD, surface: "terminal", is
 const call = ($: Engine, input: Record<string, unknown>) => $.tool.call({ tool: REPORT_TOOL_FULL, ...input } as never) as Promise<{ result?: unknown; deny?: string }>;
 const run = (args: string) => ({ command: "tally", args, origin: { kind: "composer" as const }, presentation: { isFullscreen: true, columns: 200 } });
 const textOf = (r: { result?: unknown }): string => String(r.result);
+// A session start runs the whole plugin; on loaded CI runners these tests have passed the kit's 5 s default.
+const ENGINE = { timeoutMs: 20_000 };
 
 // One request half an hour ago keeps the 24h window busy and sits in today's bucket; the others sit 3 and 20 days back.
 const rowsOf = (): UsageRow[] => [usageRow("a", 3), usageRow("b", 20), usageRow("c", 0.02)];
 
 describe("the tally_report tool", () => {
-  test("is declared at session start with its five parameters", async ($, on) => {
+  test("is declared at session start with its five parameters", ENGINE, async ($, on) => {
     const r = rig(on);
     await start($);
     expect(r.registered.map((t) => t.name)).toEqual(["tally_report"]);
@@ -308,7 +310,7 @@ describe("the tally_report tool", () => {
     expect(Object.keys(props).sort()).toEqual(["adopt", "compare", "days", "repo", "saveBaseline"]);
   });
 
-  test("answers with the markdown report", async ($, on) => {
+  test("answers with the markdown report", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -318,7 +320,7 @@ describe("the tally_report tool", () => {
     expect(out).toContain("2 requests");
   });
 
-  test("a repository filter limits the report; an unknown one says so", async ($, on) => {
+  test("a repository filter limits the report; an unknown one says so", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -327,7 +329,7 @@ describe("the tally_report tool", () => {
     expect(none).toContain("No requests matched repository other");
   });
 
-  test("saveBaseline stores the pace plus each hint's expected saving; compare then reads them", async ($, on) => {
+  test("saveBaseline stores the pace plus each hint's expected saving; compare then reads them", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -343,7 +345,7 @@ describe("the tally_report tool", () => {
     expect(cmp).toContain("| Change | +$0.00");
   });
 
-  test("compare with nothing saved says there is no baseline", async ($, on) => {
+  test("compare with nothing saved says there is no baseline", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -356,7 +358,7 @@ describe("the tally_report tool", () => {
 const adoptionsOf = (r: Rig): Array<{ rule: string; at: number; metricName?: string; before?: number; expectedUsd: number }> => (r.stored.get("adoptions") as never) ?? [];
 
 describe("the tally_report adopt parameter", () => {
-  test("records an adoption for each flagged rule, with its metric and expected saving", async ($, on) => {
+  test("records an adoption for each flagged rule, with its metric and expected saving", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -369,7 +371,7 @@ describe("the tally_report adopt parameter", () => {
     expect(Math.abs(a!.expectedUsd - 6)).toBeLessThan(1e-6);
   });
 
-  test("an unknown id and an unflagged rule are skipped and named", async ($, on) => {
+  test("an unknown id and an unflagged rule are skipped and named", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -381,7 +383,7 @@ describe("the tally_report adopt parameter", () => {
     expect(adoptionsOf(r).map((a) => a.rule)).toEqual(["thinking-output"]);
   });
 
-  test("nothing adoptable records nothing", async ($, on) => {
+  test("nothing adoptable records nothing", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -390,7 +392,7 @@ describe("the tally_report adopt parameter", () => {
     expect(r.stored.has("adoptions")).toBe(false);
   });
 
-  test("adopt and saveBaseline in one call write both, over the whole 30 days even for a narrower report", async ($, on) => {
+  test("adopt and saveBaseline in one call write both, over the whole 30 days even for a narrower report", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -403,7 +405,7 @@ describe("the tally_report adopt parameter", () => {
     expect(Math.abs(adoptionsOf(r)[0]!.expectedUsd - 6)).toBeLessThan(1e-6);
   });
 
-  test("adopting a rule again replaces its record", async ($, on) => {
+  test("adopting a rule again replaces its record", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -414,7 +416,7 @@ describe("the tally_report adopt parameter", () => {
 });
 
 describe("report text for the skill", () => {
-  test("each hint names its rule id, and Confidence states the price table and its date", async ($, on) => {
+  test("each hint names its rule id, and Confidence states the price table and its date", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -425,7 +427,7 @@ describe("report text for the skill", () => {
 });
 
 describe("/tally report", () => {
-  test("writes api-spend-<date>.md in the session folder and names it", async ($, on) => {
+  test("writes api-spend-<date>.md in the session folder and names it", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -442,7 +444,7 @@ describe("/tally report", () => {
 const pick = (obj: unknown, path: string): unknown => path.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], obj);
 
 describe("report snapshots", () => {
-  test("a finished scan writes report-24h.json and report-30d.json with the fields the Herdr mod reads", async ($, on) => {
+  test("a finished scan writes report-24h.json and report-30d.json with the fields the Herdr mod reads", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
@@ -472,7 +474,7 @@ describe("report snapshots", () => {
     }
   });
 
-  test("the owner's beat refreshes both files when no scan has finished", async ($, on) => {
+  test("the owner's beat refreshes both files when no scan has finished", ENGINE, async ($, on) => {
     const r = rig(on);
     await seed(r.world, rowsOf());
     await start($);
