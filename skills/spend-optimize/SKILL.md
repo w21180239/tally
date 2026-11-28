@@ -9,7 +9,8 @@ A guided pass over tally's numbers: read the spend, agree a few changes with the
 
 ## Ground rules
 
-- Tools allowed: `mcp__tally__tally_report`, WebFetch, AskUserQuestion, Read, Edit, Write. No scripts, no bun or node, no other programs. The dollar amounts you quote are the ones the report prints.
+- Tools allowed: `mcp__tally__tally_report`, WebFetch, AskUserQuestion, Read, Edit, Write. No scripts, no bun or node, no other programs, and no Grep: to find a setting in a long file, call Read with `offset` and `limit` and page through it. The dollar amounts you quote are the ones the report prints.
+- Never edit a configuration file without the per-change confirmation in step 7. Choosing a hint in step 6 is not that confirmation.
 - Any of those tools may be deferred and absent from your tool list. Load the missing ones in one ToolSearch call, for example query `select:mcp__tally__tally_report,WebFetch,AskUserQuestion`. If ToolSearch cannot find `tally_report`, tally is not loaded: tell the user and stop. If WebFetch cannot be loaded, skip the price comparison, say that in the file and in your reading, and move on. Do not hand the fetch to another agent.
 
 ## 1. Pull the 30-day report
@@ -52,7 +53,7 @@ Hint amounts are estimates that overlap; never total them. A what-if hint shows 
 
 ## 6. Let the user pick
 
-AskUserQuestion needs at least two options per question and at most four, and allows at most four questions. Build the choices from the hints in report order, one option per hint: label is the hint title, description is its amount and a one-line version of its action. Use `multiSelect: true`.
+This picks the hints to work on; step 7 still asks before each edit. AskUserQuestion needs at least two options per question and at most four, and allows at most four questions. Build the choices from the hints in report order, one option per hint: label is the hint title, description is its amount and a one-line version of its action. Use `multiSelect: true`.
 
 - Zero hints flagged: say so, skip steps 6 and 7, and go to step 8 with no adopt list.
 - Exactly one hint: add a second option labelled "None", so the question is valid and the user can decline.
@@ -62,13 +63,23 @@ A hint that carries no dollar figure may still be offered. Choosing nothing is a
 
 ## 7. Make the changes
 
-For each chosen hint, do what its `Action:` line says: read the file it concerns, edit it, and show the user the change. Likely places are user or project settings, a `CLAUDE.md`, a hook, or an MCP or plugin entry.
+Take the chosen hints one at a time. For each, read the `Action:` line, then read the file it concerns (Read, with `offset` and `limit` for a long one). Likely places are user or project settings, a `CLAUDE.md`, a hook, or an MCP or plugin entry.
 
-- Edit only what a chosen hint requires.
-- When the action is something the user has to do themselves, for example running something or changing a working habit, hand it to them as a to-do instead of pretending it is done.
-- When the action is vague or would reach beyond the hint, ask first.
+Before anything is written, show the exact change and ask about it:
 
-Keep two lists: hints you completed or set up, and hints left with the user. Both go to step 8.
+1. State the file path, the old value and the new value, for example `~/.claude/settings.json`: `effortLevel` from `medium` to `low`. For an added or removed entry, show the lines.
+2. Ask with AskUserQuestion, one question per change (up to four questions in one call), with three options:
+   - Apply: make this edit, and adopt the hint.
+   - Adopt without editing: change nothing, record the adoption only. The user may prefer to make the change themselves, and the record still lets tally check the effect later.
+   - Skip: change nothing and do not adopt.
+3. Edit only after Apply, and only what that one change shows. A later change in the same file needs its own confirmation.
+
+Other cases:
+
+- When the action is something the user has to do themselves, for example running something or changing a working habit, hand it to them as a to-do instead of pretending it is done, and offer the same adopt-or-skip choice.
+- When the action is vague or would reach beyond the hint, ask first, and show the change you propose before asking again.
+
+Keep three lists: hints you applied, hints adopted without an edit (including the to-dos the user accepted), and hints skipped. The first two go to step 8.
 
 ## 8. Store the reference point and the adoptions
 
@@ -77,12 +88,12 @@ A baseline overwrites the previous one, so decide whether to store one:
 - If step 1 showed unindexed projects or priced-at-$0 models, the current pace is partial and would replace a good baseline with a low one. Leave `saveBaseline` out, or ask the user first and save only if they agree.
 - Otherwise include `"saveBaseline": true`.
 
-Call `mcp__tally__tally_report` once with `{ "days": 30, "saveBaseline": true, "adopt": [<rule ids>] }`, dropping `saveBaseline` when step 8 says so and dropping `adopt` when nothing was chosen. `adopt` takes the ids of both lists from step 7. With neither field the call is pointless; skip it.
+Call `mcp__tally__tally_report` once with `{ "days": 30, "saveBaseline": true, "adopt": [<rule ids>] }`, dropping `saveBaseline` when step 8 says so and dropping `adopt` when nothing was chosen. `adopt` takes the ids of the applied and the adopted-without-edit lists from step 7; skipped hints stay out. With neither field the call is pointless; skip it.
 
 Check the closing lines of the answer. `Baseline saved: $<rate> per 30 days` confirms the new baseline. `Adopted:` lists the recorded ids; each `Skipped` line names an id that was unknown or not flagged, so fix a mistyped one and call again.
 
 Close with a summary for the user:
 
-- What was changed, and what is still theirs to do.
+- What was changed, what was adopted without an edit, and what is still theirs to do.
 - Whether a baseline was stored. If it replaced an earlier one, give the old run rate from step 3 next to the new one. If you did not store one, say why.
 - That tally revisits each adopted hint after `recheckDays` days (14 by default) and shows the expected versus actual saving as a notice. Hints without a before-and-after measure are recorded only.
