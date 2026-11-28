@@ -6,7 +6,11 @@ import { cacheTtlChoice } from "./cache-ttl-choice.ts";
 import { commandOutput } from "./command-output.ts";
 import { costlyAttribution } from "./costly-attribution.ts";
 import { fastMode } from "./fast-mode.ts";
+import { effortMax } from "./effort-max.ts";
 import { hugeToolResult } from "./huge-tool-result.ts";
+import { idleLoop } from "./idle-loop.ts";
+import { longPromptTier } from "./long-prompt-tier.ts";
+import { midSessionSwitch } from "./mid-session-switch.ts";
 import { ineffectiveCompaction } from "./ineffective-compaction.ts";
 import { limitPace } from "./limit-pace.ts";
 import { longSession } from "./long-session.ts";
@@ -26,6 +30,6 @@ import { wholeReads } from "./whole-reads.ts";
 export const BASELINE_RULES: HintRule[] = [nearLimit, cacheRebuilt, subagentModel, unusedPlugin, longSession, costlyAttribution, wholeReads, commandOutput, toolOutput, thinkingOutput, fastMode, bigPaste, unusedMcpServer];
 
 /** Rules with no counterpart in the baseline set. */
-export const NEW_RULES: HintRule[] = [memoryHeavy, skillCatalogHeavy, mcpSchemaHeavy, hugeToolResult, limitPace, cacheTtlChoice, subagentOverhead, mainModelOverkill, ineffectiveCompaction];
+export const NEW_RULES: HintRule[] = [memoryHeavy, skillCatalogHeavy, mcpSchemaHeavy, hugeToolResult, limitPace, cacheTtlChoice, subagentOverhead, mainModelOverkill, ineffectiveCompaction, midSessionSwitch, effortMax, longPromptTier, idleLoop];
 
 export const ALL_RULES: HintRule[] = [...BASELINE_RULES, ...NEW_RULES];

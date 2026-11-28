@@ -4,6 +4,8 @@ import { LISTED, percentText, usdText } from "./shared.ts";
 
 /** Cutoff on an entry's portion of its own kind's attributed spend. */
 export const COSTLY_SHARE = 0.2;
+/** Floor on an entry's own attributed spend, in dollars: a large share of a small total is no finding. */
+export const COSTLY_MIN_USD = 1;
 
 type Row = { kind: "Skill" | "Plugin"; name: string; usd: number; share: number };
 
@@ -13,7 +15,7 @@ function costly(kind: Row["kind"], by: Record<string, Money>): Row[] {
   if (total <= 0) return [];
   return Object.entries(by)
     .map(([name, m]) => ({ kind, name, usd: m.usd, share: m.usd / total }))
-    .filter((r) => r.share > COSTLY_SHARE)
+    .filter((r) => r.share > COSTLY_SHARE && r.usd >= COSTLY_MIN_USD)
     .sort((a, b) => b.usd - a.usd || (a.name < b.name ? -1 : 1));
 }
 
@@ -33,8 +35,8 @@ export const costlyAttribution: HintRule = {
         rule: "costly-attribution",
         title: "Cost concentrated in a few add-ons",
         usd,
-        summary: `${rows.length === 1 ? `${top.kind} ${top.name} drives ${usdText(usd)}, over ${percentText(COSTLY_SHARE)} of all ${top.kind.toLowerCase()} spend` : `${rows.length} skills and plugins each pass ${percentText(COSTLY_SHARE)} of their kind's spend; the largest is ${usdText(usd)}`}.`,
-        action: "Start with the biggest entry and weigh its output against the tokens: trim a skill's text, enable a plugin only for the projects that use it, or trigger it less often.",
+        summary: `${rows.length === 1 ? `Requests that ran under ${top.kind.toLowerCase()} ${top.name} cost ${usdText(usd)}, over ${percentText(COSTLY_SHARE)} of all ${top.kind.toLowerCase()} spend` : `${rows.length} skills and plugins each pass ${percentText(COSTLY_SHARE)} of their kind's spend; the largest is ${usdText(usd)}`}. The figure is the cost of the requests it was active in, not the size of its text.`,
+        action: "Start with the biggest entry and weigh its output against the tokens · run /usage for the attribution rows. Enable a plugin only for the projects that use it, trim the skill's steps, or trigger it less often.",
         evidence,
         short: `${top.kind.toLowerCase()} ${top.name} at ${percentText(top.share)} of its kind`,
       },

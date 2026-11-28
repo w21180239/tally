@@ -113,3 +113,15 @@ export function unitPrices(row: UsageRow, table: PriceTable, resolve: Resolver =
   const inMul = (over ? lc.inputMul : 1) * fast;
   return { input: p.input * inMul, output: p.output * (over ? lc.outputMul : 1) * fast, read: p.cacheRead * inMul, cw5m: p.cw5m * inMul, cw1h: p.cw1h * inMul };
 }
+
+/** What the long-context tier added to one request: its cost less what the same tokens cost at the base rates (0 under the threshold, for a model with no tier and when unpriced). */
+export function longContextExtra(row: UsageRow, table: PriceTable, resolve: Resolver = (m) => resolvePrice(m, table)): number {
+  const r = row.synthetic ? null : resolve(row.model);
+  const lc = r?.price.longContext;
+  if (!r || lc === undefined) return 0;
+  const t = row.tokens;
+  if (t.input + t.cacheRead + t.cw5m + t.cw1h <= lc.threshold) return 0;
+  const { price: p } = r;
+  const inputSide = t.input * p.input + t.cacheRead * p.cacheRead + t.cw5m * p.cw5m + t.cw1h * p.cw1h;
+  return ((inputSide * (lc.inputMul - 1) + t.output * p.output * (lc.outputMul - 1)) * (row.fast ? table.fastMul : 1)) / 1e6;
+}

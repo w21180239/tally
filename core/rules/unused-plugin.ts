@@ -15,7 +15,7 @@ export const unusedPlugin: HintRule = {
         title: "Plugins adding context without being used",
         usd,
         summary: `${usdText(usd)} went to carrying the skill, agent and MCP listings of ${rows.length} installed ${rows.length === 1 ? "plugin" : "plugins"} that never got used.`,
-        action: "Open /plugin to switch these off; a plugin that only one project needs can be enabled in that project alone.",
+        action: "Switch them off · open /plugin, or enable a plugin in the one project that needs it. /skill-doctor lists each skill's cost and use.",
         evidence: rows.slice(0, LISTED).map((r) => ({ label: r.p.name, detail: `${tokensText(r.p.tokensPerRequest)} tokens per request, ${usdText(r.usd)}`, kind: "text" as const })),
         short: `${rows.length} installed ${rows.length === 1 ? "plugin" : "plugins"} never used`,
       },

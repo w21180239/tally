@@ -1,5 +1,5 @@
 import type { Evidence, HintRule } from "../hint.ts";
-import { SMALL_RUN_OUTPUT_TOKENS } from "../summary.ts";
+import { SMALL_RUN_REQUESTS } from "../summary.ts";
 import { LISTED, percentText, usdText } from "./shared.ts";
 
 /** Fraction of all sub-agent runs the small ones must exceed, and the floor on their startup context cost in dollars. */
@@ -15,14 +15,14 @@ export const subagentOverhead: HintRule = {
       .filter(([, t]) => t.small > 0)
       .sort((a, b) => b[1].startupUsd - a[1].startupUsd || (a[0] < b[0] ? -1 : 1))
       .slice(0, LISTED)
-      .map(([type, t]) => ({ label: "Agent type", detail: `${type}: ${t.small} of ${t.runs} runs under ${SMALL_RUN_OUTPUT_TOKENS} tokens, ${usdText(t.startupUsd)} startup`, kind: "text" }));
+      .map(([type, t]) => ({ label: "Agent type", detail: `${type}: ${t.small} of ${t.runs} runs with ${SMALL_RUN_REQUESTS} requests or fewer and little tool output, ${usdText(t.startupUsd)} startup`, kind: "text" }));
     return [
       {
         rule: "subagent-overhead",
         title: "Sub-agents started for tiny jobs",
         usd: smallStartupUsd,
-        summary: `${small} of ${runs} sub-agent runs (${percentText(small / runs)}) produced fewer than ${SMALL_RUN_OUTPUT_TOKENS} output tokens in all, and loading their starting context cost ${usdText(smallStartupUsd)} before any of that work began.`,
-        action: "Do quick lookups in the main thread, and hand a sub-agent a job big enough to earn a fresh context; fold several small questions into one agent call instead of starting one per question.",
+        summary: `${small} of ${runs} sub-agent runs (${percentText(small / runs)}) made ${SMALL_RUN_REQUESTS} requests or fewer and took in little tool output, and loading their starting context cost ${usdText(smallStartupUsd)} before any of that work began.`,
+        action: "Do quick lookups in the main thread and keep sub-agents for searches and test runs whose raw output would be large. Fold several small questions into one call. Startup grows with CLAUDE.md and MCP tool names, so trim both.",
         evidence,
         short: `${small} of ${runs} sub-agent runs were tiny`,
       },

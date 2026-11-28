@@ -36,7 +36,7 @@ export const hugeToolResult: HintRule = {
         title: "Giant tool results kept in context",
         usd,
         summary: `${n} tool ${n === 1 ? "result" : "results"} of ${tokensText(HUGE_RESULT_TOKENS)}+ tokens each ${n === 1 ? "was" : "were"} carried through the rest of the conversation, which added ${usdText(usd)} in cache reads.`,
-        action: "Ask for less at the source: a line range on Read, a narrower search, a filter such as head or jq on command output. If all of the output matters, redirect it to disk and open only the section you need.",
+        action: "Ask for less at the source · a line range on Read, a narrower search, a filter such as head or jq on command output. Hand a wide exploration to a sub-agent so only its findings come back, add a PreToolUse hook that trims noisy commands, or /rewind to summarize the bulky turn.",
         evidence,
         short: `${n} ${n === 1 ? "result" : "results"} over ${tokensText(HUGE_RESULT_TOKENS)} tokens`,
       },

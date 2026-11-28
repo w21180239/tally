@@ -14,6 +14,8 @@ const MAX_ERROR_SHARE = 0.05;
 const MAX_AVG_TURNS = 10;
 
 const LOW_ACTION = "Try sonnet for one week";
+const HIGH_ACTION =
+  "Add a `model:` line (sonnet, or haiku for small contexts) to those agent definitions. The built-in Explore agent follows the main model: add an Explore agent file with a `model:` line. CLAUDE_CODE_SUBAGENT_MODEL covers agents with no model of their own; add CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 to override definitions too.";
 
 type Slice = Summary["bySubType"][string];
 
@@ -52,7 +54,10 @@ export const subagentModel: HintRule = {
         if (!tools.every((n) => LOOKING.has(n))) continue;
         const onSonnet = m.usd - priced(m.tokens, sonnet);
         if (onSonnet <= 0) continue;
-        found.push({ type, model, usd: m.usd, onSonnet, onHaiku: haiku === undefined ? null : m.usd - priced(m.tokens, haiku) });
+        // Haiku bills prompts over its tier threshold at a multiple, which this flat pricing leaves out: with prompts that big its saving is not shown.
+        const prompt = m.requests > 0 ? (m.tokens.input + m.tokens.cacheRead + m.tokens.cw5m + m.tokens.cw1h) / m.requests : 0;
+        const haikuFits = haiku !== undefined && (haiku.longContext === undefined || prompt <= haiku.longContext.threshold);
+        found.push({ type, model, usd: m.usd, onSonnet, onHaiku: haikuFits ? m.usd - priced(m.tokens, haiku) : null });
         types.add(type);
       }
     }
@@ -73,7 +78,7 @@ export const subagentModel: HintRule = {
         projected: true,
         confidence: high ? "high" : "low",
         summary: `${found.length} sub-agent ${found.length === 1 ? "type" : "types"} used only read and search tools (or none) but ran on a top-tier model. The same token usage at Sonnet prices would be ${usdText(usd)} cheaper.${high ? "" : " Shell calls, long replies, failed tool calls or many turns per task show up in some of them, so the saving is an estimate until tried."}`,
-        action: high ? "Add a `model:` line (sonnet or haiku) to those agent definitions, or set CLAUDE_CODE_SUBAGENT_MODEL to move every sub-agent at once." : LOW_ACTION,
+        action: high ? HIGH_ACTION : LOW_ACTION,
         evidence,
         short: `${found.length} lookup-only ${found.length === 1 ? "agent" : "agents"} on a flagship model`,
       },

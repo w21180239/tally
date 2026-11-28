@@ -17,6 +17,9 @@ export type FlowSource = "prompt" | "read" | "bash" | "mcp" | "tool" | "compacti
 export type FlowItem = { label: string; source: FlowSource; tokens: number; rereadTokens: number; rereadUsd: number };
 export type Paste = { sessionId: string; tokens: number; rereadUsd: number };
 /** A tool result of HUGE_RESULT_MIN_TOKENS or more: the tool, the part it became (`source`, `label`) and what re-reading it cost. */
+/** Tools that change a file; the file's target is its `file_path` or `notebook_path`. */
+const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
 export type BigResult = { sessionId: string; tool: string; source: FlowSource; label: string; tokens: number; rereadUsd: number };
 
 /** A chunk of text that entered the context, sized in chars until a request tells its token count. `text` is the full text where one is known. */
@@ -88,7 +91,7 @@ export type FlowOut = {
   pastes: Paste[];
   /** Tool results of HUGE_RESULT_MIN_TOKENS or more that a counted request took in, in any conversation; costliest first, cut to FLOW_ITEMS. */
   bigResults: BigResult[];
-  /** File to the most whole reads of it within one conversation; only files read whole more than once. */
+  /** File to the most whole reads of it within one conversation between compactions and edits of that file; only files read whole more than once. */
   wholeReads: Record<string, number>;
   /** Tool name to the tokens its results put into context. */
   toolFill: Record<string, number>;
@@ -242,7 +245,13 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     let prevTs: number | null = null;
     // Life of the cache the stream's latest cache write went to.
     let life: CacheLife = "5m";
+    // Whole reads of a file since the last compaction or edit of it: a read after either is not a duplicate.
     const wholes = new Map<string, number>();
+    const settle = (file: string): void => {
+      const n = wholes.get(file);
+      if (n !== undefined && n > (wholeBest.get(file) ?? 0)) wholeBest.set(file, n);
+      wholes.delete(file);
+    };
 
     const admit = (source: FlowSource, label: string, tokens: number, counted: boolean, flags: { paste?: boolean; listed?: boolean; tool?: string } = {}): void => {
       if (tokens <= 0) return;
@@ -299,6 +308,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       const tr = ri < rows.length ? rows[ri].ts : Infinity;
       if (tc <= tu && tc <= tr) {
         const k = compacts[ci++];
+        for (const file of [...wholes.keys()]) settle(file);
         if (!c.sub) {
           finish(true);
           const pre = k.preTokens !== undefined && k.preTokens > 0 ? k.preTokens : prevPrompt;
@@ -342,7 +352,11 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
         shares.push(shares[shares.length - 1] + share);
         spend.push(spend[spend.length - 1] + share * input.cacheReadUsd(row));
         if (prompt > (peak.get(c.sessionId) ?? 0)) peak.set(c.sessionId, prompt);
-        for (const t of row.tools) if (t.whole && t.target !== undefined) wholes.set(t.target, (wholes.get(t.target) ?? 0) + 1);
+        for (const t of row.tools) {
+          if (t.target === undefined) continue;
+          if (t.whole) wholes.set(t.target, (wholes.get(t.target) ?? 0) + 1);
+          else if (EDIT_TOOLS.has(t.name)) settle(t.target);
+        }
       }
       const arrived = waiting.reduce((n, p) => n + p.chars / CHARS_PER_TOKEN, 0);
       let scale = 1;
@@ -373,7 +387,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     }
     finish(false);
     dropAll();
-    for (const [file, n] of wholes) if (n > (wholeBest.get(file) ?? 0)) wholeBest.set(file, n);
+    for (const file of [...wholes.keys()]) settle(file);
   };
 
   for (const c of convs.values()) {

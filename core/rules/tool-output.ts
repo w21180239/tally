@@ -7,16 +7,16 @@ const LISTED_PARTS = 3;
 
 // Advice by lower-cased tool name; a tool not listed falls to its source's advice, then to the default.
 const BY_TOOL: ReadonlyMap<string, string> = new Map([
-  ["grep", "Search a smaller directory with a more exact pattern, and ask for file names only before pulling matching lines."],
+  ["grep", "Search a smaller directory with a more exact pattern, and ask for file names only before pulling matching lines. A code-intelligence (LSP) plugin finds definitions without grep and read."],
   ["glob", "Replace a broad glob with one scoped to the right subdirectory."],
-  ["websearch", "Make queries specific and limit them to relevant domains, which returns fewer results."],
+  ["websearch", "Make queries specific and limit them to relevant domains (allowed_domains), which returns fewer results."],
   ["webfetch", "Pick a smaller page where possible, and word the fetch prompt around the one section required."],
   ["agent", "Tell the sub-agent to return a findings list; its full write-up is otherwise appended to this context."],
   ["task", "Tell the sub-agent to return a findings list; its full write-up is otherwise appended to this context."],
 ]);
 const BY_SOURCE: Partial<Record<FlowItem["source"], string>> = {
-  read: "Locate lines with Grep, then Read with offset and limit instead of loading the whole file.",
-  mcp: "Filter on the server side where the tool allows it; failing that, shrink the page size or request fewer fields.",
+  read: "Locate lines with Grep, then Read with offset and limit instead of loading the whole file; a code-intelligence (LSP) plugin can replace grep and read for navigation.",
+  mcp: "Filter on the server side where the tool allows it, or shrink the page size and request fewer fields. Run /mcp disable <server> for servers the work does not need, and use the CLI (gh, aws) where one exists.",
 };
 const DEFAULT_ADVICE = "Make the call more targeted; if the result stays large, redirect it to a scratch file and read just the relevant part.";
 

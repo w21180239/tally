@@ -30,7 +30,7 @@ export const bigPaste: HintRule = {
         title: "Oversized prompts pasted into chat",
         usd,
         summary: `${usdText(usd)} in cache reads went to carrying ${heavy.length} pasted ${heavy.length === 1 ? "prompt" : "prompts"} of ${tokensText(PASTE_MIN_TOKENS)}+ tokens through the rest of the session.`,
-        action: "Trim the paste to the lines that matter, or store the whole thing in a file and reference its path in the prompt.",
+        action: "Reference it as a file · save the text and use @path in the prompt, or pipe it in. Otherwise paste only the lines that matter, and /clear or /rewind once the paste is no longer needed.",
         evidence,
         short: `${heavy.length} pasted ${heavy.length === 1 ? "prompt" : "prompts"} re-read for ${usdText(usd)}`,
         metric: { name: "paste re-read cost per day", value: pasteRereadPerDay(i) },

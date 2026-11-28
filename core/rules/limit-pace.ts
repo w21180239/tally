@@ -8,6 +8,8 @@ export const MIN_ELAPSED_SHARE = 0.05;
  * Replayed over 30 days of usage polls from 4 accounts, every five-hour alert at 70 came from a window that ended at 70% or more (17 of 17); at 50, 4 of 22 did not.
  */
 export const MIN_PERCENT_USED = 70;
+/** Elapsed time before the 7-day window's pace is read: a burst early in the week would otherwise project far too high. */
+export const SEVEN_DAY_MIN_ELAPSED_MS = 24 * 3_600_000;
 
 const HOUR = 3_600_000;
 const WINDOWS = [
@@ -26,6 +28,7 @@ export const limitPace: HintRule = {
       const elapsed = w.length - (win.resetsAt - nowMs);
       // Nothing to extrapolate from before the window has run a while, once it is full, or while little of it is used.
       if (elapsed < w.length * MIN_ELAPSED_SHARE || win.percentUsed < MIN_PERCENT_USED || win.percentUsed >= 100) continue;
+      if (w.key === "sevenDay" && elapsed < SEVEN_DAY_MIN_ELAPSED_MS) continue;
       // Linear pace: percentUsed per elapsed time reaches 100 before the window ends iff percentUsed / elapsed > 100 / length.
       if (win.percentUsed * w.length <= 100 * elapsed) continue;
       const fullIn = elapsed * (100 / win.percentUsed - 1);
@@ -46,7 +49,7 @@ export const limitPace: HintRule = {
         usd: 0,
         urgent: true,
         summary: `At the pace of the ${first.label} so far, usage reaches 100% in ${durationText(first.fullIn)}, ${durationText(first.spare)} ahead of its reset.`,
-        action: "Hold the heavy jobs (parallel agents, large refactors) until the reset, or run routine steps on a cheaper model so the remaining allowance lasts.",
+        action: "Hold the heavy jobs (parallel agents, large refactors) until the reset · lower /effort or run routine steps on a cheaper model so the remaining allowance lasts. At 100%, /usage-credits adds more.",
         evidence,
         short: `${first.short} limit full in ${durationText(first.fullIn)}`,
       },

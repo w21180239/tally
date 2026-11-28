@@ -2,10 +2,12 @@
 import { DAY_MS, HOUR_MS, hourStart, localDayStart, localHourIndex } from "./time.ts";
 import { repoOf } from "./path.ts";
 import { bump, dict } from "./dict.ts";
-import { cacheUnitPrices, costOf, memoResolver, unitPrices } from "./pricing.ts";
+import { cacheUnitPrices, costOf, longContextExtra, memoResolver, unitPrices } from "./pricing.ts";
 import type { PriceTable } from "./pricing.ts";
-import { findRebuildsSteps, ttlModelSteps } from "./cache-life.ts";
-import type { Rebuild, TtlModel } from "./cache-life.ts";
+import { findRebuildsSteps, switchBreaksSteps, ttlModelSteps } from "./cache-life.ts";
+import type { Rebuild, SwitchBreak, TtlModel } from "./cache-life.ts";
+import { loopTicksSteps } from "./loops.ts";
+import type { LoopTicks } from "./loops.ts";
 import { analyzeFlowSteps, FLOW_ITEMS } from "./flow.ts";
 import { usageCollector } from "./usage-detail.ts";
 import type { UsageDetail } from "./usage-detail.ts";
@@ -20,7 +22,7 @@ export type Span = "session" | "24h" | "30d";
 export type Money = { usd: number; tokens: Tokens; requests: number };
 /** One sub-agent type: conversations (tasks) it ran, tool results they received, and how many of those failed. */
 export type SubStats = { tasks: number; results: number; errors: number };
-/** Sub-agent runs (one transcript each) in the span; "small" ones wrote under SMALL_RUN_OUTPUT_TOKENS output tokens in all. */
+/** Sub-agent runs (one transcript each) in the span; "small" ones made at most SMALL_RUN_REQUESTS requests and took in under SMALL_RUN_RESULT_CHARS of tool results. */
 export type SubagentRuns = {
   runs: number;
   small: number;
@@ -98,6 +100,12 @@ export type Summary = {
   subagentRuns: SubagentRuns;
   /** Per model, the main-thread requests that called tools, and the part of them that only read or searched. */
   mainTools: Record<string, { turns: number; readOnly: Money }>;
+  /** Cache rewrites right after a change of model, speed or effort, oldest first. */
+  cacheBreaks?: SwitchBreak[];
+  /** Self-paced /loop ticks on the main threads. */
+  loops?: LoopTicks;
+  /** Requests above a model's long-context threshold, by model; only models with a tier (Haiku 5.5). */
+  longPrompts?: Record<string, LongPrompts>;
 };
 export type SummaryOpts = {
   span: Span;
@@ -114,8 +122,14 @@ export type SummaryOpts = {
 };
 
 export const TOP_SESSIONS = 20;
-/** A sub-agent run that wrote fewer output tokens than this, over all its requests, is small. */
-export const SMALL_RUN_OUTPUT_TOKENS = 500;
+/**
+ * A sub-agent run is small when it made at most this many requests and its tool results total under the chars below (about 5k tokens).
+ * Output size is no sign of a small job: a wide search that returns a short answer is what a sub-agent is for.
+ */
+export const SMALL_RUN_REQUESTS = 2;
+export const SMALL_RUN_RESULT_CHARS = 20_000;
+/** What the long-context tier added, per model: requests over the tier threshold (and how many were a sub-agent's), the extra it billed, and the sessions they ran in. */
+export type LongPrompts = { requests: number; subRequests: number; extraUsd: number; sessions: number };
 /** Tools that change nothing; a request calling only these is a read-only turn (names lower-cased). */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob", "ls", "webfetch", "websearch", "notebookread", "toolsearch"]);
 export const isReadOnlyTurn = (tools: ToolUse[]): boolean => tools.length > 0 && tools.every((t) => READ_ONLY_TOOLS.has(t.name.toLowerCase()));
@@ -262,12 +276,16 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     cacheTtl: { requests: 0, actual: "5m", usd5m: 0, usd1h: 0, pauses: { short: 0, mid: 0, long: 0 } },
     subagentRuns: { runs: 0, small: 0, smallStartupUsd: 0, byType: dict() },
     mainTools: dict(),
+    cacheBreaks: [],
+    loops: { ticks: 0, light: 0, lightUsd: 0, lightPromptTokens: 0, sessions: 0 },
+    longPrompts: dict(),
   };
+  const longSessions = new Map<string, Set<string>>();
 
   type Acc = { usd: number; started: number; byRepo: Map<string, number> };
   const sessions = new Map<string, Acc>();
   const hourTokens = new Map<number, number>();
-  type SubAcc = { type: string; output: number; firstTs: number; startupUsd: number };
+  type SubAcc = { type: string; requests: number; firstTs: number; startupUsd: number };
   const subs = new Map<string, SubAcc>();
   yield;
   for (const { r, usd, repo } of rows) {
@@ -284,8 +302,8 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
       for (const t of r.tools) bump(m.tools, t.name);
       const key = streamOf(r);
       let acc = subs.get(key);
-      if (!acc) subs.set(key, (acc = { type: r.agentType ?? UNKNOWN_SUB, output: 0, firstTs: Infinity, startupUsd: 0 }));
-      acc.output += r.tokens.output;
+      if (!acc) subs.set(key, (acc = { type: r.agentType ?? UNKNOWN_SUB, requests: 0, firstTs: Infinity, startupUsd: 0 }));
+      acc.requests++;
       if (r.ts < acc.firstTs) {
         const u = unitPrices(r, prices, resolve);
         acc.firstTs = r.ts;
@@ -295,6 +313,16 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
       const m = slot(out.mainTools, r.model, () => ({ turns: 0, readOnly: zero() }));
       m.turns++;
       if (isReadOnlyTurn(r.tools)) add(m.readOnly, r, usd);
+    }
+    const extra = longContextExtra(r, prices, resolve);
+    if (extra > 0) {
+      const lp = slot(out.longPrompts!, r.model, () => ({ requests: 0, subRequests: 0, extraUsd: 0, sessions: 0 }));
+      lp.requests++;
+      if (r.sidechain) lp.subRequests++;
+      lp.extraUsd += extra;
+      let seen = longSessions.get(r.model);
+      if (!seen) longSessions.set(r.model, (seen = new Set()));
+      seen.add(r.sessionId);
     }
     if (r.skill) add(slot(out.bySkill, r.skill, zero), r, usd);
     if (r.plugin) add(slot(out.byPlugin, r.plugin, zero), r, usd);
@@ -317,17 +345,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     a.byRepo.set(repo, (a.byRepo.get(repo) ?? 0) + usd);
   }
 
-  for (const a of subs.values()) {
-    const t = slot(out.subagentRuns.byType, a.type, () => ({ runs: 0, small: 0, startupUsd: 0 }));
-    out.subagentRuns.runs++;
-    t.runs++;
-    if (a.output < SMALL_RUN_OUTPUT_TOKENS) {
-      out.subagentRuns.small++;
-      out.subagentRuns.smallStartupUsd += a.startupUsd;
-      t.small++;
-      t.startupUsd += a.startupUsd;
-    }
-  }
+  for (const [model, ids] of longSessions) out.longPrompts![model]!.sessions = ids.size;
   yield;
   if (hourTokens.size) {
     const sorted = [...hourTokens.values()].sort((a, b) => a - b);
@@ -382,6 +400,25 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     st.results += u.results?.length ?? 1;
     st.errors += u.errors ?? 0;
   }
+  // A sub-agent run is small by requests and by what its tool calls returned.
+  const resultChars = new Map<string, number>();
+  for (const u of users) {
+    if (u.kind === "toolResult" && u.agentId !== undefined) {
+      const key = `${u.sessionId}\u0000${u.agentId}`;
+      resultChars.set(key, (resultChars.get(key) ?? 0) + u.chars);
+    }
+  }
+  for (const [key, a] of subs) {
+    const t = slot(out.subagentRuns.byType, a.type, () => ({ runs: 0, small: 0, startupUsd: 0 }));
+    out.subagentRuns.runs++;
+    t.runs++;
+    if (a.requests <= SMALL_RUN_REQUESTS && (resultChars.get(key) ?? 0) < SMALL_RUN_RESULT_CHARS) {
+      out.subagentRuns.small++;
+      out.subagentRuns.smallStartupUsd += a.startupUsd;
+      t.small++;
+      t.startupUsd += a.startupUsd;
+    }
+  }
   const compacts = shards.flatMap((s) => s.compacts);
   const inWindow = (ts: number) => span === "session" || (ts >= from && ts <= to);
   yield;
@@ -391,6 +428,10 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
   });
   yield;
   out.cacheTtl = yield* ttlModelSteps(everyRow, (r) => counted.has(r), (r) => cacheUnitPrices(r, prices, resolve));
+  yield;
+  out.cacheBreaks = yield* switchBreaksSteps(everyRow, (r) => counted.has(r), (r) => cacheUnitPrices(r, prices, resolve));
+  yield;
+  out.loops = yield* loopTicksSteps(everyRow, (r) => counted.has(r), (r) => costOf(r, prices, resolve).usd);
   yield;
   const collector = opts.usage === true ? usageCollector(prices) : undefined;
   const flow = yield* analyzeFlowSteps({

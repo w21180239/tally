@@ -125,3 +125,60 @@ export function* ttlModelSteps(rows: UsageRow[], counted: (r: UsageRow) => boole
   out.actual = cacheLife(writes);
   return out;
 }
+
+export type SwitchKind = "model" | "fast" | "effort";
+/** A cache rewrite that followed a change of model, speed or effort within the cache life. `tokens` is what was rewritten beyond the prompt's own growth; `usd` is the extra over reading it. */
+export type SwitchBreak = { sessionId: string; ts: number; kind: SwitchKind; from: string; to: string; tokens: number; usd: number };
+
+const speedOf = (r: UsageRow): string => (r.fast ? "fast" : "standard");
+
+// What changed between two consecutive requests of a stream, in the order that decides the cause: model, speed, effort.
+function switchOf(p: UsageRow, r: UsageRow): { kind: SwitchKind; from: string; to: string } | null {
+  if (p.model !== r.model) return { kind: "model", from: p.model, to: r.model };
+  if (p.fast !== r.fast) return { kind: "fast", from: speedOf(p), to: speedOf(r) };
+  if (p.effort !== undefined && r.effort !== undefined && p.effort !== r.effort) return { kind: "effort", from: p.effort, to: r.effort };
+  return null;
+}
+
+/**
+ * Cache rewrites right after a switch, on the main threads. A request counts when its model, speed or effort differs from the
+ * request before it, the pause since was within the cache life (a longer one is a rebuild, found by `findRebuilds`), and it
+ * wrote at least REBUILD_MIN_WRITE_TOKENS beyond the growth of the cached prompt. Whether an effort change breaks the cache
+ * depends on the model, so only a change followed by the rewrite is reported. `unit` prices a request's cache tokens per token. Oldest first.
+ */
+export function* switchBreaksSteps(rows: UsageRow[], counted: (r: UsageRow) => boolean, unit: (r: UsageRow) => { read: number; cw5m: number; cw1h: number }): Steps<SwitchBreak[]> {
+  const streams = new Map<string, UsageRow[]>();
+  let n = 0;
+  for (const r of rows) {
+    if (++n % STEP_ROWS === 0) yield;
+    if (!isMain(r)) continue;
+    const key = streamOf(r);
+    const g = streams.get(key);
+    if (g) g.push(r);
+    else streams.set(key, [r]);
+  }
+  const out: SwitchBreak[] = [];
+  for (const group of streams.values()) {
+    group.sort((a, b) => a.ts - b.ts || (a.requestId < b.requestId ? -1 : 1));
+    n += group.length;
+    if (n >= STEP_ROWS) {
+      n = 0;
+      yield;
+    }
+    for (let i = 1; i < group.length; i++) {
+      const r = group[i]!;
+      const p = group[i - 1]!;
+      const written = r.tokens.cw5m + r.tokens.cw1h;
+      if (written < REBUILD_MIN_WRITE_TOKENS || !counted(r)) continue;
+      const sw = switchOf(p, r);
+      if (sw === null) continue;
+      const ttl = cacheLife([{ ts: r.ts, cw5m: r.tokens.cw5m, cw1h: r.tokens.cw1h }]);
+      if (r.ts - p.ts > (ttl === "1h" ? HOUR_MS : FIVE_MIN_MS)) continue;
+      const rewritten = written - Math.max(0, cached(r.tokens) - cached(p.tokens));
+      if (rewritten < REBUILD_MIN_WRITE_TOKENS) continue;
+      const u = unit(r);
+      out.push({ sessionId: r.sessionId, ts: r.ts, ...sw, tokens: rewritten, usd: rewritten * Math.max(0, (ttl === "1h" ? u.cw1h : u.cw5m) - u.read) });
+    }
+  }
+  return out.sort((a, b) => a.ts - b.ts || (a.sessionId < b.sessionId ? -1 : 1));
+}
