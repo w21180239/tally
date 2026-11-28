@@ -33,8 +33,8 @@ export function toolResult(toolUseId: string, content: unknown): string {
   return user([{ type: "tool_result", tool_use_id: toolUseId, content }]);
 }
 
-export function compactBoundary(): string {
-  return j({ type: "system", subtype: "compact_boundary", sessionId: SID, timestamp: TS });
+export function compactBoundary(compactMetadata?: unknown): string {
+  return j({ type: "system", subtype: "compact_boundary", sessionId: SID, timestamp: TS, ...(compactMetadata !== undefined && { compactMetadata }) });
 }
 
 export function meta(type: string, fields: Record<string, unknown>): string {

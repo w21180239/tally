@@ -182,6 +182,17 @@ describe("parseLine other", () => {
   test("compact boundary", () => {
     expect(parseLine(compactBoundary(), ctx)).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME } });
   });
+  test("compact boundary keeps the trigger and the context size before it", () => {
+    const row = (m: unknown) => parseLine(compactBoundary(m), ctx);
+    expect(row({ trigger: "manual", preTokens: 370992, postTokens: 36041 })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, trigger: "manual", preTokens: 370992 } });
+    expect(row({ trigger: "auto", durationMs: 41531 })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, trigger: "auto", durationMs: 41531 } });
+    expect(row({ trigger: "auto" })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, trigger: "auto" } });
+    expect(row({ preTokens: 5 })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, preTokens: 5 } });
+  });
+  test("a compact boundary's odd metadata is dropped, not trusted", () => {
+    const plain = { t: "compact", row: { sessionId: SESSION, ts: TIME } };
+    for (const m of [null, "x", [], { trigger: "weird", preTokens: "9" }, { preTokens: -1 }, { preTokens: Infinity }]) expect(parseLine(compactBoundary(m), ctx)).toEqual(plain);
+  });
   test("other system lines are ignored", () => {
     expect(parseLine(JSON.stringify({ type: "system", subtype: "info", timestamp: "2026-01-01T00:00:00Z" }), ctx)).toBe(null);
   });

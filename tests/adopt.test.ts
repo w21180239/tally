@@ -387,6 +387,17 @@ describe("recheck", () => {
     expect(stored.get(CHECKED_KEY)).toEqual([adoptionId(due())]);
   });
 
+  test("a stored adoption of a rule that no longer exists is ignored without a toast or a crash", async ($, on) => {
+    const stored = new Map<string, unknown>([[ADOPTIONS_KEY, [{ rule: "repeat-compaction", at: NOW - 60 * DAY, expectedUsd: 3, metricName: "x", before: 1 }, due()]]]);
+    const r = rig(on, stored);
+    await seed(r.world);
+    await start($);
+    await afterStart(r);
+    // The removed rule is skipped; the other due adoption is still rechecked.
+    expect(r.toasts).toEqual(["tally: fast-mode: expected save $4.00, actual $2.00"]);
+    expect(stored.get(CHECKED_KEY)).toEqual([adoptionId(due())]);
+  });
+
   test("one day short of due, or a rule with no metric: nothing", async ($, on) => {
     const stored = new Map<string, unknown>([[ADOPTIONS_KEY, [due({ at: NOW - 13 * DAY }), { rule: "long-session", at: NOW - 60 * DAY, expectedUsd: 3 }]]]);
     const r = rig(on, stored);

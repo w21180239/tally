@@ -167,6 +167,12 @@ export function parseLine(line: string, ctx: FileCtx): Parsed | null {
       const row: CompactRow = { sessionId: sessionOf(l, ctx), ts };
       const agentId = agentOf(ctx);
       if (agentId) row.agentId = agentId;
+      const meta = l.compactMetadata;
+      if (isRec(meta)) {
+        if (meta.trigger === "manual" || meta.trigger === "auto") row.trigger = meta.trigger;
+        if (typeof meta.preTokens === "number" && Number.isFinite(meta.preTokens) && meta.preTokens >= 0) row.preTokens = meta.preTokens;
+        if (typeof meta.durationMs === "number" && Number.isFinite(meta.durationMs) && meta.durationMs >= 0) row.durationMs = meta.durationMs;
+      }
       return { t: "compact", row };
     }
     default: {

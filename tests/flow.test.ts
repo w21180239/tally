@@ -354,3 +354,144 @@ describe("summarize deep dimensions", () => {
     expect([s.peakContext, s.wholeReads, s.compactions, s.toolFill]).toEqual([{}, {}, {}, {}]);
   });
 });
+
+describe("compaction effects", () => {
+  const cut = (at: number, extra: Partial<CompactRow> = {}): CompactRow => ({ sessionId: "s", ts: T0 + at, ...extra });
+  const effects = (rows: UsageRow[], compacts: CompactRow[], counted?: (r: UsageRow) => boolean) => run(rows, [], compacts, counted).compactionEffects;
+  const before = [req({ id: "a", at: 1 * MIN, tokens: { cw5m: 1000 } }), req({ id: "b", at: 2 * MIN, tokens: { cacheRead: 1200 } })];
+
+  test("a compaction that shrank the context saves the difference on every later request", () => {
+    const rows = [...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 300 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 350 } })];
+    const [e, ...rest] = effects(rows, [cut(3 * MIN, { trigger: "manual", preTokens: 1500 })]);
+    expect(rest).toEqual([]);
+    expect([e.sessionId, e.trigger, e.preTokens, e.postTokens, e.requests]).toEqual(["s", "manual", 1500, 300, 2]);
+    expect(e.savedTokens).toBe(1200 + 1150);
+    expect(near(e.savedUsd, 2350 * READ_USD)).toBe(true);
+    expect([e.ineffective, e.keptUsd]).toEqual([false, 0]);
+  });
+
+  test("without preTokens the last request before the boundary is the context before", () => {
+    const rows = [...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 300 } })];
+    const e = effects(rows, [cut(3 * MIN)])[0];
+    expect([e.trigger, e.preTokens, e.savedTokens]).toEqual([undefined, 1200, 900]);
+  });
+
+  test("a context still at 60 percent or more is ineffective; the amount is the part above the 60 percent line, re-read until the next compaction", () => {
+    const rows = [...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 1000 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 1100 } })];
+    const e = effects(rows, [cut(3 * MIN)])[0];
+    expect(e.ineffective).toBe(true);
+    // 1000 left of 1200; the line is 720; 280 tokens over, read by two requests.
+    expect(near(e.keptUsd, 280 * 2 * READ_USD)).toBe(true);
+    expect(effects([...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 719 } })], [cut(3 * MIN)])[0].ineffective).toBe(false);
+    expect(effects([...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 720 } })], [cut(3 * MIN)])[0].ineffective).toBe(true);
+  });
+
+  test("a next compaction within 3 requests marks the first one; 4 requests is fine", () => {
+    const quick = [...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 300 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 320 } }), req({ id: "e", at: 7 * MIN, tokens: { cw5m: 100 } })];
+    const two = effects(quick, [cut(3 * MIN), cut(6 * MIN)]);
+    expect(two.map((c) => [c.requests, c.repeated, c.ineffective])).toEqual([[2, true, true], [1, false, false]]);
+    expect(two[0].keptUsd).toBe(0);
+    const slow = [...before, ...[4, 5, 6, 7].map((m) => req({ id: `x${m}`, at: m * MIN, tokens: { cacheRead: 300 } })), req({ id: "z", at: 9 * MIN, tokens: { cw5m: 200 } })];
+    expect(effects(slow, [cut(3 * MIN), cut(8 * MIN)])[0].ineffective).toBe(false);
+  });
+
+  test("uncounted requests are not priced but still count toward the request tally", () => {
+    const rows = [...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 300 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 350 } })];
+    const e = effects(rows, [cut(3 * MIN, { preTokens: 1500 })], (r) => r.requestId === "d")[0];
+    expect([e.requests, e.savedTokens, e.postTokens]).toEqual([2, 1150, 300]);
+  });
+
+  test("a boundary with no known context before it saves nothing, and a sub-agent boundary is not listed", () => {
+    const e = effects([req({ id: "c", at: 4 * MIN, tokens: { cw5m: 300 } })], [cut(3 * MIN)])[0];
+    expect([e.preTokens, e.savedTokens, e.ineffective]).toEqual([0, 0, false]);
+    const sub = [inAgent(req({ id: "a", at: 1 * MIN, tokens: { cw5m: 1000 }, sidechain: true }), "g1")];
+    expect(effects(sub, [cut(2 * MIN, { agentId: "g1" })])).toEqual([]);
+  });
+
+  test("a compaction that began after the cache had expired is cold and ineffective, though it shrank the context", () => {
+    const after = [req({ id: "c", at: 11 * MIN, tokens: { cw5m: 300 } })];
+    const cold = effects([...before, ...after], [cut(10 * MIN, { preTokens: 1500 })])[0];
+    expect([cold.cold, cold.idleMs, cold.ineffective, cold.keptUsd]).toEqual([true, 8 * MIN, true, 0]);
+    // The boundary is written when the compaction ends: it began 2.5 minutes earlier, 2 minutes after the last request.
+    const warm = effects([...before, req({ id: "c", at: 8 * MIN, tokens: { cw5m: 300 } })], [cut(6.5 * MIN, { preTokens: 1500, durationMs: 2.5 * MIN })])[0];
+    expect([warm.cold, warm.idleMs, warm.ineffective]).toEqual([false, 2 * MIN, false]);
+  });
+
+  test("the cache lives 1 hour when the requests wrote to the 1-hour cache", () => {
+    const hourly = [req({ id: "a", at: 1 * MIN, tokens: { cw1h: 1000 } }), req({ id: "b", at: 2 * MIN, tokens: { cacheRead: 1200 } })];
+    const after = req({ id: "c", at: 100 * MIN, tokens: { cw5m: 300 } });
+    expect(effects([...hourly, after], [cut(30 * MIN, { preTokens: 1500 })])[0].cold).toBe(false);
+    expect(effects([...hourly, after], [cut(70 * MIN, { preTokens: 1500 })])[0].cold).toBe(true);
+  });
+
+  test("a compaction with no earlier request is not cold", () => {
+    expect(effects([req({ id: "c", at: 40 * MIN, tokens: { cw5m: 300 } })], [cut(30 * MIN, { preTokens: 1500 })])[0].cold).toBe(false);
+  });
+
+  test("a compaction with no request after it has no post context and is not flagged", () => {
+    const e = effects(before, [cut(3 * MIN, { preTokens: 1500 })])[0];
+    expect([e.postTokens, e.requests, e.ineffective]).toEqual([null, 0, false]);
+  });
+});
+
+describe("summary compaction", () => {
+  const NOW = T0 + 60 * MIN;
+  // s (alpha): context 1000 then 1200, auto compaction at 1500, then 300 and 350, an ineffective one (1200 left of 1300) and a closing request.
+  // o (beta): one compaction that left no request after it.
+  const shard = (): Shard => ({
+    v: 1,
+    project: "p",
+    files: {},
+    usage: [
+      req({ id: "a", at: 1 * MIN, cwd: "/work/alpha", tokens: { cw5m: 1000 } }),
+      req({ id: "b", at: 2 * MIN, cwd: "/work/alpha", tokens: { cacheRead: 1200 } }),
+      req({ id: "c", at: 4 * MIN, cwd: "/work/alpha", tokens: { cw5m: 300 } }),
+      req({ id: "d", at: 5 * MIN, cwd: "/work/alpha", tokens: { cacheRead: 350 } }),
+      req({ id: "e", at: 7 * MIN, cwd: "/work/alpha", tokens: { cw5m: 1200 } }),
+      req({ id: "f", at: 8 * MIN, cwd: "/work/alpha", tokens: { cacheRead: 1300 } }),
+      req({ id: "g", at: 2 * MIN, session: "o", cwd: "/work/beta", tokens: { cacheRead: 900 } }),
+    ],
+    users: [],
+    metas: [],
+    compacts: [
+      { sessionId: "s", ts: T0 + 3 * MIN, trigger: "auto", preTokens: 1500 },
+      { sessionId: "s", ts: T0 + 6 * MIN, trigger: "manual", preTokens: 1300 },
+      { sessionId: "o", ts: T0 + 3 * MIN, trigger: "manual" },
+    ],
+    snapshots: [],
+  });
+  const go = (o: Partial<Parameters<typeof summarize>[2]> = {}) => summarize([shard()], PRICES, { span: "30d", nowMs: NOW, tzOffsetMin: 0, ...o });
+
+  test("totals and per-session saving price each later request at its model's cache-read rate", () => {
+    const c = go().compaction!;
+    // First: (1500-300) + (1500-350) = 2350 tokens. Second: (1300-1200) + (1300-1300) = 100 tokens. Third: no request after it.
+    expect([c.count, c.savedTokens]).toEqual([3, 2450]);
+    expect(near(c.savedUsd, 2450e-6)).toBe(true);
+    expect(c.bySession.s).toEqual({ count: 2, savedTokens: 2450, savedUsd: c.bySession.s.savedUsd, autoPeak: 1500, autoCount: 1 });
+    expect(near(c.bySession.s.savedUsd, 2450e-6)).toBe(true);
+    expect(c.bySession.o).toEqual({ count: 1, savedTokens: 0, savedUsd: 0 });
+  });
+
+  test("ineffective compactions are listed costliest first with their session and what they left", () => {
+    const c = go().compaction!;
+    // The manual one left 1200 of 1300; the auto one shrank well but was followed by another after 2 requests.
+    expect(c.ineffective.map((e) => [e.sessionId, e.trigger, e.preTokens, e.postTokens])).toEqual([["s", "manual", 1300, 1200], ["s", "auto", 1500, 300]]);
+  });
+
+  test("the repo filter and the window apply as they do for the compaction count", () => {
+    expect(Object.keys(go({ repo: "alpha" }).compaction!.bySession)).toEqual(["s"]);
+    expect(go({ span: "session", sessionId: "o" }).compaction!.count).toBe(1);
+    const old = shard();
+    old.compacts[0] = { ...old.compacts[0], ts: T0 - 5 * 24 * 60 * MIN };
+    expect(summarize([old], PRICES, { span: "24h", nowMs: NOW, tzOffsetMin: 0 }).compaction!.bySession.s.count).toBe(1);
+  });
+
+  test("an empty summary has an empty compaction block, and rows from old shards without trigger or preTokens still work", () => {
+    expect(summarize([], PRICES, { span: "30d", nowMs: NOW, tzOffsetMin: 0 }).compaction).toEqual({ count: 0, savedTokens: 0, savedUsd: 0, bySession: {}, ineffective: [] });
+    const old = shard();
+    old.compacts = old.compacts.map((c) => ({ sessionId: c.sessionId, ts: c.ts }));
+    const c = summarize([old], PRICES, { span: "30d", nowMs: NOW, tzOffsetMin: 0 }).compaction!;
+    // Context before is the last request before each boundary: 1200 then 350.
+    expect([c.count, c.savedTokens, c.bySession.s.autoPeak]).toEqual([3, 900 + 850 + 0, undefined]);
+  });
+});

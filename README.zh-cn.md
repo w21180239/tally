@@ -147,7 +147,7 @@ claude plugin marketplace remove tally
 - `cache-rebuilt`、`cache-ttl-choice`：停顿期间缓存过期后被重写；按你的停顿习惯，5 分钟缓存和 1 小时缓存哪个更省。
 - `subagent-model`、`subagent-overhead`、`main-model-overkill`：任务用了比所需更大的模型、大量很小的子代理任务、主会话在大模型上长时间只读。置信度低的建议只提示“试用”，不会直接建议降级。
 - `memory-heavy`、`skill-catalog-heavy`、`mcp-schema-heavy`、`unused-plugin`、`unused-mcp-server`：每次请求都在为之付费的常驻 context。
-- `long-session`、`repeat-compaction`：增长超过窗口 70% 的会话，以及被压缩 3 次及以上的会话。
+- `long-session`、`ineffective-compaction`：增长超过窗口 70% 的会话（办法是在任务边界更早地 compact），以及压缩后上下文仍保留 60% 以上、在 3 次请求内又被压缩、或在缓存已过期后才开始的 compaction。能缩小上下文的 compaction 是节省；报告的 Summary 会给出估算的节省额。
 - `costly-attribution`：某个 skill 或插件占归因花费的 20% 以上。
 - `whole-reads`、`command-output`、`tool-output`、`huge-tool-result`、`big-paste`：同一文件被整读三次、输出每次请求都被重读的命令和工具、单次极大的工具结果、很大的粘贴。
 - `thinking-output`、`fast-mode`：thinking 超过输出的 60%，以及 fast 模式超过花费的 20%。

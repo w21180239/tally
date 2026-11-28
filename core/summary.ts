@@ -6,10 +6,10 @@ import { cacheUnitPrices, costOf, memoResolver, unitPrices } from "./pricing.ts"
 import type { PriceTable } from "./pricing.ts";
 import { findRebuildsSteps, ttlModelSteps } from "./cache-life.ts";
 import type { Rebuild, TtlModel } from "./cache-life.ts";
-import { analyzeFlowSteps } from "./flow.ts";
+import { analyzeFlowSteps, FLOW_ITEMS } from "./flow.ts";
 import { usageCollector } from "./usage-detail.ts";
 import type { UsageDetail } from "./usage-detail.ts";
-import type { BigResult, FlowItem, Paste } from "./flow.ts";
+import type { BigResult, CompactionEffect, FlowItem, Paste } from "./flow.ts";
 import { streamOf } from "./stream.ts";
 import type { Shard } from "./shard.ts";
 import type { Tokens, ToolUse, UsageRow } from "./types.ts";
@@ -27,6 +27,18 @@ export type SubagentRuns = {
   /** What the small runs' first requests cost apart from their output: loading the starting context. */
   smallStartupUsd: number;
   byType: Record<string, { runs: number; small: number; startupUsd: number }>;
+};
+/**
+ * Main-thread compactions in the span and the repo filter. `savedTokens`/`savedUsd` add up each compaction's
+ * `CompactionEffect` saving (a lower bound: context not carried, priced at the cache-read rate). `ineffective`: the flagged
+ * ones, costliest first, top 40. A session's `autoPeak` is the largest context an automatic compaction fired at, `autoCount` how many were automatic.
+ */
+export type CompactionStats = {
+  count: number;
+  savedTokens: number;
+  savedUsd: number;
+  bySession: Record<string, { count: number; savedTokens: number; savedUsd: number; autoPeak?: number; autoCount?: number }>;
+  ineffective: CompactionEffect[];
 };
 export type TopSession = { sessionId: string; repo: string; title?: string; pr?: string; started: number; usd: number; resume: string };
 export type Summary = {
@@ -75,6 +87,8 @@ export type Summary = {
   wholeReads: Record<string, number>;
   /** Compactions per session. */
   compactions: Record<string, number>;
+  /** What the compactions in the span did to the context; always set by `summarize`. */
+  compaction?: CompactionStats;
   /** Tokens each tool put into context. */
   toolFill: Record<string, number>;
   /** Tool results of 25k+ tokens by re-read cost, top 40, over the main thread and every sub-agent. */
@@ -242,6 +256,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     pastes: [],
     wholeReads: dict(),
     compactions: dict(),
+    compaction: { count: 0, savedTokens: 0, savedUsd: 0, bySession: dict(), ineffective: [] },
     toolFill: dict(),
     hugeResults: [],
     cacheTtl: { requests: 0, actual: "5m", usd5m: 0, usd1h: 0, pauses: { short: 0, mid: 0, long: 0 } },
@@ -398,5 +413,23 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
   for (const c of compacts) {
     if (sessions.has(c.sessionId) && inWindow(c.ts)) bump(out.compactions, c.sessionId);
   }
+  const stats = out.compaction!;
+  for (const e of flow.compactionEffects) {
+    if (!sessions.has(e.sessionId) || !inWindow(e.ts)) continue;
+    stats.count++;
+    stats.savedTokens += e.savedTokens;
+    stats.savedUsd += e.savedUsd;
+    const s = slot(stats.bySession, e.sessionId, () => ({ count: 0, savedTokens: 0, savedUsd: 0 }));
+    s.count++;
+    s.savedTokens += e.savedTokens;
+    s.savedUsd += e.savedUsd;
+    if (e.trigger === "auto") {
+      s.autoCount = (s.autoCount ?? 0) + 1;
+      if (e.preTokens > (s.autoPeak ?? 0)) s.autoPeak = e.preTokens;
+    }
+    if (e.ineffective) stats.ineffective.push(e);
+  }
+  stats.ineffective.sort((a, b) => b.keptUsd - a.keptUsd || a.ts - b.ts || (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0));
+  stats.ineffective = stats.ineffective.slice(0, FLOW_ITEMS);
   return out;
 }

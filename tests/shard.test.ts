@@ -229,6 +229,13 @@ describe("shard agentId", () => {
     expect("agentId" in d.usage[0]).toBe(false);
     expect("agentId" in d.users[0]).toBe(false);
   });
+  test("compact rows keep trigger and preTokens, and rows without them decode as they were", () => {
+    const s = withIds();
+    s.compacts.push({ sessionId: "s-1", ts: 1_000_006, trigger: "auto", preTokens: 150_000 });
+    const d = decodeShard(encodeShard(s));
+    expect(d.compacts).toEqual(s.compacts);
+    expect("trigger" in d.compacts[0]).toBe(false);
+  });
   test("a shard written before the columns existed still decodes, agentId absent", () => {
     const s = shard(4);
     s.users.push({ sessionId: "s-1", ts: 1_000_004, kind: "prompt", chars: 5, text: "task", sidechain: true });

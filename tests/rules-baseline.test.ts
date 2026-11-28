@@ -80,11 +80,11 @@ const plugin = (name: string, tokensPerRequest: number, used: boolean): Installe
 const HUNDRED = { byModel: { [OPUS]: money(0, 100) }, main: money(0, 100) };
 
 describe("rule registry", () => {
-  test("14 baseline rules with unique ids; the shipped registry is that list plus the new rules", () => {
+  test("13 baseline rules with unique ids; the shipped registry is that list plus the new rules", () => {
     expect(BASELINE_RULES.map((r) => r.id).sort()).toEqual(
-      ["big-paste", "cache-rebuilt", "command-output", "costly-attribution", "fast-mode", "long-session", "near-limit", "repeat-compaction", "subagent-model", "thinking-output", "tool-output", "unused-mcp-server", "unused-plugin", "whole-reads"].sort(),
+      ["big-paste", "cache-rebuilt", "command-output", "costly-attribution", "fast-mode", "long-session", "near-limit", "subagent-model", "thinking-output", "tool-output", "unused-mcp-server", "unused-plugin", "whole-reads"].sort(),
     );
-    expect(HINT_RULES.slice(0, 14)).toEqual(BASELINE_RULES);
+    expect(HINT_RULES.slice(0, 13)).toEqual(BASELINE_RULES);
   });
 
   test("an empty span raises nothing, and every rule copes with it", async () => {
@@ -249,6 +249,24 @@ describe("long-session", () => {
     expect(fire("long-session", { peakContext: { s1: 140_001 } }, { window: 200_000 }).length).toBe(1);
     expect(fire("long-session", { peakContext: { s1: 140_000 } }, { window: 200_000 })).toEqual([]);
   });
+  test("the action offers an earlier compaction at a task boundary first, a new session second", () => {
+    const h = only(fire("long-session", { peakContext: { s1: 900_000 } }));
+    expect(h.action.indexOf("/compact")).toBeGreaterThanOrEqual(0);
+    expect(h.action.indexOf("/compact")).toBeLessThan(h.action.indexOf("new session"));
+    expect(h.action).toContain("task boundary");
+    expect(h.action).toContain("/compact <next step>");
+    expect(h.action).toContain("/clear");
+    expect(h.action).toContain("/autocompact");
+    expect(h.action).toContain("autoCompactWindow");
+    expect(h.summary).not.toMatch(/auto/i);
+  });
+  test("a session that ran into automatic compaction cites where it fired", () => {
+    const compaction = { count: 2, savedTokens: 0, savedUsd: 0, bySession: { s1: { count: 2, savedTokens: 0, savedUsd: 0, autoPeak: 940_000, autoCount: 1 } }, ineffective: [] };
+    const h = only(fire("long-session", { peakContext: { s1: 900_000, s2: 800_000 }, compaction }));
+    expect(h.evidence.map((e) => e.label)).toEqual(["Peak context", "Auto-compaction", "Peak context"]);
+    expect(h.evidence[1]!.detail).toBe("ran to the automatic limit at 940k tokens");
+    expect(h.summary).toContain("1 of them ran into automatic compaction");
+  });
   test("a titled session shows its title before the peak row", () => {
     const top = { sessionId: "s1", repo: "r", started: 0, usd: 5, resume: "claude --resume s1", title: "Fix it" };
     const h = only(fire("long-session", { peakContext: { s1: 900_000, s2: 100 }, topSessions: [top, { ...top, sessionId: "s2", usd: 9 }] }));
@@ -377,15 +395,10 @@ describe("fast-mode", () => {
   });
 });
 
-describe("repeat-compaction", () => {
-  test("three compactions in one session fire; the amount is what the flagged sessions cost", () => {
-    const top = (sessionId: string, usd: number) => ({ sessionId, repo: "r", started: 0, usd, resume: "x" });
-    const h = only(fire("repeat-compaction", { compactions: { s1: 3, s2: 2 }, topSessions: [top("s1", 7.5), top("s2", 4)] }));
-    expect(h.usd).toBe(7.5);
-    expect(h.evidence.map((e) => e.detail)).toEqual(["3 compactions"]);
-  });
-  test("twice is not enough", () => {
-    expect(fire("repeat-compaction", { compactions: { s1: 2 } })).toEqual([]);
+describe("compaction count is no finding", () => {
+  test("no rule is named after repeated compaction, and many compactions in a session raise nothing", async () => {
+    expect(HINT_RULES.some((r) => r.id === "repeat-compaction")).toBe(false);
+    expect(await runRules(HINT_RULES, inputOf({ summary: summaryOf({ compactions: { s1: 9 } }) }))).toEqual([]);
   });
 });
 
