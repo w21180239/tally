@@ -394,7 +394,7 @@ describe("recheck", () => {
     await start($);
     await afterStart(r);
     // The removed rule is skipped; the other due adoption is still rechecked.
-    expect(r.toasts).toEqual(["tally: you adopted fast-mode; expected save $4.00, actual save $2.00."]);
+    expect(r.toasts).toEqual(["tally: fast-mode: expected save $4.00, actual $2.00"]);
     expect(stored.get(CHECKED_KEY)).toEqual([adoptionId(due())]);
   });
 
