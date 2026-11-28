@@ -7,7 +7,7 @@ import type { PriceTable } from "../../core/pricing.ts";
 import { agentCaches, kindRows, modelSplit, perActiveHour, whereItWent } from "../../core/where.ts";
 import type { KindRow, WentRow } from "../../core/where.ts";
 import type { SessionData } from "../../engine/session-view.ts";
-import { CACHE_MARK, HINT_MARK, SEP, partCells, partColor, svgBar, svgStack, textBar } from "../theme.ts";
+import { CACHE_MARK, HINT_MARK, SEP, partCells, partColor, partGlyph, svgBar, svgStack, textBar } from "../theme.ts";
 import { leftText, moneyOf, tokensText } from "../data.ts";
 import type { WindowData } from "../data.ts";
 import type { KeyCtx } from "../keys.ts";
@@ -100,7 +100,7 @@ function modelBar(t: Table, d: WindowData, models: Array<[string, number]>, cols
       <Box key="model-bar" flexDirection="row">
         {partCells(shares, Math.max(10, cols - 2)).map((n, i) => (
           <Text key={`seg-${i}`} color={partColor(i)}>
-            {"\u{2588}".repeat(n)}
+            {partGlyph(i).repeat(n)}
           </Text>
         ))}
       </Box>
@@ -112,7 +112,7 @@ function modelBar(t: Table, d: WindowData, models: Array<[string, number]>, cols
     <Box key="model-legend" flexDirection="row" columnGap={2} flexWrap="wrap">
       {models.map(([model, usd], i) => (
         <Text key={`legend-${model}`}>
-          <Text color={partColor(i)}>{"\u{25a0}"}</Text>
+          <Text color={partColor(i)}>{Svg === null ? partGlyph(i) : "\u{25a0}"}</Text>
           {` ${shortModel(model)} ${moneyOf(d, usd)}`}
         </Text>
       ))}

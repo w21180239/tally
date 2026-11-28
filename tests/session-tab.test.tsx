@@ -313,6 +313,10 @@ describe("session tab", () => {
     const term = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     const segs = await term.findAll({ key: "model-bar" });
     expect(segs.length).toBe(1);
+    // Each model's segment is its own shape as well as its own colour, so the split reads without colour.
+    expect(await term.find(TEXT(/^\u{2588}+$/u))).toBeDefined();
+    expect(await term.find(TEXT(/^\u{2593}+$/u))).toBeDefined();
+    expect(await term.find(TEXT(/^\u{2593}$/u))).toBeDefined();
     expect((await term.findAll({ type: "Svg" })).length).toBe(0);
     await term.unmount();
   });

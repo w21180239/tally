@@ -1,8 +1,7 @@
 // What the window draws from, as plain data: built once per drawing from the live atom, the foot and the chart.
 import type { Hint } from "../core/hint.ts";
 import type { LiveState } from "../core/live-state.ts";
-import { formatMoney } from "../core/money.ts";
-import { tokensText } from "../core/rules/shared.ts";
+import { formatMoney, headlineMoney, moneyBlock } from "../core/money.ts";
 import { totalUsd } from "../core/where.ts";
 import type { Settings } from "../core/settings.ts";
 import { CACHE_MARK, chartText, HINT_MARK, SEP } from "./theme.ts";
@@ -93,9 +92,30 @@ export function windowData(i: DataIn): WindowData {
   };
 }
 
-export const moneyOf = (d: Pick<WindowData, "money" | "decimals">, usd: number): string => formatMoney(usd, d.money, d.decimals);
+type MoneyOpts = Pick<WindowData, "money" | "decimals">;
 
-export { tokensText };
+export const moneyOf = (d: MoneyOpts, usd: number): string => formatMoney(usd, d.money, d.decimals);
+
+/** The amounts of one column in one unit (see `moneyBlock`). */
+export const blockOf = (d: MoneyOpts, usds: readonly number[]): string[] => moneyBlock(usds, d.money, d.decimals);
+
+/** The amount that heads a view, in dollars unless the setting asks for cents. */
+export const headlineOf = (d: MoneyOpts, usd: number): string => headlineMoney(usd, d.money, d.decimals);
+
+/** Counts to three significant digits: `842`, `4.2k`, `236k`, `1.26M`, `32.9M`, `329M`, `1.5B`. */
+export function tokensText(n: number): string {
+  const x = Number.isFinite(n) ? Math.max(0, n) : 0;
+  if (x < 999.5) return String(Math.round(x));
+  const units: Array<[number, string]> = [[1e3, "k"], [1e6, "M"], [1e9, "B"]];
+  for (const [size, unit] of units) {
+    const v = x / size;
+    const places = unit === "k" ? (v < 10 ? 1 : 0) : v < 10 ? 2 : v < 100 ? 1 : 0;
+    const text = String(Number(v.toFixed(places)));
+    // A value that rounds up to 1000 reads in the next unit.
+    if (Number(text) < 1000 || unit === "B") return `${text}${unit}`;
+  }
+  return `${Math.round(x / 1e9)}B`;
+}
 
 export const percentText = (share: number): string => `${Math.round(share * 100)}%`;
 
