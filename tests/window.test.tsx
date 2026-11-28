@@ -1048,6 +1048,23 @@ describe("window: scrolling a docked tab (U1)", () => {
   });
 });
 
+describe("an 11-row inline frame at 52 columns", () => {
+  test("keeps the key line and at least four body rows, shedding foot rows first", async ($, on) => {
+    const r = rig(on, { tab: "hints" });
+    await start($);
+    await turn($, r, "t1");
+    await r.clock.settle();
+    const inline: Omit<RenderInput<"Pane">, "surface"> = { ...PANE, viewport: { columns: 54, rows: 40, isFullscreen: false }, props: { ...PANE.props, placement: "inline", bodyColumns: 52, scroll: { offset: 0, bodyRows: 11 } } };
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...inline });
+    await r.clock.settle();
+    // Tab bar, two switches, a body of at least four rows and the scroll hint, the key line, one foot row.
+    expect(await ui.find(TEXT(/1-5,0 tab/))).toBeDefined();
+    expect(await ui.find({ key: "foot-0" })).toBeDefined();
+    expect(await ui.find({ key: "foot-1" })).toBeUndefined();
+    await ui.unmount();
+  });
+});
+
 describe("window: /clear, Esc with a list open, close (U2, U5, #15)", () => {
   const clear = ($: Engine, r: Rig) => $.session.end({ reason: "clear", sessionId: r.sid.v, resume: { id: r.sid.v } } as never);
 

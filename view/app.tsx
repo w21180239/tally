@@ -61,6 +61,9 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
   return windowData({ live, foot, chart, hint, past: pastOf(await readHistory($), now), settings, now });
 }
 
+/** Rows an inline frame tries to leave its body (the scroll hint counts) before it sheds head and foot rows. */
+const MIN_BODY = 5;
+
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
 
 /** The tab shown when the view holds a span the tab has no switch for (Hints has no session span). */
@@ -225,6 +228,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   }
 
   let tabRows: RenderElement[];
+  let pinned: ((shown: RenderElement[]) => RenderElement | null) | undefined;
   if (tab === "session") {
     const [live, data, prices] = await Promise.all([readLive($), readSession($), currentPrices($)]);
     const drawn = drawSession(t, {
@@ -316,8 +320,8 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   } else if (tab === "hints") {
     const [live, data, adopted] = await Promise.all([readLive($), readHints($), readAdopted($)]);
     if (!adopted.loaded) inBackground($, () => loadAdopted($));
-    const want = { span, repoOnly: view.repoOnly, sessionId: live.sessionId };
-    // Stale findings, or those of another span or repo, are rebuilt off the draw; the tab shows what it has meanwhile.
+    const want = { span, repoOnly: view.repoOnly, sessionId: live.sessionId, stamp: live.messageCount };
+    // Stale findings, those built before new requests arrived, or those of another span or repo, are rebuilt off the draw; the tab shows what it has meanwhile.
     if (needsHints(data, want, d.now)) inBackground($, () => refreshHints($, want));
     // The other computers' files are read off the draw while the all-computers view is on.
     const remote = await readRemotes($);
@@ -332,8 +336,10 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
       onShown: (key) => attempt($, () => toggleShown($, key)),
       adopted: adopted.list.map((a) => a.rule),
       onAdopt: (hint) => attempt($, () => adoptHint($, hint)),
+      onIdleKey: (why) => $.ui.toast(`tally: ${why}.`),
     });
     tabRows = drawn.rows;
+    pinned = drawn.pinned;
     Object.assign(ctx, drawn.ctx);
   } else {
     const [data, prices, priceError] = await Promise.all([readHelp($), currentPrices($), lastPriceError($)]);
@@ -380,11 +386,14 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     let top = [...(tip === null ? [] : [tip]), ...head];
     let bottom = foots;
     const height = (els: RenderElement[]): number => els.reduce((n, el) => n + heightOf(el, cols), 0);
-    // A frame too short for any body drops the key line and rule first, then the tip and the rule under the switches,
-    // then all but the first foot row.
-    if (rows - height(top) - height(bottom) < 4 && placement === "inline") bottom = [...footRows];
-    if (rows - height(top) - height(bottom) < 3 && placement === "inline") top = [tabBar, ...switches];
-    if (rows - height(top) - height(bottom) < 3 && placement === "inline") bottom = footRows.slice(0, 1);
+    // A frame too short for a body (MIN_BODY rows, the scroll hint among them) sheds chrome in steps, the key line last:
+    // the foot's rows but the first, the tip and the rule under the switches, the rule above the foot, the foot itself.
+    const short = (): boolean => placement === "inline" && rows - height(top) - height(bottom) < MIN_BODY;
+    const keyed = keys === null ? [] : [keys];
+    if (short()) bottom = [...keyed, rule(t, cols), ...footRows.slice(0, 1)];
+    if (short()) top = [tabBar, ...switches];
+    if (short()) bottom = [...keyed, ...footRows.slice(0, 1)];
+    if (short()) bottom = keyed.length > 0 ? keyed : footRows.slice(0, 1);
     const win = windowOf(tabRows, cols, rows - height(top) - height(bottom), view.scroll);
     noteMetrics({ active: win.overflows, heights: win.heights, capacity: win.capacity, maxOffset: win.maxOffset });
     return (
@@ -403,6 +412,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
               {hintLine(win, cols)}
             </Text>
           )}
+          {pinned?.(win.rows)}
           {bottom}
         </Box>
       </Box>

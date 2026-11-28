@@ -223,6 +223,15 @@ export function hintLine(w: Pick<Windowed, "above" | "below">, cols: number): st
   return full.length <= cols ? full : head;
 }
 
+/** True when a Button in `rows` carries `hotkey`. */
+export function hasHotkey(rows: RenderElement[], hotkey: string): boolean {
+  const walk = (e: El): boolean => (e.type === "Button" && e.props?.hotkey === hotkey) || (e.children ?? []).some((k) => {
+    const el = asEl(k);
+    return el !== undefined && walk(el);
+  });
+  return rows.some((r) => walk(r as El));
+}
+
 /** Copy of `x` with `autoFocus` on its first Button, else null when it holds none. */
 export function withAutoFocus(x: RenderElement): RenderElement | null {
   const walk = (e: El): El | null => {

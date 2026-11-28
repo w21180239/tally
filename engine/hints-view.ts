@@ -45,6 +45,8 @@ export type HintsData = {
   span: Hint[];
   /** Set when the last build for `key` failed and none has worked since; the tab shows it instead of waiting. */
   failure?: { key: string; why: string; at: number };
+  /** The `stamp` the findings were built at. */
+  stamp?: number;
 };
 
 export const EMPTY_HINTS: HintsData = { key: "", at: 0, repo: "", requests: 0, unread: 0, session: [], span: [] };
@@ -55,15 +57,23 @@ export function readHints($: EngineInterface): Promise<HintsData> {
   return read($, hintsAtom);
 }
 
-export type HintsWant = { span: Span; repoOnly: boolean; sessionId: string };
+/** `stamp` is the live session's message count: it moves when new requests reach the transcripts. */
+export type HintsWant = { span: Span; repoOnly: boolean; sessionId: string; stamp?: number };
 
 export const hintsKeyOf = (w: HintsWant): string => `${w.span}|${w.repoOnly ? "repo" : "all"}|${w.sessionId}`;
 
-/** True when the tab should ask for findings: none of this key yet, or older than their interval; a failed key waits. */
-export function needsHints(data: Pick<HintsData, "key" | "at" | "failure">, want: HintsWant, now: number): boolean {
+/** Findings are rebuilt for a moved stamp once they are this old, so a burst of requests does not rescan every draw. */
+export const HINTS_MIN_MS = 10_000;
+
+/**
+ * True when the tab should ask for findings: none of this key yet, older than their interval, or built before the
+ * underlying figures moved (a different stamp) and at least HINTS_MIN_MS old; a failed key waits.
+ */
+export function needsHints(data: Pick<HintsData, "key" | "at" | "failure"> & { stamp?: number }, want: HintsWant, now: number): boolean {
   const key = hintsKeyOf(want);
   if (data.failure?.key === key && now - data.failure.at < HINTS_RETRY_MS) return false;
-  return data.key !== key || now - data.at >= HINTS_INTERVAL_MS;
+  if (data.key !== key || now - data.at >= HINTS_INTERVAL_MS) return true;
+  return want.stamp !== undefined && data.stamp !== want.stamp && now - data.at >= HINTS_MIN_MS;
 }
 
 let running: Promise<void> | undefined;
@@ -147,6 +157,7 @@ async function build($: EngineInterface, want: HintsWant, now: number): Promise<
     unread,
     session,
     span: await runRules(HINT_RULES, inputOf(sh, "span", spanSummary, want.sessionId), tick),
+    ...(want.stamp !== undefined && { stamp: want.stamp }),
   };
   await update($, hintsAtom, () => data);
   if (want.sessionId !== "") await update($, topAtom, () => ({ sessionId: want.sessionId, at: now, hint: session[0] ?? null, count: session.length }));

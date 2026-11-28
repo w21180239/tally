@@ -307,7 +307,8 @@ describe("adopting a hint", () => {
     const ui = await openHints($, r);
     await adopt(ui, r, "adopt-hint|session|fast-mode");
     expect((await ui.find({ key: "adopt-hint|session|fast-mode" }))?.props.label).toBe("adopted");
-    expect((await ui.findAll({ type: "Button" })).filter((b) => b.props.hotkey === "y").length).toBe(0);
+    // No hint is left to adopt, so the status row holds `y` and says so.
+    expect((await ui.findAll({ type: "Button" })).filter((b) => b.props.hotkey === "y").map((b) => b.props.key)).toEqual(["held-y"]);
     // The same rule in the span block is the same adoption.
     expect((await ui.find({ key: "adopt-hint|span|fast-mode" }))?.props.label).toBe("adopted");
     await ui.unmount();

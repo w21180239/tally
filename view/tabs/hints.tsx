@@ -15,6 +15,7 @@ import type { WindowData } from "../data.ts";
 import { TERM_SHORT, gridOf } from "../grid.ts";
 import type { KeyCtx } from "../keys.ts";
 import { blank, hanging, row, section, status, textLines, wrapped } from "../rows.tsx";
+import { hasHotkey } from "../scroll.ts";
 import type { Table } from "../table.ts";
 import { SEP } from "../theme.ts";
 
@@ -38,9 +39,11 @@ export type HintsInput = {
   /** Rule ids already adopted, and the adopt press. Without `onAdopt` no adopt button is drawn. */
   adopted?: string[];
   onAdopt?: (hint: Hint) => void;
+  /** A `y` or `e` press with nothing to adopt or open; told why. */
+  onIdleKey?: (why: string) => void;
 };
 
-export type HintsDrawing = { rows: RenderElement[]; ctx: KeyCtx };
+export type HintsDrawing = { rows: RenderElement[]; ctx: KeyCtx; /** Given the rows the window shows, the buttons that hold `y` and `e` when those rows do not; drawn outside the window, taking no row. */ pinned?: (shown: RenderElement[]) => RenderElement | null };
 
 /** A hint's open key names its scope and rule, so an open row stays open when the span, repo or order changes. */
 export const hintRowKey = (scope: string, rule: string): string => `hint|${scope}|${rule}`;
@@ -51,21 +54,56 @@ export const ONLY_HERE = "This computer only";
 const SPAN_WORDS: Record<Span, string> = { session: "this session", "24h": "the past 24 hours", "30d": "the past 30 days" };
 const SPAN_TITLE: Record<Span, string> = { session: "This session", "24h": "24 hours", "30d": "30 days" };
 
+export const NO_ADOPT = "no hint to adopt";
+export const NO_EVIDENCE = "no evidence to show";
+
+/**
+ * The tab's rows. While the tab is up `y` and `e` belong to it: with nothing to adopt or open, an unseen button holds
+ * each key, so a stray press toasts why nothing happened and is not typed into the prompt.
+ */
 export function drawHints(t: Table, i: HintsInput): HintsDrawing {
+  const { rows, ctx, act } = hintRows(t, i);
+  if (!t.hasKeys) return { rows, ctx };
+  const { Box, Button } = t;
+  // Whichever of the two keys the rows shown do not carry is held by a button with no height, so the window never
+  // scrolls it out. It does what the key would (the first hint's adopt or evidence), else toasts why nothing happens.
+  const pinned = (shown: RenderElement[]): RenderElement | null => {
+    const held = [
+      ...(hasHotkey(shown, "y") ? [] : [{ key: "y", text: NO_ADOPT, press: act.y }]),
+      ...(hasHotkey(shown, "e") ? [] : [{ key: "e", text: NO_EVIDENCE, press: act.e }]),
+    ];
+    if (held.length === 0) return null;
+    return (
+      <Box key="held-keys" flexDirection="row" height={0} overflow="hidden">
+        {held.map((k) => (
+          <Button key={`held-${k.key}`} label={k.text} plain dimColor hotkey={k.key} onPress={() => (k.press !== undefined ? k.press() : i.onIdleKey?.(k.text))}>
+            {k.text}
+          </Button>
+        ))}
+      </Box>
+    );
+  };
+  return { rows, ctx, pinned };
+}
+
+type Act = { y?: () => unknown; e?: () => unknown };
+
+function hintRows(t: Table, i: HintsInput): { rows: RenderElement[]; ctx: KeyCtx; act: Act } {
   const { Box, Text, Button } = t;
   const { d, data, view } = i;
   const ctx: KeyCtx = {};
+  const act: Act = {};
   const want = hintsKeyOf(i.want);
 
   if (data.key !== want) {
-    if (data.failure?.key === want) return { rows: [status(t, "failed", `Could not look for hints: ${data.failure.why}`, "tally looks again on the next refresh.")], ctx };
-    return { rows: [status(t, "loading", "Looking for ways to spend less...", "Hints fill in once the transcripts are read.")], ctx };
+    if (data.failure?.key === want) return { rows: [status(t, "failed", `Could not look for hints: ${data.failure.why}`, "tally looks again on the next refresh.")], ctx, act };
+    return { rows: [status(t, "loading", "Looking for ways to spend less...", "Hints fill in once the transcripts are read.")], ctx, act };
   }
   const span = SPAN_WORDS[i.want.span];
   const where = i.want.repoOnly ? ` in ${data.repo}` : "";
   if (data.requests === 0 && data.unread > 0) {
     // No index yet means unknown, not zero.
-    return { rows: [status(t, "unknown", `No hints for ${span}${where} yet: the transcripts are not indexed.`, "Hints fill in as projects finish. It is safe to keep working.")], ctx };
+    return { rows: [status(t, "unknown", `No hints for ${span}${where} yet: the transcripts are not indexed.`, "Hints fill in as projects finish. It is safe to keep working.")], ctx, act };
   }
 
   const g = gridOf(t.cols, { money: true, moneyCells: SAVING_CELLS });
@@ -105,6 +143,13 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
       const keyed = !done && yTarget !== undefined && yTarget.scope === scope && yTarget.h.rule === hint.rule;
       const evidenceKeyed = hint.evidence.length > 0 && !evidenceKeyTaken;
       if (evidenceKeyed) evidenceKeyTaken = true;
+      // The first press arms the hint; the second adopts it.
+      const pressAdopt = () => {
+        if (done) return undefined;
+        return isArmed ? i.onAdopt?.(hint) : i.onShown(armKeyOf(key));
+      };
+      if (keyed) act.y = pressAdopt;
+      if (evidenceKeyed) act.e = () => i.onShown(key);
       if (hint.evidence.length > 0 || adoptable(scope)) {
         const face = `evidence (${hint.evidence.length})`;
         const adoptFace = done ? "adopted" : isArmed ? "press y again to adopt" : "adopt";
@@ -124,11 +169,7 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
                 plain
                 dimColor={!isArmed}
                 {...(keyed && { hotkey: "y" })}
-                onPress={() => {
-                  if (done) return undefined;
-                  // The first press arms the hint; the second adopts it.
-                  return isArmed ? i.onAdopt?.(hint) : i.onShown(armKeyOf(key));
-                }}
+                onPress={pressAdopt}
               >
                 {adoptFace}
               </Button>
@@ -174,5 +215,5 @@ export function drawHints(t: Table, i: HintsInput): HintsDrawing {
       </Text>,
     );
   }
-  return { rows: out, ctx };
+  return { rows: out, ctx, act };
 }

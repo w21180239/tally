@@ -70,12 +70,19 @@ describe("grid", () => {
     expect(wide.note).toBe("newest first");
     expect(wide.rule).toMatch(/^\u{2500}+$/u);
     const narrow = titleParts("Spend per day", "newest first and a very long note", 24);
-    expect(narrow.name.length + 1 + narrow.note.length + 1 + narrow.rule.length).toBe(24);
+    // Too long for the width: the note goes whole, leaving the name, a gap and the rule.
+    expect(narrow.note).toBe("");
+    expect(narrow.name.length + 1 + narrow.rule.length).toBe(24);
     expect(narrow.rule.length).toBeGreaterThanOrEqual(2);
     // No note: the name, a gap and the rule.
     const bare = titleParts("Where it went", undefined, 30);
     expect(bare.name.length + 1 + bare.rule.length).toBe(30);
     expect(titleParts("A long section name", "note", 10).note).toBe("");
+    // A note that does not fit whole is dropped, never cut mid-phrase.
+    const cutNote = titleParts("Largest sessions", "press a row to resume", 28);
+    expect(cutNote.note).toBe("");
+    expect(cutNote.name.length + 1 + cutNote.rule.length).toBe(28);
+    expect(titleParts("Largest sessions", "press a row to resume", 44).note).toBe("press a row to resume");
     expect(titleParts("A long section name", undefined, 10).name).toBe("A long se\u{2026}");
   });
 });
