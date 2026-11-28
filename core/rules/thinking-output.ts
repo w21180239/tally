@@ -12,12 +12,28 @@ const thinkingShare = ({ summary }: HintInput): number => {
   return total > 0 ? thinking / total : 0;
 };
 
+/** Efforts the advice may move down from: medium is the floor it never goes below. */
+const ABOVE_FLOOR = new Set(["high", "xhigh", "max"]);
+
+// The effort most requests in the span ran at; undefined when the transcripts record none.
+const usualEffort = ({ summary }: HintInput): string | undefined => {
+  let best: string | undefined;
+  let most = 0;
+  for (const [effort, m] of Object.entries(summary.byEffort ?? {})) {
+    if (m.requests > most) [best, most] = [effort, m.requests];
+  }
+  return best;
+};
+
 export const thinkingOutput: HintRule = {
   id: "thinking-output",
   metric: thinkingShare,
   run: (i) => {
     const { summary } = i;
     if (summary.usage === undefined) return [];
+    // The only advice is a lower /effort; at medium or below there is none to give. The spend stays on the Usage tab.
+    const effort = usualEffort(i);
+    if (effort !== undefined && !ABOVE_FLOOR.has(effort)) return [];
     const { total, thinking } = outputSpend(summary.usage);
     if (total <= 0 || thinking < THINKING_MIN_USD || thinking / total <= THINKING_SHARE) return [];
     return [
