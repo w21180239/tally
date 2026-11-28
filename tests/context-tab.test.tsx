@@ -339,15 +339,15 @@ describe("context tab: sub-agents", () => {
     expect(await ui.find(TEXT(/^and report the file$/))).toBeDefined();
     expect(await ui.find({ key: "agent-tool-Bash" })).toBeDefined();
     expect(await ui.find(TEXT(/^2$/))).toBeDefined();
-    expect(await ui.find(TEXT(/v open agent/))).toBeDefined();
-    expect(await ui.find(TEXT(/b return/))).toBeDefined();
+    expect(await ui.find(TEXT(/v open/))).toBeDefined();
+    expect(await ui.find(TEXT(/b back/))).toBeDefined();
     expect((await ui.find({ key: "agent-transcript" }))?.props.hotkey).toBe("v");
     expect((await ui.find({ key: "agent-back" }))?.props.hotkey).toBe("b");
     // The tab's own lists are not drawn for an agent.
     expect(await ui.find({ key: "part-system" })).toBeUndefined();
     await ui.press({ key: "agent-back" });
     expect(await ui.find({ key: "part-system" })).toBeDefined();
-    expect(await ui.find(TEXT(/b return/))).toBeUndefined();
+    expect(await ui.find(TEXT(/b back/))).toBeUndefined();
     await ui.unmount();
   });
 
@@ -458,7 +458,7 @@ describe("context tab: transcript view", () => {
     expect(await ui.find(TEXT(/^~600$/))).toBeDefined();
     expect(await ui.find(TEXT(/^find the bug in the parser$/))).toBeDefined();
     expect(await ui.find(TEXT(/^All done: the bug is in the lexer\.$/))).toBeDefined();
-    expect(await ui.find(TEXT(/b return/))).toBeDefined();
+    expect(await ui.find(TEXT(/b back/))).toBeDefined();
     // b returns to the agent's detail, then v opens it again.
     await ui.press({ key: "transcript-back" });
     expect(await ui.find({ key: "agent-transcript" })).toBeDefined();

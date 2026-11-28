@@ -38,6 +38,8 @@ export const TAB_KEY = "tab";
 export const MODE_KEY = "mode";
 /** Used share above which a rate-limit window raises its once-per-session toast. */
 export const LIMIT_PERCENT = 80;
+/** How long the limit toast stays, in ms (the engine's default is 4000). */
+export const LIMIT_TOAST_MS = 8_000;
 /** The 8-hour chart is rebuilt from the index at most this often. */
 export const CHART_INTERVAL_MS = 300_000;
 
@@ -358,7 +360,8 @@ async function warnNearLimit($: EngineInterface, limits: Limit[]): Promise<void>
     if ((await readView($)).hasWarned) return;
     await changeView($, (v) => ({ ...v, hasWarned: true }));
     const reset = untilText(near.resetsAt, await $.clock.now());
-    $.ui.toast(`tally: your ${limitName(near.kind, false)} limit is ${Math.round(near.percentUsed)}% used${reset === null || reset === "now" ? "" : ` (resets in ${reset})`}.`);
+    // Long enough to read; the foot keeps showing the same figures after the toast is gone.
+    $.ui.toast(`tally: ${limitName(near.kind, false)} limit ${Math.round(near.percentUsed)}% used${reset === null || reset === "now" ? "" : `, resets in ${reset}`}`, { timeoutMs: LIMIT_TOAST_MS });
   } finally {
     toasting = false;
   }

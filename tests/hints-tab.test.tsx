@@ -495,7 +495,7 @@ describe("hints tab", () => {
   test("the key line says tab/enter shows evidence while a hint has evidence to open", async ($, on) => {
     const r = rig(on);
     const ui = await open($, r);
-    expect(await ui.find(TEXT(/tab\/enter show evidence/))).toBeDefined();
+    expect(await ui.find(TEXT(/tab\/enter evidence/))).toBeDefined();
     await ui.unmount();
   });
 });

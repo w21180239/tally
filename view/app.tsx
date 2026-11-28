@@ -22,8 +22,8 @@ import { readLive, watchSession } from "../engine/live.ts";
 import { noteMetrics } from "../engine/scroll.ts";
 import { glanceLines, glanceOf, moneyOf, windowData } from "./data.ts";
 import type { WindowData } from "./data.ts";
-import { layoutOf } from "./layout.ts";
-import { ESC_WORDS, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineText, spansOf, TABS } from "./keys.ts";
+import { layoutOf, MAX_COLUMNS } from "./layout.ts";
+import { ESC_FOLD, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineRuns, spansOf, TABS } from "./keys.ts";
 import type { KeyCtx } from "./keys.ts";
 import { drawContext } from "./tabs/context.tsx";
 import { drawHelp } from "./tabs/help.tsx";
@@ -81,10 +81,20 @@ function switchRow(t: Table, title: string, hotkey: string, choices: Choice[]): 
       <Text dimColor>{title}</Text>
       {choices.map((c, i) => (
         <Button key={c.key} label={c.label} {...(i === next && { hotkey })} {...(c.isChosen ? { variant: "primary" as const } : { dimColor: true })} onPress={c.onPress}>
-          {c.label}
+          {c.isChosen ? chosenFace(t, c.label) : c.label}
         </Button>
       ))}
     </Box>
+  );
+}
+
+// The chosen tab or switch is bold and underlined, so it reads without the accent colour.
+function chosenFace(t: Table, text: string): RenderElement {
+  const { Text } = t;
+  return (
+    <Text weight="bold" underline>
+      {text}
+    </Text>
   );
 }
 
@@ -96,7 +106,8 @@ const rule = (t: Table, cols: number): RenderElement => {
 function drawShort(t: Table, d: WindowData, cols: number, isFocused: boolean, isFullscreen: boolean): RenderElement {
   const { Box, Text } = t;
   const lines = glanceLines(d, cols);
-  const note = isFullscreen ? "widen the terminal to dock the tabs" : "a taller frame, or /tui fullscreen, shows the tabs";
+  // Short only when the frame is under 10 rows: the tabs need more height.
+  const note = isFullscreen ? "a taller terminal shows the tabs" : "a taller frame, or /tui fullscreen, shows the tabs";
   return (
     <Box key="short" flexDirection="column">
       {lines.map((line, i) => (
@@ -106,7 +117,7 @@ function drawShort(t: Table, d: WindowData, cols: number, isFocused: boolean, is
       ))}
       {t.hasKeys && (
         <Text dimColor wrap="truncate-end">
-          {`${isFocused ? `${KEYS_ACTIVE}${SEP}${ESC_WORDS}` : HOW_TO_FOCUS}${SEP}${note}`}
+          {`${isFocused ? `${KEYS_ACTIVE}${SEP}${ESC_FOLD}` : HOW_TO_FOCUS}${SEP}${note}`}
         </Text>
       )}
     </Box>
@@ -137,12 +148,14 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   const t = tableOf($, e);
   const { Box, Text, Button } = t;
   const [view, d] = await Promise.all([readView($), loadData($, settings)]);
-  const cols = e.props.bodyColumns;
+  // Content is never wider than MAX_COLUMNS: a wider body leaves the rest empty, on the right.
+  const cols = Math.min(e.props.bodyColumns, MAX_COLUMNS);
+  const isCapped = e.props.bodyColumns > MAX_COLUMNS;
   const rows = e.props.scroll.bodyRows;
   const isFullscreen = e.viewport?.isFullscreen === true;
   const placement = e.props.placement === "inline" ? "inline" : "dock";
   // A widget (the desktop's small form of a minimised pane) draws what reads at a glance, like a short inline frame.
-  const layout = e.props.placement === "widget" ? "short" : layoutOf(cols, rows, placement, { isFullscreen });
+  const layout = e.props.placement === "widget" ? "short" : layoutOf(cols, rows, placement);
   if (layout === "short") return drawShort(t, d, cols, e.props.isFocused, isFullscreen);
   if (layout === "compact") return drawCard(t, d, cols);
 
@@ -167,7 +180,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
             {...(s.tab === tab ? { variant: "primary" as const } : { dimColor: true })}
             onPress={() => attempt($, () => showTab($, s.tab))}
           >
-            {text}
+            {s.tab === tab ? chosenFace(t, text) : text}
           </Button>
         );
       })}
@@ -322,26 +335,49 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
       {tabRows}
     </Box>
   );
+  // The key line: key names bold, their words dim, this tab's keys before the global pair.
   const keys = t.hasKeys ? (
     <Text key="keys" dimColor wrap="truncate-end">
-      {keyLineText(cols, e.props.isFocused, keyLine(tab, ctx))}
+      {keyLineRuns(cols, e.props.isFocused, keyLine(tab, ctx)).map((r, i) => (
+        <Text key={`key-run-${i}`} {...(r.role === "key" ? { weight: "bold" as const } : { dimColor: true })}>
+          {r.text}
+        </Text>
+      ))}
     </Text>
   ) : null;
   const head = [tabBar, ...switches, ...(switches.length > 0 ? [rule(t, cols)] : [])];
-  const foots = [...(keys === null ? [] : [keys]), rule(t, cols), ...drawFoot(t, d, cols)];
+  const footRows = drawFoot(t, d, cols);
+  const foots = [...(keys === null ? [] : [keys]), rule(t, cols), ...footRows];
+  // Until the first action an inline frame says docking needs fullscreen; only a full drawing has the room for it.
+  const showTip = placement === "inline" && layout === "full" && !view.hasTipped && !isFullscreen;
+  const tip = showTip ? (
+    <Box key="tip">
+      <Text dimColor wrap="truncate-end">
+        fullscreen docks this window: /tui fullscreen
+      </Text>
+    </Box>
+  ) : null;
 
-  if (placement === "dock" && t.hasKeys) {
-    // Docked, the tree is the dock's height: head and foot stay put and the tab's rows scroll between them. Rows are
-    // windowed here, a row at a time; `ui.scroll` (wheel, PgUp/PgDn) moves the window (engine/scroll.ts).
-    const fixed = [...head, ...foots].reduce((n, el) => n + heightOf(el, cols), 0);
-    const win = windowOf(tabRows, cols, rows - fixed, view.scroll);
+  if (t.hasKeys) {
+    // Head and foot stay put and the tab's rows scroll between them, a row at a time. The rows are windowed here (the
+    // engine clips a tree it has no window over); `ui.scroll` (wheel, PgUp/PgDn) moves the window (engine/scroll.ts).
+    // Docked, the tree is the dock's height. Inline it is as tall as it needs, at most the frame's rows.
+    let top = [...(tip === null ? [] : [tip]), ...head];
+    let bottom = foots;
+    const height = (els: RenderElement[]): number => els.reduce((n, el) => n + heightOf(el, cols), 0);
+    // A frame too short for any body drops the key line and rule first, then the tip and the rule under the switches,
+    // then all but the first foot row.
+    if (rows - height(top) - height(bottom) < 4 && placement === "inline") bottom = [...footRows];
+    if (rows - height(top) - height(bottom) < 3 && placement === "inline") top = [tabBar, ...switches];
+    if (rows - height(top) - height(bottom) < 3 && placement === "inline") bottom = footRows.slice(0, 1);
+    const win = windowOf(tabRows, cols, rows - height(top) - height(bottom), view.scroll);
     noteMetrics({ active: win.overflows, heights: win.heights, capacity: win.capacity, maxOffset: win.maxOffset });
     return (
-      <Box key="window" flexDirection="column" height={rows}>
+      <Box key="window" flexDirection="column" {...(placement === "dock" && { height: rows })} {...(isCapped && { width: cols })}>
         <Box flexDirection="column" flexShrink={0}>
-          {head}
+          {top}
         </Box>
-        <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+        <Box flexDirection="column" flexShrink={0} {...(placement === "dock" && { flexGrow: 1, flexShrink: 1, overflow: "hidden" as const })}>
           <Box key={`body-${tab}`} flexDirection="column" flexShrink={0}>
             {focusFirst(win.rows)}
           </Box>
@@ -352,7 +388,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
               {hintLine(win, cols)}
             </Text>
           )}
-          {foots}
+          {bottom}
         </Box>
       </Box>
     );
@@ -373,17 +409,10 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
       </Box>
     );
   }
-  // Inline, the frame is as tall as its tree and the engine scrolls it whole. Until the first action a tip says docking needs fullscreen.
-  const showTip = !view.hasTipped && !isFullscreen;
+  // Off the terminal, an inline frame is as tall as its tree and the surface scrolls it whole.
   return (
     <Box key="window" flexDirection="column">
-      {showTip && (
-        <Box key="tip">
-          <Text dimColor wrap="truncate-end">
-            docks as a sidebar only in fullscreen: /tui fullscreen
-          </Text>
-        </Box>
-      )}
+      {tip}
       {head}
       {body}
       {foots}
