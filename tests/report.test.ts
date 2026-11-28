@@ -14,7 +14,7 @@ import { BASELINE_KEY, baselineOf, buildReport, parseBaseline, runRateOf, snapsh
 import type { Baseline, Report } from "../report/build.ts";
 import { renderMarkdown } from "../report/markdown.ts";
 import { req } from "./fixtures/rows.ts";
-import { worldOf } from "./world.ts";
+import { clockOf, worldOf } from "./world.ts";
 import type { World } from "./world.ts";
 
 const DAY = 86_400_000;
@@ -238,7 +238,7 @@ const usageOf = (): TurnUsage => ({ input_tokens: 1000, output_tokens: 500, cach
 function rig(on: On): Rig {
   resetSnapshots();
   const world = worldOf();
-  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), stored: new Map(), registered: [] };
+  const r: Rig = { world, clock: clockOf(on, { now: NOW }), stored: new Map(), registered: [] };
   mock.env(on, { HOME: "/home/u" });
   on("store.get", (_, e) => ({ value: r.stored.get(e.key) }));
   on("store.set", (_, e) => {
