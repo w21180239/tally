@@ -110,7 +110,40 @@ const textOf = (content: unknown): string =>
       ? content.map((b) => (isRec(b) && b.type === "text" && typeof b.text === "string" ? b.text : "")).join("")
       : "";
 
-const charsOf = (c: unknown): number => (c === undefined || c === null ? 0 : typeof c === "string" ? c.length : JSON.stringify(c).length);
+// An image bills by its pixels (about w*h/750 tokens, long edge scaled to 1568), not by its base64 length.
+export const IMAGE_MAX_TOKENS = 1600;
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function pngSize(data: string): [number, number] | undefined {
+  if (!data.startsWith("iVBORw0KGgo") || data.length < 32) return undefined;
+  const bytes: number[] = [];
+  for (let i = 0; i < 32; i += 4) {
+    const n = [0, 1, 2, 3].reduce((acc, k) => (acc << 6) | Math.max(0, B64.indexOf(data[i + k])), 0);
+    bytes.push((n >> 16) & 255, (n >> 8) & 255, n & 255);
+  }
+  const u32 = (o: number): number => ((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3]) >>> 0;
+  return [u32(16), u32(20)];
+}
+
+/** Tokens one image block costs: from a PNG's header when readable, else the cap. */
+export function imageTokens(block: Rec): number {
+  const src = isRec(block.source) ? block.source : undefined;
+  const size = typeof src?.data === "string" ? pngSize(src.data) : undefined;
+  if (size === undefined || size[0] === 0 || size[1] === 0) return IMAGE_MAX_TOKENS;
+  const scale = Math.min(1, 1568 / Math.max(size[0], size[1]));
+  return Math.max(1, Math.min(IMAGE_MAX_TOKENS, Math.round((size[0] * scale * size[1] * scale) / 750)));
+}
+
+const charsOf = (c: unknown): number => {
+  if (c === undefined || c === null) return 0;
+  if (typeof c === "string") return c.length;
+  // Images count as the chars of their token cost (4 a token), so the flow estimate starts near the billed size.
+  if (Array.isArray(c)) {
+    const img = c.filter((b): b is Rec => isRec(b) && b.type === "image");
+    if (img.length > 0) return JSON.stringify(c.filter((b) => !img.includes(b as Rec))).length + img.reduce((n, b) => n + imageTokens(b) * 4, 0);
+  }
+  return JSON.stringify(c).length;
+};
 
 function userRow(l: Rec, ctx: FileCtx): Parsed | null {
   const ts = Date.parse(nonEmpty(l.timestamp) ?? "");

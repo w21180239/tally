@@ -462,7 +462,7 @@ function* summarySteps(shards: Shard[], prices: PriceTable, opts: SummaryOpts): 
     stats.count++;
     stats.savedTokens += e.savedTokens;
     stats.savedUsd += e.savedUsd;
-    const s = slot(stats.bySession, e.sessionId, () => ({ count: 0, savedTokens: 0, savedUsd: 0 }));
+    const s = slot<CompactionStats["bySession"][string]>(stats.bySession, e.sessionId, () => ({ count: 0, savedTokens: 0, savedUsd: 0 }));
     s.count++;
     s.savedTokens += e.savedTokens;
     s.savedUsd += e.savedUsd;

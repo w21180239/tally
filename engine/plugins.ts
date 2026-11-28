@@ -45,17 +45,31 @@ async function mcpServersOf(env: StoreEnv, dir: string): Promise<string[]> {
   return [...names].sort();
 }
 
+const slashed = (p: string): string => p.replace(/\\/g, "/").toLowerCase();
+
+// The status line command, normalised to forward slashes and lower case; "" without one.
+async function statusLineOf(env: StoreEnv, cfg: string): Promise<string> {
+  const doc = await readJson(env, joinPath(cfg, "settings.json"));
+  const line = isRecord(doc) && isRecord(doc.statusLine) ? doc.statusLine.command : undefined;
+  return typeof line === "string" ? slashed(line) : "";
+}
+
+// A status line runs outside requests, so a plugin it calls is in use though no request names it.
+const drivesStatusLine = (line: string, name: string, dir: string | undefined): boolean =>
+  line !== "" && (line.includes(`/${name.toLowerCase()}/`) || (dir !== undefined && line.includes(slashed(dir))));
+
 /** Installed plugins by name (the part of the id before `@`), each with the MCP servers it ships; sorted by name. */
 export async function readInventory(env: StoreEnv, cfg: string, tick: Tick = noTick): Promise<PluginInventory[]> {
   const registry = await readJson(env, registryPath(cfg));
   const plugins = isRecord(registry) && isRecord(registry.plugins) ? registry.plugins : {};
+  const line = await statusLineOf(env, cfg);
   const out = new Map<string, PluginInventory>();
   for (const [id, entry] of Object.entries(plugins)) {
     await tick();
     const name = id.split("@", 1)[0]!;
     if (name === "" || out.has(name)) continue;
     const dir = installPathOf(entry);
-    out.set(name, { name, mcpServers: dir === undefined ? [] : await mcpServersOf(env, dir) });
+    out.set(name, { name, mcpServers: dir === undefined ? [] : await mcpServersOf(env, dir), ...(drivesStatusLine(line, name, dir) && { statusLine: true }) });
   }
   return [...out.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }

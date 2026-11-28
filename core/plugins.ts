@@ -7,7 +7,7 @@ import type { Summary } from "./summary.ts";
 export type InstalledPlugin = { name: string; tokensPerRequest: number; used: boolean; /** Other repos that used it in the window, when the summary is limited to one repo and this plugin was not used there. */ usedIn?: string[] };
 
 /** MCP servers a plugin folder declares; skills and agents are matched by the `<name>:` prefix. */
-export type PluginInventory = { name: string; mcpServers: string[] };
+export type PluginInventory = { name: string; mcpServers: string[]; /** The settings' status line runs it, which counts as use. */ statusLine?: true };
 
 // Wire names fold anything outside letters, digits and underscore to "_".
 export const fold = (s: string): string => s.toLowerCase().replace(/[^a-z0-9_]/g, "_");
@@ -36,7 +36,7 @@ export function pluginsFrom(inventory: PluginInventory[], snap: BreakdownSnapsho
     }
     const attributed = (k: string): boolean => k.toLowerCase() === lower || k.toLowerCase().startsWith(`${lower}@`);
     const touched = (plugins: string[], skills: string[], agents: string[], mcp: string[]): boolean => plugins.some(attributed) || skills.some(inNs) || agents.some(inNs) || mcp.some((k) => servers.has(k));
-    const wasUsed = touched(Object.keys(used.byPlugin), Object.keys(used.bySkill), Object.keys(used.bySubType), Object.keys(used.byMcp));
+    const wasUsed = p.statusLine === true || touched(Object.keys(used.byPlugin), Object.keys(used.bySkill), Object.keys(used.bySubType), Object.keys(used.byMcp));
     const usedIn = wasUsed ? [] : (used.elsewhere ?? []).filter((e) => touched(e.plugins, e.skills, e.agents, e.mcp)).map((e) => e.repo);
     return { name: p.name, tokensPerRequest: tokens, used: wasUsed, ...(usedIn.length > 0 && { usedIn }) };
   });

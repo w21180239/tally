@@ -334,15 +334,17 @@ describe("long-session", () => {
   test("a session that ran into automatic compaction cites where it fired", () => {
     const compaction = { count: 2, savedTokens: 0, savedUsd: 0, bySession: { s1: { count: 2, savedTokens: 0, savedUsd: 0, autoPeak: 940_000, autoCount: 1 } }, ineffective: [] };
     const h = only(fire("long-session", { peakContext: { s1: 900_000, s2: 800_000 }, compaction }));
-    expect(h.evidence.map((e) => e.label)).toEqual(["Session", "Peak context", "Auto-compaction", "Session", "Peak context"]);
-    expect(h.evidence[2]!.detail).toBe("ran to the automatic limit at 940k tokens");
+    expect(h.evidence.map((e) => e.label)).toEqual(["Session", "Peak context", "Session spend", "Auto-compaction", "Session", "Peak context", "Session spend"]);
+    expect(h.evidence[3]!.detail).toBe("ran to the automatic limit at 940k tokens");
     expect(h.summary).toContain("1 of them ran into automatic compaction");
   });
   test("a session shows its id and repo, then its title when it has one, before the peak row", () => {
     const top = { sessionId: "s1", repo: "r", started: 0, usd: 5, resume: "claude --resume s1", title: "Fix it" };
     const h = only(fire("long-session", { peakContext: { s1: 900_000, s2: 100 }, topSessions: [top, { ...top, sessionId: "s2", usd: 9 }] }));
-    expect(h.usd).toBe(5);
-    expect(h.evidence.map((e) => e.kind)).toEqual(["text", "title", "text"]);
+    // The session's spend is its work, not a saving: shown as evidence, never as the hint's dollar figure.
+    expect(h.usd).toBe(0);
+    expect(h.evidence.map((e) => e.kind)).toEqual(["text", "title", "text", "text"]);
+    expect(h.evidence[3]).toEqual({ label: "Session spend", detail: "$5.00, all of it, not a saving", kind: "text" });
     expect(h.evidence[0]).toEqual({ label: "Session", detail: "s1 (r)", kind: "text" });
     expect(h.evidence[1]!.detail).toBe("Fix it");
   });
@@ -350,16 +352,18 @@ describe("long-session", () => {
 
 describe("costly-attribution", () => {
   const skills = (xs: number[]) => Object.fromEntries(xs.map((usd, i) => [`skill-${i}`, money(usd)]));
-  test("a skill over 20 percent of the attributed spend fires, with its dollars", () => {
+  test("a skill over 20 percent of the attributed spend fires at low confidence with no dollar figure: its spend is task cost", () => {
     const h = only(fire("costly-attribution", { bySkill: skills([21, 20, 20, 20, 19]) }));
-    expect(h.usd).toBe(21);
+    expect(h.usd).toBe(0);
+    expect(h.confidence).toBe("low");
+    expect(h.evidence[0]!.detail).toContain("$21.00");
     expect(h.evidence.map((e) => e.label)).toEqual(["Skill skill-0"]);
   });
   test("an entry under 1 dollar stays quiet however big its share; 1 dollar fires; the text says the figure is request cost", () => {
     expect(fire("costly-attribution", { bySkill: { a: money(0.99) } })).toEqual([]);
     const h = only(fire("costly-attribution", { bySkill: { a: money(1) } }));
     expect(h.summary).toContain("Skill a accounts for $1.00");
-    expect(h.summary).toContain("the cost of the requests it was active in, not the size of its text");
+    expect(h.summary).toContain("the cost of the requests it was active in: the task's cost, not what dropping the skill would save");
     expect(h.evidence[0]!.detail).toContain("in the requests it ran in");
     expect(h.action).toContain("/usage");
   });
@@ -378,9 +382,15 @@ describe("costly-attribution", () => {
       ),
     );
     expect(h.usd).toBe(50);
+    expect(h.confidence).toBe("low");
     expect(h.evidence.map((e) => e.label)).toEqual(["Plugin p", "Skill p:run"]);
     expect(h.evidence[0]!.detail).toBe("$50.00 ($20.00 listings in every request + $30.00 in requests of its own skills and agents), 83% of plugin-owned spend");
     expect(h.summary).toContain("not the requests it was only loaded in");
+  });
+  test("a plugin alone keeps its dollars and full confidence", () => {
+    const h = only(fire("costly-attribution", { ...HUNDRED }, { plugins: [plugin("p", 1_000_000, true), plugin("q", 0, true)] }));
+    expect(h.usd).toBe(20);
+    expect(h.confidence).toBeUndefined();
   });
   test("requests a plugin was merely loaded in are not its cost: an always-on plugin with no listings and no calls stays quiet", () => {
     expect(fire("costly-attribution", { ...HUNDRED, byPlugin: { p: money(500), q: money(70) } }, { plugins: [plugin("p", 0, true), plugin("q", 0, true)] })).toEqual([]);

@@ -53,14 +53,15 @@ export const costlyAttribution: HintRule = {
     if (rows.length === 0) return [];
     // A request can involve a skill and a plugin together, so the kinds overlap; entries are not summed and the largest sets the amount.
     const top = rows[0]!;
-    const usd = top.usd;
+    // A skill's figure is the work done while it was active, not what dropping it would save: only plugin overhead counts as dollars.
+    const usd = plugins.reduce((m, r) => Math.max(m, r.usd), 0);
     const evidence: Evidence[] = rows.slice(0, LISTED).map((r) => ({
       label: `${r.kind} ${r.name}`,
       detail: r.kind === "Skill" ? `${usdText(r.usd)} in the requests it ran in, ${percentText(r.share)} of skill spend` : `${usdText(r.usd)} (${r.note}), ${percentText(r.share)} of plugin-owned spend`,
       kind: "text",
     }));
     const measures = [
-      skills.length > 0 ? "A skill's figure is the cost of the requests it was active in, not the size of its text." : "",
+      skills.length > 0 ? "A skill's figure is the cost of the requests it was active in: the task's cost, not what dropping the skill would save." : "",
       plugins.length > 0 ? "A plugin's figure is its own listings plus the requests of its own skills and agents, not the requests it was only loaded in." : "",
     ]
       .filter((s) => s !== "")
@@ -70,9 +71,10 @@ export const costlyAttribution: HintRule = {
         rule: "costly-attribution",
         title: "Cost concentrated in a few add-ons",
         usd,
-        summary: `${rows.length === 1 ? `${top.kind} ${top.name} accounts for ${usdText(usd)}, over ${percentText(COSTLY_SHARE)} of all ${top.kind.toLowerCase()} spend` : `${rows.length} skills and plugins each pass ${percentText(COSTLY_SHARE)} of their kind's spend; the largest is ${usdText(usd)}`}. ${measures}`,
+        summary: `${rows.length === 1 ? `${top.kind} ${top.name} accounts for ${usdText(top.usd)}, over ${percentText(COSTLY_SHARE)} of all ${top.kind.toLowerCase()} spend` : `${rows.length} skills and plugins each pass ${percentText(COSTLY_SHARE)} of their kind's spend; the largest is ${usdText(top.usd)}`}. ${measures}`,
         action: "Start with the biggest entry and weigh its output against the tokens · run /usage for the attribution rows. Enable a plugin only for the projects that use it, trim the skill's steps, or trigger it less often.",
         evidence,
+        ...(skills.length > 0 && { confidence: "low" as const }),
         short: `${top.kind.toLowerCase()} ${top.name} at ${percentText(top.share)} of its kind`,
       },
     ];
