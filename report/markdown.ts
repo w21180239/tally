@@ -17,6 +17,17 @@ const day = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const cell = (s: string): string => s.replace(/[\r\n]+/g, " ").replace(/\|/g, "\\|");
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+// Hint text is written for the window (cents, middle dots, ellipses); the report file stays ASCII so any editor or
+// console code page shows it as written. Other characters (a repository name in another script) pass through.
+const ASCII_OF: Record<string, string> = { "·": "-", "…": "...", "—": "-", "–": "-", "×": "x", "→": "->", "≥": ">=", "≤": "<=", "‘": "'", "’": "'", "“": '"', "”": '"' };
+export const plain = (s: string): string =>
+  s
+    .replace(/(\d+(?:\.\d+)?)¢/g, (_, c: string) => {
+      const d = Number(c) / 100;
+      return `$${d.toFixed(d >= 0.005 || d === 0 ? 2 : 4)}`;
+    })
+    .replace(/[·…—–×→≥≤‘’“”]/g, (ch) => ASCII_OF[ch] ?? ch);
+
 function table(head: string[], rows: string[][]): string {
   return [`| ${head.join(" | ")} |`, `| ${head.map(() => "---").join(" | ")} |`, ...rows.map((r) => `| ${r.map(cell).join(" | ")} |`)].join("\n");
 }
@@ -60,10 +71,10 @@ function tablesSection(r: Report): string {
 
 function hintBlock(h: Hint, i: number): string {
   const tags = [h.urgent === true ? "urgent" : "", h.projected === true ? "estimate under a what-if" : "", h.confidence === "low" ? "low confidence" : ""].filter((t) => t !== "");
-  const lines = [`### ${i + 1}. ${h.title}`, "", `Rule: ${h.rule}`, "", `${h.usd > 0 ? usd(h.usd) : "No dollar figure"}${tags.length === 0 ? "" : ` (${tags.join(", ")})`}`, "", h.summary, "", `Action: ${h.action}`];
+  const lines = [`### ${i + 1}. ${plain(h.title)}`, "", `Rule: ${h.rule}`, "", `${h.usd > 0 ? usd(h.usd) : "No dollar figure"}${tags.length === 0 ? "" : ` (${tags.join(", ")})`}`, "", plain(h.summary), "", `Action: ${plain(h.action)}`];
   // A row `redact` blanked (a session title) carries nothing to read.
   const shown = h.evidence.filter((e) => e.detail !== "");
-  if (shown.length > 0) lines.push("", "Evidence:", ...shown.map((e) => `- ${e.label}: ${e.detail}`));
+  if (shown.length > 0) lines.push("", "Evidence:", ...shown.map((e) => `- ${plain(e.label)}: ${plain(e.detail)}`));
   return lines.join("\n");
 }
 
