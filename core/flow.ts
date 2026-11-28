@@ -8,6 +8,9 @@ import type { Steps } from "./steps.ts";
 import { mcpServerOf } from "./breakdown.ts";
 import { agentKeyOf, streamOf } from "./stream.ts";
 import type { CompactRow, UsageRow, UserRow } from "./types.ts";
+import { cacheLife, FIVE_MIN_MS } from "./cache-life.ts";
+import type { CacheLife } from "./cache-life.ts";
+import { HOUR_MS } from "./time.ts";
 
 export type FlowSource = "prompt" | "read" | "bash" | "mcp" | "tool" | "compaction" | "fixed";
 /** `rereadTokens`: the tokens of the part times the requests that re-read it (its cached share). */
@@ -25,7 +28,7 @@ export type Piece = { source: FlowSource; label: string; chars: number; paste: b
  * `requests`: main-thread requests until the next compaction. `savedTokens` and `savedUsd`: per counted request until the next
  * compaction, the context it did not carry compared with before the compaction (max(0, pre - request context)), priced at that
  * request's cache-read rate; a lower bound, since the context would have kept growing. `ineffective`: the context stayed at
- * EFFECTIVE_SHARE of its old size or more, or another compaction followed within QUICK_REPEAT requests (`repeated`).
+ * EFFECTIVE_SHARE of its old size or more, another compaction followed within QUICK_REPEAT requests (`repeated`), or it began after the cache expired (`cold`).
  * `keptTokens`/`keptUsd`: the part of the post-compaction context above the EFFECTIVE_SHARE line, and its cache-read cost over the counted requests until the next compaction.
  */
 export type CompactionEffect = {
@@ -41,6 +44,10 @@ export type CompactionEffect = {
   keptUsd: number;
   ineffective: boolean;
   repeated: boolean;
+  /** Time between the last request before the compaction and the compaction's start (0 when no request came before). */
+  idleMs: number;
+  /** `idleMs` is longer than the cache lives (1 hour after 1-hour writes, else 5 minutes): the compaction's own request read the prefix uncached. Its cost is not in the transcript, so it adds no amount. */
+  cold: boolean;
 };
 
 /** A compaction that leaves at least this share of the old context in place did not shed enough. */
@@ -233,6 +240,8 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     let prevPrompt = 0;
     let prevOutput = 0;
     let prevTs: number | null = null;
+    // Life of the cache the stream's latest cache write went to.
+    let life: CacheLife = "5m";
     const wholes = new Map<string, number>();
 
     const admit = (source: FlowSource, label: string, tokens: number, counted: boolean, flags: { paste?: boolean; listed?: boolean; tool?: string } = {}): void => {
@@ -274,7 +283,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
         e.keptTokens = (e.postTokens! * 10 - e.preTokens * 6) / 10;
         e.keptUsd = e.keptTokens * curRate;
       }
-      e.ineffective = stayed || e.repeated;
+      e.ineffective = stayed || e.repeated || e.cold;
       effects.push(e);
     };
 
@@ -293,7 +302,10 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
         if (!c.sub) {
           finish(true);
           const pre = k.preTokens !== undefined && k.preTokens > 0 ? k.preTokens : prevPrompt;
-          cur = { sessionId: c.sessionId, ts: k.ts, ...(k.trigger !== undefined && { trigger: k.trigger }), preTokens: pre, postTokens: null, requests: 0, savedTokens: 0, savedUsd: 0, keptTokens: 0, keptUsd: 0, ineffective: false, repeated: false };
+          // Idle time before the compaction began (the boundary is written when it ends); a compaction after the cache expired re-reads the whole prefix uncached.
+          const idleMs = prevTs === null ? 0 : Math.max(0, k.ts - (k.durationMs ?? 0) - prevTs);
+          const cold = idleMs > (life === "1h" ? HOUR_MS : FIVE_MIN_MS);
+          cur = { sessionId: c.sessionId, ts: k.ts, ...(k.trigger !== undefined && { trigger: k.trigger }), preTokens: pre, postTokens: null, requests: 0, savedTokens: 0, savedUsd: 0, keptTokens: 0, keptUsd: 0, ineffective: false, repeated: false, idleMs, cold };
           curRate = 0;
         }
         dropAll();
@@ -312,6 +324,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       const prompt = promptOf(row.tokens);
       input.onRequest?.({ row, counted, pieces: waiting, opening, afterCompact, prevTs });
       prevTs = row.ts;
+      if (row.tokens.cw5m + row.tokens.cw1h > 0) life = cacheLife([{ ts: row.ts, cw5m: row.tokens.cw5m, cw1h: row.tokens.cw1h }]);
       if (cur !== null) {
         const e: CompactionEffect = cur;
         e.requests++;

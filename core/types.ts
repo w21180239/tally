@@ -73,6 +73,8 @@ export type CompactRow = {
   trigger?: "manual" | "auto";
   /** Tokens in the context just before the compaction, as the host measured it. Absent like `trigger`. */
   preTokens?: number;
+  /** How long the compaction ran: the boundary is written when it ends, so `ts - durationMs` is when it began. Absent like `trigger`. */
+  durationMs?: number;
 };
 
 export type Parsed =

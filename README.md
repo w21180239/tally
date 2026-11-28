@@ -147,7 +147,7 @@ Every hint states a saving and links to its evidence. The rules:
 - `cache-rebuilt`, `cache-ttl-choice`: caches that expired during pauses and were rewritten, and whether the 5-minute or the 1-hour cache is cheaper for your pauses.
 - `subagent-model`, `subagent-overhead`, `main-model-overkill`: work on a larger model than the task needs, many tiny subagent tasks, and long read-only stretches on the main model. A low-confidence suggestion says "try it" and never "downgrade".
 - `memory-heavy`, `skill-catalog-heavy`, `mcp-schema-heavy`, `unused-plugin`, `unused-mcp-server`: standing context you pay for on every request.
-- `long-session`, `ineffective-compaction`: sessions that grow past 70% of the window (the fix is compacting earlier, at a task boundary), and compactions that left the context at 60% or more of its size or were followed by another within three requests. Compaction that sheds context is a saving; the report's Summary shows its estimated size.
+- `long-session`, `ineffective-compaction`: sessions that grow past 70% of the window (the fix is compacting earlier, at a task boundary), and compactions that left the context at 60% or more of its size were followed by another within three requests, or began after the cache had expired. Compaction that sheds context is a saving; the report's Summary shows its estimated size.
 - `costly-attribution`: one skill or plugin accounts for over 20% of attributed cost.
 - `whole-reads`, `command-output`, `tool-output`, `huge-tool-result`, `big-paste`: the same file read in full three times, commands and tools whose output is re-read on every request, a single giant tool result, a large paste.
 - `thinking-output`, `fast-mode`: thinking above 60% of output, and fast mode above 20% of cost.

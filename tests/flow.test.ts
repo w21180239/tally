@@ -408,6 +408,26 @@ describe("compaction effects", () => {
     expect(effects(sub, [cut(2 * MIN, { agentId: "g1" })])).toEqual([]);
   });
 
+  test("a compaction that began after the cache had expired is cold and ineffective, though it shrank the context", () => {
+    const after = [req({ id: "c", at: 11 * MIN, tokens: { cw5m: 300 } })];
+    const cold = effects([...before, ...after], [cut(10 * MIN, { preTokens: 1500 })])[0];
+    expect([cold.cold, cold.idleMs, cold.ineffective, cold.keptUsd]).toEqual([true, 8 * MIN, true, 0]);
+    // The boundary is written when the compaction ends: it began 2.5 minutes earlier, 2 minutes after the last request.
+    const warm = effects([...before, req({ id: "c", at: 8 * MIN, tokens: { cw5m: 300 } })], [cut(6.5 * MIN, { preTokens: 1500, durationMs: 2.5 * MIN })])[0];
+    expect([warm.cold, warm.idleMs, warm.ineffective]).toEqual([false, 2 * MIN, false]);
+  });
+
+  test("the cache lives 1 hour when the requests wrote to the 1-hour cache", () => {
+    const hourly = [req({ id: "a", at: 1 * MIN, tokens: { cw1h: 1000 } }), req({ id: "b", at: 2 * MIN, tokens: { cacheRead: 1200 } })];
+    const after = req({ id: "c", at: 100 * MIN, tokens: { cw5m: 300 } });
+    expect(effects([...hourly, after], [cut(30 * MIN, { preTokens: 1500 })])[0].cold).toBe(false);
+    expect(effects([...hourly, after], [cut(70 * MIN, { preTokens: 1500 })])[0].cold).toBe(true);
+  });
+
+  test("a compaction with no earlier request is not cold", () => {
+    expect(effects([req({ id: "c", at: 40 * MIN, tokens: { cw5m: 300 } })], [cut(30 * MIN, { preTokens: 1500 })])[0].cold).toBe(false);
+  });
+
   test("a compaction with no request after it has no post context and is not flagged", () => {
     const e = effects(before, [cut(3 * MIN, { preTokens: 1500 })])[0];
     expect([e.postTokens, e.requests, e.ineffective]).toEqual([null, 0, false]);

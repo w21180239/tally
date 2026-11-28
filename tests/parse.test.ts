@@ -185,6 +185,7 @@ describe("parseLine other", () => {
   test("compact boundary keeps the trigger and the context size before it", () => {
     const row = (m: unknown) => parseLine(compactBoundary(m), ctx);
     expect(row({ trigger: "manual", preTokens: 370992, postTokens: 36041 })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, trigger: "manual", preTokens: 370992 } });
+    expect(row({ trigger: "auto", durationMs: 41531 })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, trigger: "auto", durationMs: 41531 } });
     expect(row({ trigger: "auto" })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, trigger: "auto" } });
     expect(row({ preTokens: 5 })).toEqual({ t: "compact", row: { sessionId: SESSION, ts: TIME, preTokens: 5 } });
   });

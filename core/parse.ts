@@ -171,6 +171,7 @@ export function parseLine(line: string, ctx: FileCtx): Parsed | null {
       if (isRec(meta)) {
         if (meta.trigger === "manual" || meta.trigger === "auto") row.trigger = meta.trigger;
         if (typeof meta.preTokens === "number" && Number.isFinite(meta.preTokens) && meta.preTokens >= 0) row.preTokens = meta.preTokens;
+        if (typeof meta.durationMs === "number" && Number.isFinite(meta.durationMs) && meta.durationMs >= 0) row.durationMs = meta.durationMs;
       }
       return { t: "compact", row };
     }

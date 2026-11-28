@@ -106,6 +106,8 @@ describe("ineffective-compaction", () => {
     keptUsd: 1.5,
     ineffective: true,
     repeated: false,
+    idleMs: 60_000,
+    cold: false,
     ...over,
   });
   const stats = (ineffective: CompactionEffect[], count = 5): Summary["compaction"] => ({ count, savedTokens: 0, savedUsd: 0, bySession: {}, ineffective });
@@ -124,6 +126,14 @@ describe("ineffective-compaction", () => {
     const h = only(fire("ineffective-compaction", { compaction: stats([effect({ postTokens: 50_000, keptTokens: 0, keptUsd: 0, requests: 2, repeated: true })], 3) }));
     expect(h.usd).toBe(0);
     expect(h.evidence[0]!.detail).toBe("300k tokens before, 50k after (17%); compacted again after 2 requests");
+  });
+
+  test("a compaction that began after the cache expired is flagged with its idle time, and the action says to compact before stepping away", () => {
+    const h = only(fire("ineffective-compaction", { compaction: stats([effect({ postTokens: 50_000, keptTokens: 0, keptUsd: 0, cold: true, idleMs: 2 * HOUR })], 3) }));
+    expect(h.usd).toBe(0);
+    expect(h.evidence[0]!.detail).toBe("300k tokens before, 50k after (17%); began after 2h 00m idle, past the cache life");
+    expect(h.summary).toContain("began after the cache had expired (1)");
+    expect(h.action).toContain("before stepping away, not after");
   });
 
   test("quiet without compaction data or with none flagged; never tells anyone to compact less", () => {

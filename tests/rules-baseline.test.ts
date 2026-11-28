@@ -254,6 +254,10 @@ describe("long-session", () => {
     expect(h.action.indexOf("/compact")).toBeGreaterThanOrEqual(0);
     expect(h.action.indexOf("/compact")).toBeLessThan(h.action.indexOf("new session"));
     expect(h.action).toContain("task boundary");
+    expect(h.action).toContain("/compact <next step>");
+    expect(h.action).toContain("/clear");
+    expect(h.action).toContain("/autocompact");
+    expect(h.action).toContain("autoCompactWindow");
     expect(h.summary).not.toMatch(/auto/i);
   });
   test("a session that ran into automatic compaction cites where it fired", () => {
