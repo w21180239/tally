@@ -217,9 +217,16 @@ export async function refreshUsage($: EngineInterface, want: UsageWant, force = 
     if (want.span === "session" && want.sessionId === "") return;
     const key = usageKeyOf(want);
     const now = await $.clock.now();
-    while (running !== undefined) await running;
-    if (!force && builtKey === key && now - builtAt < USAGE_INTERVAL_MS[want.span]) return;
-    if (!force && failedKey === key && now - failedAt < USAGE_RETRY_MS) return;
+    // A build that starts during the read below sends the loop back to wait for it.
+    for (;;) {
+      while (running !== undefined) await running;
+      // The stored figures decide, not this module's memory of its last build: a /clear starts the stored state over.
+      const stored = await read($, usageAtom);
+      if (running !== undefined) continue;
+      if (!force && builtKey === key && now - builtAt < USAGE_INTERVAL_MS[want.span] && stored.key === key) return;
+      if (!force && failedKey === key && now - failedAt < USAGE_RETRY_MS) return;
+      break;
+    }
     // No await between the checks above and this line: only one build starts.
     running = build($, want, now)
       .then(() => {

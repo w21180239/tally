@@ -27,18 +27,24 @@ const PANE: Omit<RenderInput<"Pane">, "surface"> = {
 };
 const TEXT = (re: RegExp) => ({ type: "Text" as const, text: re });
 
-type Rig = { world: World; clock: ReturnType<typeof mock.clock>; stored: Map<string, unknown>; copied: string[]; copyOk: { v: boolean }; toasts: string[]; logs: string[]; failList: { v: boolean } };
+type Rig = { world: World; clock: ReturnType<typeof mock.clock>; stored: Map<string, unknown>; copied: string[]; copyOk: { v: boolean }; toasts: string[]; logs: string[]; failList: { v: boolean }; forget: { v: boolean } };
 
 const usageOf = (): TurnUsage => ({ input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 100_000, cache_creation_input_tokens: 10_000, model: OPUS, ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 10_000 });
 
 function rig(on: On): Rig {
   const world = worldOf();
-  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), stored: new Map(), copied: [], copyOk: { v: true }, toasts: [], logs: [], failList: { v: false } };
+  const r: Rig = { world, clock: mock.clock(on, { now: NOW }), stored: new Map(), copied: [], copyOk: { v: true }, toasts: [], logs: [], failList: { v: false }, forget: { v: false } };
   mock.env(on, { HOME: "/home/u" });
   on("store.get", (_, e) => ({ value: r.stored.get(e.key) }));
   on("store.set", (_, e) => {
     r.stored.set(e.key, e.value);
     return { value: undefined };
+  });
+  // A /clear starts the stored state over: with `forget` set, the usage cell reads as empty.
+  on("state.get", async (_, e, next) => (r.forget.v && e.key === "usage" ? { value: { version: 0 } } : next(e)));
+  on("state.set", async (_, e, next) => {
+    if (e.key === "usage") r.forget.v = false;
+    return next(e);
   });
   on("session.start", (_, e) => ({ cwd: e.cwd }));
   on("session.end", (_, e) => ({ sessionId: e.sessionId }));
@@ -335,6 +341,25 @@ describe("usage tab", () => {
     await ui.press({ key: "span-session" });
     await r.clock.settle();
     expect(await ui.find(TEXT(/in this session/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("figures the store lost (a /clear starts the stored state over) are rebuilt, not waited for until the interval ends", async ($, on) => {
+    const r = rig(on);
+    const ui = await open($, r);
+    await ui.press({ key: "span-30d" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/in the past 30 days/))).toBeDefined();
+    r.forget.v = true;
+    await ui.press({ key: "tab-history" });
+    await r.clock.settle();
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    // The build runs off the draw; the next draw shows it.
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/Reading the index/))).toBeUndefined();
+    expect(await ui.find(TEXT(/in the past 30 days/))).toBeDefined();
     await ui.unmount();
   });
 
