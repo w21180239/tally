@@ -78,6 +78,7 @@ export interface TallySession {
   rows: number;
   resident: Record<string, number>;
   snapshot: { ts: number; proxy: boolean } | null;
+  compaction: { count: number; savedTokens: number; savedUsd: number };
 }
 
 export interface TallyDetailRow {
@@ -87,6 +88,8 @@ export interface TallyDetailRow {
   estimated: boolean;
   full?: string;
   id?: string;
+  redact?: "command" | "path";
+  bare?: string;
 }
 
 export interface TallyUsageSection {
@@ -103,6 +106,10 @@ export interface TallyUsage {
   agents: Array<{ key: string; label: string; usd: number }>;
   by: Record<string, TallyUsageSection[]>;
   snapshot: { ts: number; proxy: boolean } | null;
+  fill: Array<{ tool: string; tokens: number }>;
+  mcp: Array<{ server: string; usd: number; schemaUsd: number; resultUsd: number; calls: number }>;
+  mcpProxy: boolean;
+  mcpMissing: number;
   failure?: { key: string; why: string };
 }
 
@@ -118,6 +125,7 @@ export interface TallyHistory {
   requests: number;
   total: TallyHistoryAmount;
   kinds: Array<{ kind: "input" | "output" | "cacheRead" | "cacheWrite"; usd: number; tokens: number }>;
+  bucket: "hour" | "day";
   days: Array<{ day: string; usd: number; tokens: number; requests: number }>;
   models: Array<{ name: string; usd: number; tokens: number }>;
   main: TallyHistoryAmount;
@@ -126,9 +134,6 @@ export interface TallyHistory {
   repos: Array<{ name: string; usd: number }>;
   sessions: Array<{ sessionId: string; repo: string; title?: string; pr?: string; started: number; usd: number; resume: string }>;
   fill: Array<{ tool: string; tokens: number }>;
-  mcp: Array<{ server: string; usd: number; schemaUsd: number; resultUsd: number; calls: number }>;
-  mcpProxy: boolean;
-  mcpMissing: number;
   unpriced: string[];
   unread: number;
   partial: boolean;

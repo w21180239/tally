@@ -3,14 +3,14 @@ import type { Engine } from "claude-code/testing";
 import { describe, expect, mock, test } from "claude-code/testing";
 import { cacheUnitPrices, costOf } from "../core/pricing.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
-import { dayWords, historyOf, localDayName, scanOf, scanText, SCAN_STALE_MS } from "../core/history.ts";
+import { dayWords, historyKeyOf, historyOf, hourWords, localDayName, scanOf, scanText, SCAN_STALE_MS } from "../core/history.ts";
 import { headlineMoney, moneyBlock } from "../core/money.ts";
 import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import type { BreakdownSnapshot } from "../core/breakdown.ts";
 import type { Shard } from "../core/shard.ts";
 import { summarize } from "../core/summary.ts";
 import type { UsageRow, UserRow } from "../core/types.ts";
-import { HISTORY_INTERVAL_MS, HISTORY_RETRY_MS, HISTORY_SCAN_INTERVAL_MS, needsHistory, needsRebuild, SCAN_CHECK_MS } from "../engine/history-view.ts";
+import { HISTORY_INTERVAL_MS, HISTORY_RETRY_MS, HISTORY_SCAN_INTERVAL_MS, HISTORY_SESSION_INTERVAL_MS, needsHistory, needsRebuild, SCAN_CHECK_MS } from "../engine/history-view.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { saveSnapshot } from "../engine/snapshot.ts";
 import { keyLine } from "../view/keys.ts";
@@ -135,6 +135,17 @@ async function open($: Engine, r: Rig, o: { other?: boolean; metas?: Shard["meta
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
   await ui.press({ key: "tab-history" });
   await r.clock.settle();
+  // The tab follows the shared span, which starts on the session; these figures are the month's.
+  await ui.press({ key: "span-30d" });
+  await r.clock.settle();
+  return ui;
+}
+
+// The Tokens tab on the same 30 days.
+async function openTokens($: Engine, r: Rig, o: { other?: boolean; metas?: Shard["metas"] } = {}) {
+  const ui = await open($, r, o);
+  await ui.press({ key: "tab-usage" });
+  await r.clock.settle();
   return ui;
 }
 
@@ -150,14 +161,43 @@ describe("history tab", () => {
     expect(await ui.find({ key: "body-history" })).toBeDefined();
     expect(await ui.find(TEXT(new RegExp(`^${money(usdOf(demo) + usdOf(other)).replace(/[$.]/g, "\\$&")}$`)))).toBeDefined();
     expect(await ui.find(TEXT(/ tokens in the past 30 days \u{b7} 5 requests$/u))).toBeDefined();
-    for (const name of ["Billed kinds", "Spend per day", "Spend per model", "Main thread and sub-agents", "Sub-agent type and model", "Spend per repo", "Largest sessions", "Context fill by tool", "MCP servers"]) {
+    for (const name of ["Spend per day", "Spend per model", "Main thread and sub-agents", "Sub-agent type and model", "Spend per repo", "Largest sessions"]) {
       expect(await ui.find(TEXT(new RegExp(`^${name}$`)))).toBeDefined();
     }
-    for (const kind of [/^Input$/, /^Output$/, /^Cache read$/, /^Cache write$/]) expect(await ui.find(TEXT(kind))).toBeDefined();
     expect(await ui.find(TEXT(/^opus-5-5$/))).toBeDefined();
     expect(await ui.find(TEXT(/^Explore \u{b7} opus-5-5$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^demo$/))).toBeDefined();
     expect(await ui.find(TEXT(/^other$/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("Spend follows the shared span: the session by hour, 24 hours empty here, 30 days by day", async ($, on) => {
+    const r = rig(on);
+    const ui = await open($, r);
+    expect(await ui.find(TEXT(/^Spend per day$/))).toBeDefined();
+    await ui.press({ key: "span-session" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/ tokens in this session \u{b7} 4 requests$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^Spend per hour$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Spend per day$/))).toBeUndefined();
+    // The demo's requests are a day old, so the past 24 hours hold none of them.
+    await ui.press({ key: "span-24h" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/^No requests in the past 24 hours\.$/))).toBeDefined();
+    await ui.press({ key: "span-30d" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/ tokens in the past 30 days \u{b7} 5 requests$/u))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("the billed kinds, the context fill and the MCP servers belong to Tokens: Spend has one total and a pointer", async ($, on) => {
+    const r = rig(on);
+    const ui = await open($, r);
+    for (const gone of [/^Billed kinds$/, /^Input$/, /^Cache write$/, /^Context fill by tool$/, /^MCP servers$/]) expect(await ui.find(TEXT(gone))).toBeUndefined();
+    expect(await ui.find(TEXT(/^2 for the breakdown$/))).toBeDefined();
+    await ui.press({ key: "tab-usage" });
+    await r.clock.settle();
+    for (const name of ["Input", "Output", "Cache read", "Cache write", "Context fill by tool", "MCP servers"]) expect(await ui.find(TEXT(new RegExp(`^${name}$`)))).toBeDefined();
     // The tool that filled the context: Bash's 4000 characters, estimated.
     expect(await ui.find(TEXT(/^Bash$/))).toBeDefined();
     await ui.unmount();
@@ -171,7 +211,7 @@ describe("history tab", () => {
     expect(await ui.find(TEXT(/^42%$/))).toBeDefined();
     expect(await ui.find(TEXT(/^figures are still changing$/))).toBeDefined();
     expect(await ui.find(TEXT(/ tokens in the past 30 days/))).toBeDefined();
-    expect(await ui.find(TEXT(/^Billed kinds$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Spend per day$/))).toBeDefined();
     await ui.unmount();
   });
 
@@ -196,7 +236,7 @@ describe("history tab", () => {
     const r = rig(on);
     writeScan(r.world, "done", 100, 100);
     const ui = await open($, r);
-    expect(await ui.find(TEXT(/^Billed kinds$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Spend per day$/))).toBeDefined();
     expect(await ui.find(TEXT(/still changing/))).toBeUndefined();
     await ui.unmount();
   });
@@ -205,7 +245,7 @@ describe("history tab", () => {
     const r = rig(on);
     writeScan(r.world, "day", 42, 100, NOW - SCAN_STALE_MS - 1);
     const ui = await open($, r);
-    expect(await ui.find(TEXT(/^Billed kinds$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Spend per day$/))).toBeDefined();
     expect(await ui.find(TEXT(/still changing/))).toBeUndefined();
     await ui.unmount();
   });
@@ -239,6 +279,7 @@ describe("history tab", () => {
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     await ui.press({ key: "tab-history" });
+    await ui.press({ key: "span-30d" });
     await r.clock.settle();
     expect(await ui.find(TEXT(/^No figures for the past 30 days yet: the transcripts are not indexed\.$/))).toBeDefined();
     expect(await ui.find(TEXT(/^No requests in/))).toBeUndefined();
@@ -250,7 +291,7 @@ describe("history tab", () => {
     r.world.put(`${CFG}/projects/-work-late/s-9.jsonl`, "");
     const ui = await open($, r);
     expect(await ui.find(TEXT(/^1 project is not indexed yet; their spend is not counted\.$/))).toBeDefined();
-    expect(await ui.find(TEXT(/^Billed kinds$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Spend per day$/))).toBeDefined();
     await ui.unmount();
   });
 
@@ -260,6 +301,7 @@ describe("history tab", () => {
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     await ui.press({ key: "tab-history" });
+    await ui.press({ key: "span-30d" });
     await r.clock.settle();
     expect(await ui.find(TEXT(/^No requests in the past 30 days\.$/))).toBeDefined();
     expect(await ui.find(TEXT(/transcripts are not indexed/))).toBeUndefined();
@@ -308,11 +350,11 @@ describe("history tab", () => {
     await ui.unmount();
   });
 
-  test("MCP servers show their calls and cost: schemas from the nearest snapshot plus the results re-read", async ($, on) => {
+  test("Tokens: MCP servers show their calls and cost: schemas from the nearest snapshot plus the results re-read", async ($, on) => {
     const r = rig(on);
     const snap: BreakdownSnapshot = { sessionId: "s-1", ts: ago(1), skills: {}, mcp: { srv: { tokens: 4000, deferred: 1000 } }, agents: {}, memory: {}, system: 0, tools: 0 };
     await saveSnapshot(r.world.$, CFG, "-work-demo", snap);
-    const ui = await open($, r, { other: false });
+    const ui = await openTokens($, r, { other: false });
     // 3000 resident tokens re-read on each of the three main requests, plus the two results' re-read.
     const demo = demoRows();
     const read = demo.usage.filter((row) => !row.sidechain).reduce((n, row) => n + 3000 * cacheUnitPrices(row, BUILTIN_PRICES).read, 0);
@@ -325,19 +367,19 @@ describe("history tab", () => {
     await ui.unmount();
   });
 
-  test("without any snapshot the server row keeps its calls and a note says its schemas are left out", async ($, on) => {
+  test("Tokens: without any snapshot the server row keeps its calls and a note says its schemas are left out", async ($, on) => {
     const r = rig(on);
-    const ui = await open($, r);
+    const ui = await openTokens($, r);
     expect(await ui.find(TEXT(/^srv \u{b7} 2 calls$/u))).toBeDefined();
     // Both sessions (one per repo) lack a snapshot.
     expect(await ui.find(TEXT(/^2 sessions have no snapshot, so their schemas are not counted$/))).toBeDefined();
     await ui.unmount();
   });
 
-  test("a snapshot of another session marks the figure with * and says so", async ($, on) => {
+  test("Tokens: a snapshot of another session marks the figure with * and says so", async ($, on) => {
     const r = rig(on);
     await saveSnapshot(r.world.$, CFG, "-work-demo", { sessionId: "s-other", ts: ago(1), skills: {}, mcp: { srv: { tokens: 4000, deferred: 0 } }, agents: {}, memory: {}, system: 0, tools: 0 });
-    const ui = await open($, r, { other: false });
+    const ui = await openTokens($, r, { other: false });
     expect(await ui.find(TEXT(/\*$/))).toBeDefined();
     expect(await ui.find(TEXT(/^\* some schema sizes come from a snapshot of another session$/))).toBeDefined();
     await ui.unmount();
@@ -368,7 +410,33 @@ describe("history tab", () => {
 describe("history figures", () => {
   const tz = 780;
   const shard = (rows: UsageRow[], users: UserRow[] = []): Shard => ({ v: 1, project: "p", files: {}, usage: rows, users, metas: [], compacts: [], snapshots: [] });
-  const meta = { key: "all", at: NOW, repo: "", tzOffsetMin: tz, mcp: [], mcpProxy: false, mcpMissing: 0, unread: 0, partial: false };
+  const meta = { key: "all", at: NOW, repo: "", tzOffsetMin: tz, unread: 0, partial: false };
+
+  test("a 24-hour span buckets by hour, newest first, labelled in the local zone", () => {
+    const rows = [at(req({ id: "a", session: "s", cwd: "/w/a", tokens: { input: 100 } }), NOW - 2 * 3_600_000), at(req({ id: "b", session: "s", cwd: "/w/a", tokens: { input: 100 } }), NOW - 30 * 60_000)];
+    const h = historyOf(summarize([shard(rows)], BUILTIN_PRICES, { span: "24h", nowMs: NOW, tzOffsetMin: tz, usage: true }), meta);
+    expect(h.bucket).toBe("hour");
+    // NOW is 12:00 UTC on the 27th, 01:00 on the 28th at +13:00: the requests are in the 23:00 and 00:00 hours.
+    expect(h.days.map((d) => d.day)).toEqual(["2026-11-28 00", "2026-11-27 23"]);
+    expect(hourWords("2026-11-28 00")).toBe("Nov 28 00:00");
+    expect(hourWords("nonsense")).toBe("nonsense");
+  });
+
+  test("a short session buckets by hour from its first request; a 30-day span stays in days", () => {
+    const rows = [at(req({ id: "a", session: "s", cwd: "/w/a", tokens: { input: 100 } }), NOW - 90 * 60_000), at(req({ id: "b", session: "s", cwd: "/w/a", tokens: { input: 100 } }), NOW - 5 * 60_000)];
+    const s = historyOf(summarize([shard(rows)], BUILTIN_PRICES, { span: "session", nowMs: NOW, tzOffsetMin: tz, sessionId: "s", usage: true }), meta);
+    expect(s.bucket).toBe("hour");
+    expect(s.days.map((d) => d.day)).toEqual(["2026-11-28 00", "2026-11-27 23"]);
+    expect(historyOf(summarize([shard(rows)], BUILTIN_PRICES, { span: "30d", nowMs: NOW, tzOffsetMin: tz, usage: true }), meta).bucket).toBe("day");
+  });
+
+  test("the key tells the span apart; 30 days keeps the old keys", () => {
+    expect(historyKeyOf(false)).toBe("all");
+    expect(historyKeyOf(true)).toBe("repo");
+    expect(historyKeyOf(false, true)).toBe("all+sync");
+    expect(historyKeyOf(false, true, "24h")).toBe("all@24h");
+    expect(historyKeyOf(true, false, "session", "s-1")).toBe("repo@session:s-1");
+  });
 
   test("days run newest first in the local zone and skip days with no request", () => {
     const rows = [at(req({ id: "a", session: "s", cwd: "/w/a", tokens: { input: 100 } }), Date.UTC(2026, 10, 25, 20)), at(req({ id: "b", session: "s", cwd: "/w/a", tokens: { input: 100 } }), Date.UTC(2026, 10, 20, 3))];
@@ -431,6 +499,11 @@ describe("history refresh rules", () => {
     expect(needsRebuild({ ...base, key: "repo" }, idle, want, NOW)).toBe(true);
     expect(needsRebuild(base, idle, want, NOW)).toBe(false);
     expect(needsRebuild(base, idle, { repoOnly: true }, NOW)).toBe(true);
+    // Another span is another key, and a session needs its id first.
+    expect(needsRebuild(base, idle, { repoOnly: false, span: "24h" }, NOW)).toBe(true);
+    expect(needsRebuild({ ...base, key: "all@24h" }, idle, { repoOnly: false, span: "24h" }, NOW)).toBe(false);
+    expect(needsRebuild(base, idle, { repoOnly: false, span: "session", sessionId: "" }, NOW)).toBe(false);
+    expect(needsRebuild({ ...base, key: "all@session:s-1" }, idle, { repoOnly: false, span: "session", sessionId: "s-1" }, NOW + HISTORY_SESSION_INTERVAL_MS)).toBe(true);
   });
 
   test("age limits: five minutes idle, twenty seconds during a scan", () => {

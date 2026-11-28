@@ -95,10 +95,10 @@ claude plugin marketplace remove tally
 
 | 标签 | 键 | 内容 |
 | --- | --- | --- |
-| Session | `1` | 本会话总花费（含 resume 之前的各次启动）、每活跃小时花费、按模型的条形图、四种 token 类型、每个对话的缓存剩余时间和重写成本、钱花在哪里（主会话、各子代理、其他请求）、按 skill 与 MCP server 的归因，以及最重要的一条提示 |
-| Usage | `2` | 本会话、24 小时或 30 天，全部 agent 或某一个：输入按来源，输出（thinking、回复、写文件、命令、agent prompt），缓存读取按内容，缓存写入按 agent 和模型，并给出最大的单次写入及原因 |
+| Session | `1` | 本会话总花费（含 resume 之前的各次启动）、每活跃小时花费、compaction 节省了多少（下限）、按模型的条形图、四种 token 类型、每个对话的缓存剩余时间和重写成本、钱花在哪里（主会话、各子代理、其他请求）、按 skill 与 MCP server 的归因，以及最重要的一条提示 |
+| Tokens | `2` | 为什么花了这么多：本会话、24 小时或 30 天，全部 agent 或某一个：输入按来源，输出（thinking、回复、写文件、命令、agent prompt），缓存读取按内容，缓存写入按 agent 和模型，并给出最大的单次写入及原因，随后是按工具的 context 填充和每个 MCP server 的成本 |
 | Context | `3` | 每次请求带了什么：system、工具、消息、skills、MCP 工具、agents、memory 文件，并标出未使用和 deferred 的项；子代理详情；可查看任一 agent 的 transcript |
-| History | `4` | 30 天：总额、token 类型、按日、按模型、主会话与子代理、子代理类型×模型、按仓库、Top sessions（附 `claude --resume` 命令）、按工具的 context 填充 |
+| Spend | `4` | 钱在何时、花在哪里，跨度与 Tokens 共用（本会话、24 小时或 30 天）：总额、按日（不足一天时按小时）、按模型、主会话与子代理、子代理类型×模型、按仓库、Top sessions（附 `claude --resume` 命令） |
 | Hints | `5` | 本会话以及过去 24 小时或 30 天的提示：标题、金额、摘要、建议操作和证据 |
 | Help | `0` | 数据来源、颜色图例、键位、设置、版本、价格来源与更新日期、未定价的模型 |
 
@@ -117,11 +117,11 @@ claude plugin marketplace remove tally
 | `PgUp`、`PgDn`、方向键 | 滚动比窗口高的停靠标签页；鼠标滚轮同样可用。 |
 | `esc` | 折叠窗口。 |
 | `ctrl+x` 然后 `tab` | 在主屏幕上把键盘交给折叠行或窗口。 |
-| `s` | 时间跨度（Usage、Hints）。 |
-| `r` | 仓库过滤（History、Hints）。 |
-| `t` | 本机或全部电脑（History、Hints，需设置 `syncDir`）。 |
-| `a`、`p`、`n` | 选择 agent、上一个、下一个（Usage、Context）。 |
-| `v`、`b` | 完整文本或 transcript、返回（Usage、Context）。 |
+| `s` | 时间跨度：本会话、24 小时、30 天；Tokens、Spend 和 Hints 共用（Hints 没有本会话）。 |
+| `r` | 仓库过滤（Spend、Hints）。 |
+| `t` | 本机或全部电脑（Spend、Hints，需设置 `syncDir`；Spend 只在 30 天跨度下合并）。 |
+| `a`、`p`、`n` | 选择 agent、上一个、下一个（Tokens、Context）。 |
+| `v`、`b` | 完整文本或 transcript、返回（Tokens、Context）。 |
 | `m` | 展开被截断的列表。 |
 | `y` | 采纳提示（Hints）。 |
 
@@ -159,7 +159,7 @@ claude plugin marketplace remove tally
 
 ### 多台电脑
 
-设置 `syncDir` 后，每台电脑把自己的汇总写到 `<syncDir>/tally/<machineName>.json`，并读入其他电脑的文件。History 和 Hints 会多一个 `t` 键，在“本机”和“所有电脑”之间切换。无法合并的区块在“所有电脑”视图里标注“仅本机”。各 `shareDetail` 级别共享什么，见[隐私](#隐私)。
+设置 `syncDir` 后，每台电脑把自己的汇总写到 `<syncDir>/tally/<machineName>.json`，并读入其他电脑的文件。Spend 和 Hints 会多一个 `t` 键，在“本机”和“所有电脑”之间切换。无法合并的区块在“所有电脑”视图里标注“仅本机”。各 `shareDetail` 级别共享什么，见[隐私](#隐私)。
 
 ### 报告与 Herdr
 
@@ -189,9 +189,9 @@ claude plugin marketplace remove tally
 | --- | --- |
 | `/tally` | 打开窗口，或展开已折叠的窗口。 |
 | `/tally close` | `close`：折叠窗口（等同于 `esc`）。 |
-| `/tally <tab>` | 直接打开到 `session`、`usage`、`context`、`history`、`hints` 或 `help`。 |
+| `/tally <tab>` | 直接打开到 `session`、`tokens`、`context`、`spend`、`hints` 或 `help`（旧写法 `usage`、`history` 仍可用）。 |
 | `/tally 24h` 或 `30d` | 以该时间跨度打开。 |
-| `/tally money dollars` | 设置显示选项；还有 `decimals`、`open`、`row`，词序不限。`money` 还接受 `both`、`dollar`、`cent`，`row` 接受 `show`、`hide`；`tokens` 打开 Usage tab，`settings` 打开 Help。设置缺值或取值不对时，回复会列出可用的值。 |
+| `/tally money dollars` | 设置显示选项；还有 `decimals`、`open`、`row`，词序不限。`money` 还接受 `both`、`dollar`、`cent`，`row` 接受 `show`、`hide`；`settings` 打开 Help。设置缺值或取值不对时，回复会列出可用的值。 |
 | `/tally report [days] [repo]` | 把 markdown 花费报告写到工作目录下的 `api-spend-<日期>.md`。仓库在窗口内没有请求时不写文件，并列出有数据的仓库。 |
 | `/tally sync` | 立即同步一次（需要设置 `syncDir`），并列出看到的电脑。 |
 | `/tally debug` | 显示扫描进度和总数；加 `--json` 以 JSON 输出。 |

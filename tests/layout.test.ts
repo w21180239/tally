@@ -2,7 +2,8 @@ import { describe, expect, test } from "claude-code/testing";
 import { parseArgs } from "../core/args.ts";
 import { openTarget } from "../core/open-target.ts";
 import { emptyLive } from "../core/live-state.ts";
-import { cacheOf, contextWords, glanceLines, leftText, tokensText, untilText, windowData } from "../view/data.ts";
+import { localDayName } from "../core/history.ts";
+import { cacheOf, contextWords, glanceLines, leftText, pastOf, tokensText, untilText, windowData } from "../view/data.ts";
 import type { WindowData } from "../view/data.ts";
 import { footRows } from "../view/foot.tsx";
 import { keyLine, keyLineRuns, keyLineText, spansOf } from "../view/keys.ts";
@@ -59,21 +60,21 @@ describe("layoutOf", () => {
 
 describe("keyLine", () => {
   test("lists only the keys that work on the tab", () => {
-    expect(keyLine("session")).toEqual(["0-5 switch tab", "esc collapse"]);
-    expect(keyLine("usage")).toEqual(["0-5 switch tab", "s time span", "esc collapse"]);
-    expect(keyLine("hints")).toEqual(["0-5 switch tab", "s time span", "r repo filter", "esc collapse"]);
-    expect(keyLine("history")).toEqual(["0-5 switch tab", "r repo filter", "esc collapse"]);
-    expect(keyLine("help")).toEqual(["0-5 switch tab", "esc collapse"]);
+    expect(keyLine("session")).toEqual(["0-5 switch tab", "esc fold"]);
+    expect(keyLine("usage")).toEqual(["0-5 switch tab", "s time span", "esc fold"]);
+    expect(keyLine("hints")).toEqual(["0-5 switch tab", "s time span", "r repo filter", "esc fold"]);
+    expect(keyLine("history")).toEqual(["0-5 switch tab", "s time span", "r repo filter", "esc fold"]);
+    expect(keyLine("help")).toEqual(["0-5 switch tab", "esc fold"]);
   });
 
   test("the body's own keys appear only while it has them", () => {
     const all = keyLine("usage", { agents: true, canView: true, canGoBack: true, more: true, rows: true, machines: true });
-    expect(all).toEqual(["0-5 switch tab", "s time span", "a agent list", "p/n prev/next", "v open agent", "b return", "m full lists", "tab/enter open rows", "esc collapse"]);
+    expect(all).toEqual(["0-5 switch tab", "s time span", "a agent list", "p/n prev/next", "v open agent", "b return", "m full lists", "tab/enter open rows", "esc fold"]);
     // `t` is drawn only on the two tabs that merge other computers' figures, and only with a sync folder.
     expect(keyLine("history", { machines: true })).toContain("t computers");
     expect(keyLine("hints", { machines: true })).toContain("t computers");
     expect(keyLine("history")).not.toContain("t computers");
-    expect(keyLine("hints", { evidence: true, adopt: true })).toEqual(["0-5 switch tab", "s time span", "r repo filter", "tab/enter show evidence", "y adopt", "esc collapse"]);
+    expect(keyLine("hints", { evidence: true, adopt: true })).toEqual(["0-5 switch tab", "s time span", "r repo filter", "tab/enter show evidence", "y adopt", "esc fold"]);
     expect(keyLine("session", { machines: true })).not.toContain("t computers");
   });
 
@@ -108,10 +109,12 @@ describe("keyLine", () => {
     expect(runs.map((r) => r.text).join("")).toBe(keyLineText(200, true, keyLine("usage")));
   });
 
-  test("only Usage cycles three spans; Hints two; the rest none", () => {
+  test("Tokens and Spend cycle the same three spans; Hints two; the rest none", () => {
     expect(spansOf("usage")).toEqual(["session", "24h", "30d"]);
+    expect(spansOf("history")).toEqual(spansOf("usage"));
     expect(spansOf("hints")).toEqual(["24h", "30d"]);
-    expect(spansOf("history")).toEqual([]);
+    expect(spansOf("session")).toEqual([]);
+    expect(spansOf("context")).toEqual([]);
   });
 });
 
@@ -192,6 +195,33 @@ describe("window data and glance", () => {
     expect(lines[1]).toBe("ctx 236k (24%) \u{b7} 5h 6% \u{b7} 7d 22%");
     expect(lines.some((l) => l.startsWith("cache 42m"))).toBe(true);
     for (const l of glanceLines(dataOf(), 20)) expect(l.length).toBeLessThanOrEqual(20);
+  });
+
+  test("the short view carries today's and the month's spend once the Spend figures are held (U7)", () => {
+    expect(glanceLines(dataOf(), 60).some((l) => l.startsWith("today"))).toBe(false);
+    const lines = glanceLines(dataOf({ past: { today: 0.5, month: 12 } }), 60);
+    expect(lines).toContain("today 50\u{a2} \u{b7} 30 days $12.00");
+    // After the cache line, before the chart.
+    expect(lines.findIndex((l) => l.startsWith("today"))).toBe(lines.findIndex((l) => l.startsWith("cache")) + 1);
+  });
+
+  test("pastOf reads the all-repo 30 days only: today's bucket, the total, nothing for another view or a failed build", () => {
+    const tz = -new Date(NOW).getTimezoneOffset();
+    const today = localDayName(NOW, tz);
+    const held = { key: "all", days: [{ day: today, usd: 0.5, tokens: 1, requests: 1 }, { day: "2000-01-01", usd: 9, tokens: 1, requests: 1 }], total: { usd: 9.5, tokens: 2 } };
+    expect(pastOf(held, NOW)).toEqual({ today: 0.5, month: 9.5 });
+    expect(pastOf({ ...held, key: "all+sync" }, NOW)).toEqual({ today: 0.5, month: 9.5 });
+    expect(pastOf({ ...held, days: [] }, NOW)).toEqual({ today: 0, month: 9.5 });
+    for (const key of ["", "repo", "all@24h", "all@session:s-1"]) expect(pastOf({ ...held, key }, NOW)).toBeNull();
+    expect(pastOf({ ...held, failure: { key: "all", why: "x", at: NOW } }, NOW)).toBeNull();
+  });
+
+  test("hourly cost shows from a minute of turn time, not before", () => {
+    const base = { foot: { contextTokens: null, contextWindow: 0, compactAt: null, limits: [], refillUsd: null }, chart: { values: [], bands: [] }, settings: { money: "dollars" as const, decimals: "auto" as const }, now: NOW };
+    const live = emptyLive("s", NOW, 0);
+    live.stepped = { "claude-opus-5-5": { usd: 1, tokens: { input: 0, output: 0, cacheRead: 0, cw5m: 0, cw1h: 0 }, requests: 1 } };
+    expect(windowData({ ...base, live: { ...live, activeMs: 59_000 } }).hourly).toBeNull();
+    expect(windowData({ ...base, live: { ...live, activeMs: 3_600_000 } }).hourly).toBe(1);
   });
 
   test("the foot has the cache row with its refill price, context with compact threshold, and each limit", () => {

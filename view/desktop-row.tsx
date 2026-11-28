@@ -45,9 +45,23 @@ export function rowRuns(d: WindowData): Run[] {
 
 /** The hover card's sections; a short band drops them from the last. */
 export function cardSections(d: WindowData): Section[] {
-  const out: Section[] = [{ label: "Cost", lines: [[{ text: moneyOf(d, d.costUsd), bold: true }, ...(d.cache === null ? [] : [{ text: `${SEP}${cacheWords(d) ?? ""}`, tone: "dim" as const }])]] }];
+  const out: Section[] = [
+    {
+      label: "Cost",
+      lines: [
+        [
+          { text: moneyOf(d, d.costUsd), bold: true },
+          ...(d.hourly == null ? [] : [{ text: `${SEP}${moneyOf(d, d.hourly)} an hour while working`, tone: "dim" as const }]),
+          ...(d.cache === null ? [] : [{ text: `${SEP}${cacheWords(d) ?? ""}`, tone: "dim" as const }]),
+        ],
+      ],
+    },
+  ];
   if (d.models.length > 0) {
     out.push({ label: "Models", lines: [d.models.flatMap(([name, usd], i): Run[] => [...(i === 0 ? [] : [{ text: "  \u{b7}  ", tone: "dim" as const }]), { text: name }, { text: ` ${moneyOf(d, usd)}` }])] });
+  }
+  if (d.past != null) {
+    out.push({ label: "Days", lines: [[{ text: `today ${moneyOf(d, d.past.today)}` }, { text: `${SEP}30 days ${moneyOf(d, d.past.month)}`, tone: "dim" as const }]] });
   }
   if (d.hint !== null) {
     out.push({ label: "Hint", lines: [[{ text: `${HINT_MARK} `, tone: "accent", bold: true }, { text: d.hint.found }, ...(d.hint.saving === null ? [] : [{ text: `${SEP}save ${d.hint.saving}`, tone: "success" as const }])]] });

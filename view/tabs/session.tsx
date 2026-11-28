@@ -30,7 +30,7 @@ export type SessionInput = {
   /** The cut lists are shown whole. */
   more: boolean;
   onMore: (more: boolean) => void;
-  /** A token row was pressed: the Usage tab, on this session. */
+  /** A token row was pressed: the Tokens tab, on this session. */
   onUsage: () => void;
   /** An agent row was pressed: the Context tab. Without it those rows are plain. */
   onContext?: () => void;
@@ -128,13 +128,24 @@ export function drawSession(t: Table, i: SessionInput): SessionDrawing {
   );
   // A session with nothing in it has one state, not a column of empty sections.
   if (tokens === 0 && total === 0 && went.length === 0) {
-    out.push(status(t, "empty", "Nothing has been spent in this session.", "Send a message and this tab fills in. Earlier days are on 4 History."));
+    out.push(status(t, "empty", "Nothing has been spent in this session.", "Send a message and this tab fills in. Earlier days are on 4 Spend."));
     return { rows: out, ctx };
   }
   // A rate over a few seconds of turn time is not a rate.
   const hourly = perActiveHour(live);
   if (hourly !== null && live.activeMs >= 60_000) out.push(<Text key="hourly">{`${headlineOf(d, hourly)} an hour while working`}</Text>);
   if (live.restoredUsd > 0) out.push(<Text key="restored" dimColor>{`${headlineOf(d, live.restoredUsd)} of it came before this launch`}</Text>);
+  // What compaction did for the session, as the index holds it: a floor, never a verdict on compacting.
+  const compaction = data.sessionId === live.sessionId && live.sessionId !== "" ? data.compaction : { count: 0, savedTokens: 0, savedUsd: 0 };
+  if (compaction.count > 0) {
+    const n = `${compaction.count} ${compaction.count === 1 ? "compaction" : "compactions"}`;
+    out.push(
+      <Box key="compaction" flexDirection="row" columnGap={1}>
+        <Text wrap="truncate-end">{compaction.savedUsd > 0 ? `Compaction saved ~${headlineOf(d, compaction.savedUsd)} (${n})` : `Compacted ${n}`}</Text>
+        {compaction.savedUsd > 0 && <Text dimColor>a lower bound</Text>}
+      </Box>,
+    );
+  }
 
   const models = modelSplit(live);
   if (models.length > 0) out.push(...modelBar(t, d, models, i.cols));
@@ -142,7 +153,7 @@ export function drawSession(t: Table, i: SessionInput): SessionDrawing {
 
   if (tokens > 0) {
     const top = main.reduce((a, k) => Math.max(a, k.usd), 0);
-    out.push(section(t, g, { key: "tokens", name: "Billed kinds", note: "press a row for Usage", tokens: tokensText(tokens), money: money(main.reduce((a, k) => a + k.usd, 0)) }));
+    out.push(section(t, g, { key: "tokens", name: "Billed kinds", note: "press a row for Tokens", tokens: tokensText(tokens), money: money(main.reduce((a, k) => a + k.usd, 0)) }));
     for (const k of kinds) {
       const isSub = k.kind === "cw1h" || k.kind === "cw5m";
       out.push(row(t, g, { key: `kind-${k.kind}`, label: KIND_LABEL[k.kind], indent: isSub, tokens: tokensText(k.tokens), money: money(k.usd), ...(isSub ? { quiet: true } : { share: top > 0 ? k.usd / top : 0 }), onPress: i.onUsage }));

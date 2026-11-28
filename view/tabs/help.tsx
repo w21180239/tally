@@ -43,7 +43,7 @@ const percent = (share: number): string => `${Math.round(share * 100)}%`;
 
 const SOURCES = [
   "Transcripts: the session files in your Claude config folder, read by a background scan. tally never writes a transcript.",
-  "Index: tally's own copy of each request's token counts, kept beside the config. The History, Usage and Hints tabs read it.",
+  "Index: tally's own copy of each request's token counts, kept beside the config. The Spend, Tokens and Hints tabs read it.",
   "This session: counted live as each request finishes, so Session shows it before the index does.",
   "Prices: a built-in table, refreshed weekly from the Anthropic pricing page unless priceUpdate is off. That page is the only network call tally makes.",
   "Amounts are list-price API equivalents of your token use, not an invoice.",

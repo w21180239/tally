@@ -1,36 +1,32 @@
-// The figures behind the History tab: a month of every project's index, built off the draw path, and how far the
-// transcript scan has got. A project with no usable index is unread, never empty. The tab draws what the atoms last
-// held and asks for a rebuild when they are stale; during a scan, progress and figures are checked every few seconds
-// for as long as the tab keeps being drawn.
+// The figures behind the Spend tab (History): the span's rows of every project's index, built off the draw path, and
+// how far the transcript scan has got. A project with no usable index is unread, never empty. The tab draws what the
+// atoms last held and asks for a rebuild when they are stale; during a scan, progress and figures are checked every
+// few seconds for as long as the tab keeps being drawn.
 import { atom, read, update } from "claude-code";
 import type { EngineInterface } from "claude-code";
-import { mcpSchemaSteps, nearestSnapshot } from "../core/breakdown.ts";
-import type { BreakdownSnapshot } from "../core/breakdown.ts";
 import { dict } from "../core/dict.ts";
-import { EMPTY_HISTORY, historyKeyOf, historyOf, mcpCosts, scanOf } from "../core/history.ts";
+import { EMPTY_HISTORY, historyKeyOf, historyOf, scanOf } from "../core/history.ts";
 import type { HistoryData, HistoryMeta, MergedHistory, ScanState } from "../core/history.ts";
 import { repoOf } from "../core/path.ts";
-import { projectNameOf } from "../core/plan-scan.ts";
-import type { PriceTable } from "../core/pricing.ts";
 import type { Shard } from "../core/shard.ts";
-import { drainAsync, STEP_ROWS } from "../core/steps.ts";
-import { repoFor, summarizeAsync, UNKNOWN_REPO } from "../core/summary.ts";
-import type { Summary } from "../core/summary.ts";
+import { summarizeAsync, UNKNOWN_REPO } from "../core/summary.ts";
+import type { Span, Summary } from "../core/summary.ts";
 import { mergeMachines } from "../core/sync.ts";
-import type { UsageRow } from "../core/types.ts";
+import { projectNameOf } from "../core/plan-scan.ts";
 import { locate } from "./locate.ts";
 import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
 import { readProgress } from "./progress.ts";
 import { listProjects } from "./scanner.ts";
 import { makeSlicer } from "./slicer.ts";
-import { lastSnapshot, loadSnapshots } from "./snapshot.ts";
 import { loadRemotes } from "./sync.ts";
+import { sessionShard } from "./usage-view.ts";
 import { attempt, inBackground, invalidateWindow, settingsNow } from "./window.ts";
 
-/** Figures older than this are rebuilt at the next draw of the tab; during a scan, sooner. */
+/** Figures older than this are rebuilt at the next draw of the tab; during a scan, sooner; the live session's, too. */
 export const HISTORY_INTERVAL_MS = 300_000;
 export const HISTORY_SCAN_INTERVAL_MS = 20_000;
+export const HISTORY_SESSION_INTERVAL_MS = 10_000;
 /** A failed build is not retried sooner than this. */
 export const HISTORY_RETRY_MS = 30_000;
 /** The progress file is read again at a draw this long after the last read. */
@@ -42,7 +38,7 @@ const FAILURE_CHARS = 80;
 export type ScanView = { at: number; scan: ScanState | null };
 export const EMPTY_SCAN_VIEW: ScanView = { at: 0, scan: null };
 
-const historyAtom = atom({ plugin: "tally", key: "history" } as const, EMPTY_HISTORY, { shape: "history-2" });
+const historyAtom = atom({ plugin: "tally", key: "history" } as const, EMPTY_HISTORY, { shape: "history-3" });
 const scanAtom = atom({ plugin: "tally", key: "history-scan" } as const, EMPTY_SCAN_VIEW, { shape: "history-scan-1" });
 
 export function readHistory($: EngineInterface): Promise<HistoryData> {
@@ -53,54 +49,29 @@ export function readScanView($: EngineInterface): Promise<ScanView> {
 }
 
 type Tick = () => Promise<void>;
-/** `sync`: a sync folder is set, so the build also merges the other computers' files. */
-type Want = { repoOnly: boolean; sync?: boolean };
+/**
+ * What the tab asks for. `sync`: a sync folder is set, so the 30-day build also merges the other computers' files.
+ * `span` is 30d when left out; a session span needs `sessionId`.
+ */
+export type Want = { repoOnly: boolean; sync?: boolean; span?: Span; sessionId?: string };
+
+export const wantKey = (w: Want): string => historyKeyOf(w.repoOnly, w.sync, w.span, w.sessionId);
 
 /** True when the figures need a rebuild: another key, past their age limit, or built mid-scan and the scan is over. */
 export function needsRebuild(data: Pick<HistoryData, "key" | "at" | "partial" | "failure">, scan: Pick<ScanView, "scan">, want: Want, now: number): boolean {
-  const key = historyKeyOf(want.repoOnly, want.sync);
+  const key = wantKey(want);
+  if (want.span === "session" && (want.sessionId ?? "") === "") return false;
   if (data.failure?.key === key && now - data.failure.at < HISTORY_RETRY_MS) return false;
   if (data.key !== key) return true;
-  if (now - data.at >= (scan.scan !== null ? HISTORY_SCAN_INTERVAL_MS : HISTORY_INTERVAL_MS)) return true;
+  const limit = scan.scan !== null ? HISTORY_SCAN_INTERVAL_MS : want.span === "session" ? HISTORY_SESSION_INTERVAL_MS : HISTORY_INTERVAL_MS;
+  if (now - data.at >= limit) return true;
   return data.partial && scan.scan === null;
 }
 
 /** True when the draw should queue a check: a rebuild is due, or the progress file has not been read lately. */
 export function needsHistory(data: Pick<HistoryData, "key" | "at" | "partial" | "failure">, scan: ScanView, want: Want, now: number): boolean {
   if (needsRebuild(data, scan, want, now)) return true;
-  return data.failure?.key !== historyKeyOf(want.repoOnly, want.sync) && now - scan.at >= SCAN_CHECK_MS;
-}
-
-// Schema cost over the main-thread rows of each session, within the span and for the repo.
-async function schemaCosts(prices: PriceTable, shards: Shard[], snapsOf: (project: string) => BreakdownSnapshot[], from: number, to: number, repo: string, tick: Tick): Promise<{ usd: Record<string, number>; proxy: boolean; missing: number }> {
-  const usd = dict<number>();
-  let proxy = false;
-  let missing = 0;
-  for (const shard of shards) {
-    const snaps = snapsOf(shard.project);
-    const bySession = new Map<string, UsageRow[]>();
-    for (let i = 0; i < shard.usage.length; i++) {
-      if (i % STEP_ROWS === STEP_ROWS - 1) await tick();
-      const r = shard.usage[i]!;
-      if (r.synthetic || r.sidechain || r.ts < from || r.ts > to) continue;
-      if (repo !== "" && repoFor(r) !== repo) continue;
-      const list = bySession.get(r.sessionId);
-      if (list === undefined) bySession.set(r.sessionId, [r]);
-      else list.push(r);
-    }
-    for (const [id, rows] of bySession) {
-      await tick();
-      const near = nearestSnapshot(snaps, rows[0]!.ts, id);
-      if (near === null) {
-        missing++;
-        continue;
-      }
-      if (near.proxy) proxy = true;
-      const part = await drainAsync(mcpSchemaSteps(rows, near.snap, prices), tick);
-      for (const [server, n] of Object.entries(part)) usd[server] = (usd[server] ?? 0) + n;
-    }
-  }
-  return { usd, proxy, missing };
+  return data.failure?.key !== wantKey(want) && now - scan.at >= SCAN_CHECK_MS;
 }
 
 let running: Promise<void> | undefined;
@@ -126,42 +97,35 @@ async function mergedOf($: EngineInterface, summary: Summary, meta: HistoryMeta,
   };
 }
 
-async function build($: EngineInterface, repoOnly: boolean, sync: boolean, now: number, scanning: boolean): Promise<void> {
+async function build($: EngineInterface, want: Want, now: number, scanning: boolean): Promise<void> {
+  const span = want.span ?? "30d";
+  const sync = want.sync === true;
   const loc = await locate($);
   const prices = await currentPrices($);
   const slicer = makeSlicer($);
   const tick = () => slicer.check();
   const tzOffsetMin = -new Date(now).getTimezoneOffset();
   const cwd = await $.session.cwd();
-  const repo = repoOnly ? repoOf(cwd) || UNKNOWN_REPO : "";
+  const repo = want.repoOnly ? repoOf(cwd) || UNKNOWN_REPO : "";
   const shards: Shard[] = [];
   let unread = 0;
-  for (const p of await listProjects($, loc.roots)) {
-    await tick();
-    const shard = await loadProject($, loc.cfg, p, now, tick);
-    if (shard === null) unread++;
-    else shards.push(shard);
+  if (span === "session") {
+    shards.push(await sessionShard($, loc.cfg, projectNameOf(cwd), want.sessionId ?? "", now, tick));
+  } else {
+    for (const p of await listProjects($, loc.roots)) {
+      await tick();
+      const shard = await loadProject($, loc.cfg, p, now, tick);
+      if (shard === null) unread++;
+      else shards.push(shard);
+    }
   }
-  const summary = await summarizeAsync(shards, prices, { span: "30d", nowMs: now, tzOffsetMin, usage: true, ...(repoOnly && { repo }) }, tick);
+  const summary = await summarizeAsync(shards, prices, { span, nowMs: now, tzOffsetMin, usage: true, ...(want.repoOnly && { repo }), ...(span === "session" && { sessionId: want.sessionId ?? "" }) }, tick);
 
-  const snaps = new Map<string, BreakdownSnapshot[]>();
-  for (const shard of shards) {
-    await tick();
-    snaps.set(shard.project, await loadSnapshots($, loc.cfg, shard.project, now, tick));
-  }
-  const mine = lastSnapshot();
-  if (mine !== undefined) {
-    const own = snaps.get(projectNameOf(cwd));
-    if (own !== undefined && !own.some((s) => s.sessionId === mine.sessionId && s.ts === mine.ts)) own.push(mine);
-  }
-  const schema = await schemaCosts(prices, shards, (p) => snaps.get(p) ?? [], summary.from, summary.to, repo, tick);
-  const mcp = mcpCosts(schema.usd, summary.mcpReread, summary.byMcp);
-
-  const meta: HistoryMeta = { key: historyKeyOf(repoOnly, sync), at: now, repo, tzOffsetMin, mcp, mcpProxy: schema.proxy, mcpMissing: schema.missing, unread, partial: scanning };
+  const meta: HistoryMeta = { key: wantKey(want), at: now, repo, tzOffsetMin, unread, partial: scanning };
   const data = historyOf(summary, meta);
-  // Numbers files carry no repo filter, so a one-repo view is never merged.
+  // Numbers files hold days and no repo filter, so only the all-repo 30 days are merged.
   let all: MergedHistory | undefined;
-  if (sync && !repoOnly) {
+  if (sync && !want.repoOnly && span === "30d") {
     try {
       all = await mergedOf($, summary, meta, tick);
     } catch (err) {
@@ -185,14 +149,14 @@ async function lookAtScan($: EngineInterface, now: number): Promise<boolean> {
 /** Rebuilds the figures when `needsRebuild` says so (or `force`); one build runs at a time. Never rejects. */
 export async function refreshHistory($: EngineInterface, want: Want, force = false): Promise<void> {
   try {
-    const key = historyKeyOf(want.repoOnly, want.sync);
+    const key = wantKey(want);
     while (running !== undefined) await running;
     const now = await $.clock.now();
     const scan = await read($, scanAtom);
     const data = await read($, historyAtom);
     if (!force && !needsRebuild(data, scan, want, now)) return;
     // No await between the checks above and this line: only one build starts.
-    running = build($, want.repoOnly, want.sync === true, now, scan.scan !== null)
+    running = build($, want, now, scan.scan !== null)
       .catch(async (err: unknown) => {
         const why = (err instanceof Error ? err.message : String(err)).split(/\r?\n/, 1)[0]!.slice(0, FAILURE_CHARS);
         try {
@@ -213,27 +177,41 @@ export async function refreshHistory($: EngineInterface, want: Want, force = fal
 }
 
 let wantedAt = 0;
+/** A check is running; a draw during it leaves the rest to it. */
 let pending = false;
+/** The next check is booked for SCAN_CHECK_MS; a draw before then may still start one of its own. */
+let booked = false;
+// What the last draw asked for: a check in flight or booked serves this, not the span it was started for.
+let latest: Want = { repoOnly: false };
 
 // One check of the scan and the figures; the next is booked if a scan is still running and the tab is on screen.
-async function poll($: EngineInterface, want: Want): Promise<void> {
+async function poll($: EngineInterface): Promise<void> {
+  pending = true;
   try {
     const changed = await lookAtScan($, await $.clock.now());
-    await refreshHistory($, want);
+    const used = wantKey(latest);
+    await refreshHistory($, latest);
+    // A draw during the build asked for another span or repo: build that too, now.
+    if (wantKey(latest) !== used) await refreshHistory($, latest);
     if (changed) invalidateWindow($);
   } finally {
     pending = false;
   }
   const scan = await read($, scanAtom);
-  if (scan.scan === null || (await $.clock.now()) - wantedAt > WANTED_MS) return;
-  pending = true;
-  $.clock.after(SCAN_CHECK_MS, () => attempt($, () => poll($, want)));
+  if (scan.scan === null || (await $.clock.now()) - wantedAt > WANTED_MS || booked) return;
+  booked = true;
+  $.clock.after(SCAN_CHECK_MS, () => {
+    booked = false;
+    if (!pending) attempt($, () => poll($));
+  });
 }
 
 /** Called from the draw: queues a check off the draw path when one is due and none is pending. */
 export function wantHistory($: EngineInterface, data: HistoryData, scan: ScanView, want: Want, now: number): void {
   wantedAt = now;
+  latest = want;
   if (pending || !needsHistory(data, scan, want, now)) return;
+  // Set here too, not only in the check: a second draw before the background call starts must not queue another.
   pending = true;
-  inBackground($, () => poll($, want));
+  inBackground($, () => poll($));
 }

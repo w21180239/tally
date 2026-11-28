@@ -264,7 +264,7 @@ describe("window: layouts", () => {
     const tiny: Omit<RenderInput<"Pane">, "surface"> = { ...INLINE_NARROW, props: { ...INLINE_NARROW.props, scroll: { offset: 0, bodyRows: 5 } } };
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...tiny });
     expect(await ui.find({ key: "short" })).toBeDefined();
-    expect(await ui.find(TEXT(/a taller terminal shows the tabs/))).toBeDefined();
+    expect(await ui.find(TEXT(/taller (or \/tui fullscreen )?for tabs/))).toBeDefined();
     await ui.unmount();
   });
 
@@ -462,6 +462,8 @@ describe("window: the 8-hour chart", () => {
     const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
     const fold = await band.find({ type: "Button", key: "tally-fold" });
     expect(fold?.props.label).toContain("\u{b7}\u{b7}\u{b7}\u{2582}\u{b7}\u{b7}\u{2585}\u{b7}");
+    // No `[ ]` around the line (U19): it is as light as the hints line.
+    expect(fold?.props.plain).toBe(true);
     await band.unmount();
     const short = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...{ ...INLINE_NARROW, props: { ...INLINE_NARROW.props, scroll: { offset: 0, bodyRows: 5 } } } });
     expect(await short.find(TEXT(/^8h \u{b7}\u{b7}\u{b7}\u{2582}\u{b7}\u{b7}\u{2585}\u{b7}$/u))).toBeDefined();

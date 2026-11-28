@@ -10,9 +10,9 @@ export type TabFaces = {
   fold: string;
 };
 
-const SHORT: Record<TabId, string> = { session: "Sess", usage: "Usage", context: "Ctx", history: "Hist", hints: "Hints", help: "Help" };
-const TINY: Record<TabId, string> = { session: "Ses", usage: "Use", context: "Ctx", history: "His", hints: "Hnt", help: "Hlp" };
-const NANO: Record<TabId, string> = { session: "Se", usage: "Us", context: "Cx", history: "Hi", hints: "Hn", help: "Hl" };
+const SHORT: Record<TabId, string> = { session: "Sess", usage: "Toks", context: "Ctx", history: "Spend", hints: "Hints", help: "Help" };
+const TINY: Record<TabId, string> = { session: "Ses", usage: "Tok", context: "Ctx", history: "Spn", hints: "Hnt", help: "Hlp" };
+const NANO: Record<TabId, string> = { session: "Se", usage: "To", context: "Cx", history: "Sp", hints: "Hn", help: "Hl" };
 
 const FOLD_FULL = "\u{00d7} fold";
 const FOLD_SHORT = "\u{00d7}";
@@ -29,7 +29,7 @@ function widthOf(faces: Record<TabId, string>, fold: string): number {
 /** The faces for `cols` cells with `count` hints: the first set that fits one row, else the smallest. */
 export function tabFaces(cols: number, count: number): TabFaces {
   const names = (set: Record<TabId, string>): Record<TabId, string> => ({ ...set, hints: counted(set.hints, count) });
-  const full = names({ session: "Session", usage: "Usage", context: "Context", history: "History", hints: "Hints", help: "Help" });
+  const full = names({ session: "Session", usage: "Tokens", context: "Context", history: "Spend", hints: "Hints", help: "Help" });
   const tries: Array<[Record<TabId, string>, string]> = [
     [full, FOLD_FULL],
     [full, FOLD_SHORT],

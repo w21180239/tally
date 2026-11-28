@@ -423,9 +423,25 @@ describe("the t switch on History", () => {
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     await ui.press({ key: "tab-history" });
+    await ui.press({ key: "span-30d" });
     await r.clock.settle();
     return ui;
   }
+
+  test("another span says All computers needs the 30 days and shows this computer's figures", { options: { ...OPTS } }, async ($, on) => {
+    const r = rig(on);
+    // The session's own project, so the session span has figures to draw the note over.
+    await seedProject(r.world, "-work-zq-secret-repo", demoUsage());
+    const ui = await openHistory($, r, [remoteFile()]);
+    await ui.press({ key: "machines-all" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/^All computers \u{b7} box-a, box-b$/u))).toBeDefined();
+    await ui.press({ key: "span-session" });
+    await r.clock.settle();
+    expect(await ui.find(TEXT(/^All computers needs the 30 days span/))).toBeDefined();
+    expect(await ui.find(TEXT(/^All computers \u{b7}/u))).toBeUndefined();
+    await ui.unmount();
+  });
 
   test("t moves the total from this computer's to the merged figure and back", { options: { ...OPTS } }, async ($, on) => {
     const r = rig(on);
@@ -453,10 +469,9 @@ describe("the t switch on History", () => {
     const ui = await openHistory($, r, [remoteFile()]);
     await ui.press({ key: "machines-all" });
     await r.clock.settle();
-    // A numbers file carries no repo, session or context fill; billed kinds and MCP cost never travel.
-    expect((await ui.findAll(TEXT(/This computer only/))).length).toBe(3);
+    // A numbers file carries no repo or session rows.
+    expect((await ui.findAll(TEXT(/This computer only/))).length).toBe(2);
     expect(await ui.find(TEXT(/^This computer only$/))).toBeDefined();
-    expect(await ui.find(TEXT(/^tokens and spend \u{b7} This computer only$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^press a row to resume \u{b7} This computer only$/u))).toBeDefined();
     // The blocks every file feeds carry no note.
     expect(await ui.find(TEXT(/^newest first/))).toBeDefined();

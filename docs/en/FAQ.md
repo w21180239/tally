@@ -42,7 +42,7 @@
 
 ## Several machines
 
-**How do I set up sync?** On each machine set `syncDir` to a folder that something already syncs (a private git repository, OneDrive, iCloud, Syncthing) and give each machine a different `machineName`. Press `t` on History or Hints to switch between this computer and all computers.
+**How do I set up sync?** On each machine set `syncDir` to a folder that something already syncs (a private git repository, OneDrive, iCloud, Syncthing) and give each machine a different `machineName`. Press `t` on Spend or Hints to switch between this computer and all computers.
 
 **What leaves my machine?** At the default `shareDetail` of `numbers`: hourly totals by model with token counts and cost, and repositories only as irreversible aliases. `repos` adds names; `full` adds session titles and hint evidence. Keep any machine whose repository names or titles are private at `numbers`.
 

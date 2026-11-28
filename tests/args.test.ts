@@ -113,6 +113,10 @@ describe("parseArgs", () => {
 
   test("the old word tokens means the Usage tab", () => {
     expect(parseArgs("tokens")).toEqual({ set: {}, tab: "usage", unknown: [] });
+    // Spend is the History tab's name; the old words keep working.
+    expect(parseArgs("spend")).toEqual({ set: {}, tab: "history", unknown: [] });
+    expect(parseArgs("history 24h")).toEqual({ set: {}, tab: "history", span: "24h", unknown: [] });
+    expect(parseArgs("usage")).toEqual({ set: {}, tab: "usage", unknown: [] });
     expect(parseArgs("tokens 24h")).toEqual({ set: {}, tab: "usage", span: "24h", unknown: [] });
   });
 

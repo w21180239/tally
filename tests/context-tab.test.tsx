@@ -592,7 +592,7 @@ describe("context pieces", () => {
   });
 
   test("the key line names v, b and the agent keys only when the tab has them", () => {
-    expect(keyLine("context")).toEqual(["0-5 switch tab", "esc collapse"]);
+    expect(keyLine("context")).toEqual(["0-5 switch tab", "esc fold"]);
     const line = keyLine("context", { agents: true, canView: true, canGoBack: true, more: true });
     expect(line).toContain("a agent list");
     expect(line).toContain("v open agent");

@@ -23,6 +23,10 @@ export type DetailRow = {
   full?: string;
   /** Stable identity where the label is not unique or not steady (a big write: agent and time). */
   id?: string;
+  /** What the label is, for the `redactEvidence` display: a shell command or a file path. */
+  redact?: "command" | "path";
+  /** A big write's label without the text behind its cause, for the `redactEvidence` display. */
+  bare?: string;
 };
 
 export type Amount = { tokens: number; usd: number };
@@ -387,7 +391,7 @@ function readRows(src: Summary, agent: string | undefined, opts: DetailOpts): De
     for (const f of items) {
       // A part re-read less than once in all is noise.
       if ((shown.length > 0 && f === main) || f.rereadTokens < 1) continue;
-      shown.push({ label: `  ${key === "fixed" ? itemName(f) : f.label}`, tokens: f.rereadTokens, usd: f.rereadUsd, estimated: true });
+      shown.push({ label: `  ${key === "fixed" ? itemName(f) : f.label}`, tokens: f.rereadTokens, usd: f.rereadUsd, estimated: true, ...(key === "bash" && { redact: "command" as const }), ...(key === "read" && { redact: "path" as const }) });
     }
     rows.push(...shown.slice(0, limit));
   }
@@ -413,8 +417,9 @@ const spanText = (ms: number): string => {
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${pad(m % 60)}m`;
 };
 
-/** A write's cause in words. */
-export function whyText(w: Pick<BigWrite, "why" | "pauseMs" | "detail">): string {
+/** A write's cause in words; `bare` leaves out the text behind a message, notice or tool output (the `redactEvidence` form). */
+export function whyText(w: Pick<BigWrite, "why" | "pauseMs" | "detail">, bare = false): string {
+  const tail = (): string => (bare ? "" : `: ${clip(w.detail ?? "", 40)}`);
   switch (w.why) {
     case "first":
       return "first request of the conversation";
@@ -423,11 +428,11 @@ export function whyText(w: Pick<BigWrite, "why" | "pauseMs" | "detail">): string
     case "pause":
       return `cache lapsed after a ${spanText(w.pauseMs ?? 0)} pause`;
     case "prompt":
-      return `message: ${clip(w.detail ?? "", 40)}`;
+      return `message${tail()}`;
     case "message":
-      return `incoming notice: ${clip(w.detail ?? "", 40)}`;
+      return `incoming notice${tail()}`;
     case "tool":
-      return `tool output: ${clip(w.detail ?? "", 40)}`;
+      return `tool output${tail()}`;
     case "reply":
       return "the previous reply";
   }
@@ -452,6 +457,7 @@ export function writeParts(src: Pick<Summary, "usage">, agent: string | undefine
       const who = agent === undefined && b.agent !== MAIN_AGENT ? ` ${agentLabel(b.agent)}` : "";
       return {
         label: `${stamp(b.ts, opts.tzOffsetMin ?? 0)}${who} \u{b7} ${whyText(b)}`,
+        bare: `${stamp(b.ts, opts.tzOffsetMin ?? 0)}${who} \u{b7} ${whyText(b, true)}`,
         tokens: b.tokens,
         usd: b.usd,
         estimated: false,
@@ -477,7 +483,8 @@ export function usageDetail(src: Summary, kind: UsageKind, agent?: string, opts:
     const rows: DetailRow[] = [];
     for (const g of mergeGroups(slices.map(([, s]) => s.output))) {
       rows.push({ label: OUTPUT_LABEL[g.key as OutputKey] ?? g.key, tokens: g.tokens, usd: g.usd, estimated: true });
-      for (const it of g.items.sort(byUsd).slice(0, limit)) rows.push({ label: `  ${it.label}`, tokens: it.tokens, usd: it.usd, estimated: true, ...(it.full !== undefined && it.full !== it.label && { full: it.full }) });
+      const redact = g.key === "command" ? "command" : g.key === "write" ? "path" : undefined;
+      for (const it of g.items.sort(byUsd).slice(0, limit)) rows.push({ label: `  ${it.label}`, tokens: it.tokens, usd: it.usd, estimated: true, ...(it.full !== undefined && it.full !== it.label && { full: it.full }), ...(redact !== undefined && { redact }) });
     }
     return rows;
   }
