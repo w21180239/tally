@@ -2,6 +2,10 @@
 
 Release notes are cut from this file. Newest first.
 
+## Unreleased
+
+- Fixed the window coming back every session after it was closed: a fold the store refused (a locked file on Windows, a full disk) is now logged and written again, and the person's close always counts. The pane has a fold button, and on the main screen, where Claude Code reports no clicks, the folded line names `/tally to open`.
+
 ## 1.0.0 - 2026-11-28
 
 First release.

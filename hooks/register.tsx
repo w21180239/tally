@@ -16,7 +16,7 @@ import { REPORT_TOOL_FULL, argsOf, registerReportTool, reportCommand, reportText
 import { resetSync, runSync, syncSoon } from "../engine/sync.ts";
 import { syncExtra } from "../engine/sync-extra.ts";
 import { readLive, startLive, updatePrices, wireLive } from "../engine/live.ts";
-import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
+import { COMMAND, PANE_ID, applySettings, invalidateWindow, keepFolded, logIssue, openWindow, readView, restoreWindow, startFeeds, useSettings } from "../engine/window.ts";
 import { startSessionView } from "../engine/session-view.ts";
 import { startTimers } from "../engine/timers.ts";
 import { drawBand, drawPane } from "../view/app.tsx";
@@ -126,8 +126,14 @@ export const register: Register = (on, options) => {
 
   // The person's Esc or close mark folds the window to its line above the prompt; a press on the line or /tally brings it back.
   on("ui.close", { id: PANE_ID }, async ($, e, next) => {
-    // Our own fold set its mode before it closed the pane.
-    if ((await readView($)).mode !== "folded" && e.origin.kind !== "unload") await keepFolded($);
+    // Whatever goes wrong here, the close itself goes through: a hook that fails is skipped, and the fold would be lost silently.
+    try {
+      // The person's close always counts, even with the view already folded (the first-message fold sets only the view).
+      // Our own fold, origin plugin, set its mode before it closed the pane.
+      if (e.origin.kind === "person" || (e.origin.kind !== "unload" && (await readView($)).mode !== "folded")) await keepFolded($);
+    } catch (err) {
+      logIssue($, err);
+    }
     return next(e);
   });
 

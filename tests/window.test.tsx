@@ -493,6 +493,83 @@ describe("window: open, fold, remember", () => {
   });
 });
 
+/** The main-screen layout (no fullscreen): the engine reports no clicks there, so the line says how to open it. */
+const BAND_MAIN: Omit<RenderInput<"AbovePrompt">, "surface"> = { ...BAND, viewport: { columns: 200, rows: 50, isFullscreen: false } };
+
+describe("window: the person's close", () => {
+  test("a refused store write is logged by tally itself, not left to the engine skipping the hook; the close goes through", { ...CLOSER }, async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    r.failSet.v = true;
+    await $.command.run(SHUT);
+    expect(r.closed).toEqual([PLUGIN]);
+    expect(r.logs.some((l) => l.startsWith("tally:"))).toBe(true);
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect(await band.find({ key: "tally-fold" })).toBeDefined();
+    await band.unmount();
+  });
+
+  test("a fold the store refused is written again shortly after, so the next session starts folded", { ...CLOSER }, async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    r.failSet.v = true;
+    await $.command.run(SHUT);
+    expect(r.stored.get("mode")).toBeUndefined();
+    r.failSet.v = false;
+    await r.clock.advance(5_000);
+    expect(r.stored.get("mode")).toBe("folded");
+  });
+
+  test("a retry never overwrites a window the person opened again meanwhile", { ...CLOSER }, async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    r.failSet.v = true;
+    await $.command.run(SHUT);
+    r.failSet.v = false;
+    await $.command.run(run(""));
+    expect(r.stored.get("mode")).toBe("open");
+    await r.clock.advance(5_000);
+    expect(r.stored.get("mode")).toBe("open");
+  });
+
+  test("the pane has a fold button that folds it, keeps it folded for the next session and shows the line", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    const fold = await ui.find({ type: "Button", key: "tally-pane-fold" });
+    expect(fold).toBeDefined();
+    await ui.press({ key: "tally-pane-fold" });
+    await r.clock.settle();
+    expect(r.closed).toEqual([PLUGIN]);
+    expect(r.stored.get("mode")).toBe("folded");
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect(await band.find({ type: "Button", key: "tally-fold" })).toBeDefined();
+    await band.unmount();
+    await ui.unmount();
+  });
+
+  test("the folded line opens the window when pressed, and is pressable with the keys on the main screen", async ($, on) => {
+    const r = rig(on, { mode: "folded" });
+    await start($);
+    await r.clock.settle();
+    const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND_MAIN });
+    // The main screen reports no clicks: the line names the command that opens the window.
+    expect(await band.find(TEXT(/\/tally to open/))).toBeDefined();
+    expect((await band.find({ key: "tally-fold" }))?.props.autoFocus).toBe(true);
+    await band.press({ key: "tally-fold" });
+    expect(r.opened).toHaveLength(1);
+    expect(r.stored.get("mode")).toBe("open");
+    await band.unmount();
+    const full = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
+    expect(await full.find(TEXT(/\/tally to open/))).toBeUndefined();
+    await full.unmount();
+  });
+});
+
 describe("/tally routing", () => {
   test("a tab and span open the window there and are remembered", async ($, on) => {
     const r = rig(on, { mode: "folded" });

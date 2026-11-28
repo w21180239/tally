@@ -104,13 +104,16 @@ export function inBackground($: EngineInterface, work: () => Promise<unknown>): 
 
 /** Runs `work` now without awaiting it; a rejection goes to the debug log, so a button press never leaves one unhandled. */
 export function attempt($: EngineInterface, work: () => Promise<unknown>): void {
-  work().catch((err: unknown) => {
-    try {
-      $.ui.log(`tally: ${err instanceof Error ? err.message : String(err)}`, { to: "debug" });
-    } catch {
-      /* nothing to log to */
-    }
-  });
+  work().catch((err: unknown) => logIssue($, err));
+}
+
+/** Sends a failure to the debug log; a hook or press never rethrows it. */
+export function logIssue($: EngineInterface, err: unknown): void {
+  try {
+    $.ui.log(`tally: ${err instanceof Error ? err.message : String(err)}`, { to: "debug" });
+  } catch {
+    /* nothing to log to */
+  }
 }
 
 function redraw($: EngineInterface): void {
@@ -172,10 +175,45 @@ export async function foldWindow($: EngineInterface): Promise<void> {
   await $.ui.close({ id: PANE_ID });
 }
 
-/** The person's Esc or close mark: fold, and start folded next session. */
+/** A refused fold write is tried again this many times, this far apart. */
+export const FOLD_RETRIES = 3;
+export const FOLD_RETRY_MS = 2_000;
+
+/**
+ * Writes the folded mode to `$.store`. The store is one JSON file shared by every window, and a write can be refused
+ * (a file another process holds open on Windows, a full disk). That is logged and tried again later, so the person's
+ * close is not lost and the next session does not open the window again. Never throws.
+ */
+export async function rememberFolded($: EngineInterface, left = FOLD_RETRIES): Promise<void> {
+  try {
+    await $.store.set(MODE_KEY, "folded");
+  } catch (err) {
+    logIssue($, err);
+    if (left <= 0) return;
+    $.clock.after(FOLD_RETRY_MS, () =>
+      attempt($, async () => {
+        // Opened again meanwhile: that choice stands.
+        if ((await readView($)).mode !== "folded" || (await $.store.get(MODE_KEY)) === "open") return;
+        await rememberFolded($, left - 1);
+      }),
+    );
+  }
+}
+
+/** The person's Esc or close mark: fold, and start folded next session. Never throws. */
 export async function keepFolded($: EngineInterface): Promise<void> {
-  await changeView($, (v) => ({ ...v, mode: "folded", hasTipped: true }));
-  await $.store.set(MODE_KEY, "folded");
+  try {
+    await changeView($, (v) => ({ ...v, mode: "folded", hasTipped: true }));
+  } catch (err) {
+    logIssue($, err);
+  }
+  await rememberFolded($);
+}
+
+/** The pane's fold button: the same as the person's close mark, for the screens that report no clicks on it. */
+export async function foldByHand($: EngineInterface): Promise<void> {
+  await keepFolded($);
+  await $.ui.close({ id: PANE_ID });
 }
 
 /**

@@ -49,14 +49,28 @@ const ROLE_TONE: Record<FoldPart["role"], { tone?: Tone; bold?: boolean }> = {
   cold: { tone: "error" },
 };
 
-/** The band's folded line: right-aligned, one Button whose press runs `onOpen`. */
+/** What the line says on the main screen, which reports no clicks: the command that opens the window. */
+export const OPEN_WORDS = "/tally to open";
+
+/**
+ * The band's folded line: right-aligned, one Button whose press runs `onOpen`. On the main screen (no fullscreen) a
+ * click does not reach the Button, so the line names `/tally`; Enter on the focused band presses it either way.
+ */
 export function drawFold($: EngineInterface, e: RenderInput<"AbovePrompt">, d: WindowData, onOpen: () => void): RenderElement {
   const { Box, Text, Button } = tableOf($, e);
   const cols = e.props.bodyColumns;
-  const parts = foldParts(d, cols);
+  const needsWords = e.surface === "terminal" && e.viewport?.isFullscreen === false;
+  const wordsWidth = OPEN_WORDS.length + SEP.length;
+  const hasWords = needsWords && cols >= wordsWidth + 12;
+  const parts = foldParts(d, hasWords ? cols - wordsWidth : cols);
   return (
     <Box width={cols} justifyContent="flex-end">
       <Button key={FOLD_KEY} autoFocus label={parts.map((p) => p.text).join(SEP)} onPress={onOpen}>
+        {hasWords && (
+          <Text key="fold-open" dimColor>
+            {`${OPEN_WORDS}${SEP}`}
+          </Text>
+        )}
         {parts.map((p, i) => (
           <Text key={`fold-${i}`} {...toneProps(ROLE_TONE[p.role].tone, ROLE_TONE[p.role].bold === true)}>
             {i === 0 ? p.text : `${SEP}${p.text}`}
