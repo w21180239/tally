@@ -4,7 +4,6 @@ import { openTarget } from "../core/open-target.ts";
 import { emptyLive } from "../core/live-state.ts";
 import { cacheOf, contextWords, glanceLines, leftText, tokensText, untilText, windowData } from "../view/data.ts";
 import type { WindowData } from "../view/data.ts";
-import { foldLine, foldParts } from "../view/fold.tsx";
 import { footRows } from "../view/foot.tsx";
 import { keyLine, keyLineText, spansOf } from "../view/keys.ts";
 import { canDock, layoutOf, opensByItself } from "../view/layout.ts";
@@ -58,73 +57,6 @@ describe("layoutOf", () => {
     expect(canDock(110)).toBe(true);
     expect(opensByItself(143)).toBe(false);
     expect(opensByItself(144)).toBe(true);
-  });
-});
-
-describe("foldLine", () => {
-  test("shows hint with saving, chart, cost, context and cache timer, in that order, when wide", () => {
-    const line = foldLine(dataOf(), 200);
-    const at = (s: string) => line.indexOf(s);
-    expect(at("Cache expired")).toBeGreaterThanOrEqual(0);
-    expect(at("saves $2.10")).toBeGreaterThan(at("Cache expired"));
-    expect(at("\u{2582}\u{2583}")).toBeGreaterThan(at("saves $2.10"));
-    expect(at("$5.05")).toBeGreaterThan(at("\u{2582}\u{2583}"));
-    expect(at("ctx 236k (24%)")).toBeGreaterThan(at("$5.05"));
-    expect(at("42m")).toBeGreaterThan(at("ctx"));
-  });
-
-  test("gives way from the cache timer through chart, saving and hint; at 30 columns only cost and context stay", () => {
-    const d = dataOf();
-    const widest = foldLine(d, 200).length;
-    const noCache = foldLine(d, widest - 1);
-    expect(noCache).not.toContain("42m");
-    expect(noCache).toContain("saves $2.10");
-    const narrow = foldLine(d, 30);
-    expect(narrow).toBe("$5.05 \u{b7} ctx 236k (24%)");
-    expect(narrow.length).toBeLessThanOrEqual(30);
-    expect(foldParts(d, 30).map((p) => p.role)).toEqual(["cost", "context"]);
-  });
-
-  test("each drop boundary removes exactly one role, in the order cache, chart, saving, hint, context", () => {
-    const d = dataOf();
-    const SEP_LEN = " \u{b7} ".length;
-    const widthOf = (parts: Array<{ text: string }>): number => parts.reduce((n, p, i) => n + p.text.length + (i === 0 ? 0 : SEP_LEN), 0);
-    const steps: Array<{ roles: string[]; saving: boolean }> = [];
-    let cols = 200;
-    for (;;) {
-      const parts = foldParts(d, cols);
-      const w = widthOf(parts);
-      // Exactly at its own width the same parts stay.
-      expect(foldParts(d, w).map((p) => p.text)).toEqual(parts.map((p) => p.text));
-      steps.push({ roles: parts.map((p) => p.role), saving: parts.some((p) => p.role === "hint" && p.text.includes("saves $2.10")) });
-      if (parts.length === 1) break;
-      cols = w - 1;
-    }
-    expect(steps).toEqual([
-      { roles: ["hint", "chart", "cost", "context", "cache"], saving: true },
-      { roles: ["hint", "chart", "cost", "context"], saving: true },
-      { roles: ["hint", "cost", "context"], saving: true },
-      { roles: ["hint", "cost", "context"], saving: false },
-      { roles: ["cost", "context"], saving: false },
-      { roles: ["cost"], saving: false },
-    ]);
-  });
-
-  test("a line never passes its width, down to the cost alone cut to fit", () => {
-    const d = dataOf();
-    for (let cols = 3; cols <= 90; cols++) expect(foldLine(d, cols).length).toBeLessThanOrEqual(cols);
-    expect(foldLine(d, 4)).toBe("$5.0");
-  });
-
-  test("without a hint or a chart the line is cost, context and cache", () => {
-    const line = foldLine(dataOf({ hint: null, chart: null }), 200);
-    expect(line).toBe("$5.05 \u{b7} ctx 236k (24%) \u{b7} \u{29d7} 42m");
-  });
-
-  test("an expired cache reads cold", () => {
-    const d = dataOf({ hint: null, chart: null, cache: { leftMs: 0, lifeMs: 300_000, isExpired: true, refillUsd: 0.5 } });
-    expect(foldLine(d, 200)).toContain("cold");
-    expect(foldParts(d, 200).at(-1)?.role).toBe("cold");
   });
 });
 
@@ -207,8 +139,12 @@ describe("window data and glance", () => {
   });
 
   test("durations and token counts read short", () => {
-    expect(leftText(45_000)).toBe("45s");
-    expect(leftText(125_000)).toBe("2m 05s");
+    // No seconds: under a minute is `<1m`, then whole minutes.
+    expect(leftText(45_000)).toBe("<1m");
+    expect(leftText(0)).toBe("<1m");
+    expect(leftText(60_000)).toBe("1m");
+    expect(leftText(125_000)).toBe("2m");
+    expect(leftText(299_000)).toBe("4m");
     expect(leftText(42 * 60_000)).toBe("42m");
     expect(leftText(80 * 60_000)).toBe("1h 20m");
     expect(tokensText(236_000)).toBe("236k");
@@ -229,7 +165,7 @@ describe("window data and glance", () => {
 
   test("the short view gives one line per group, each within its width", () => {
     const lines = glanceLines(dataOf(), 60);
-    expect(lines[0]).toBe("$5.05 session \u{b7} 2 subagents");
+    expect(lines[0]).toBe("$5.05 session \u{b7} 2 sub-agents");
     expect(lines[1]).toBe("ctx 236k (24%) \u{b7} 5h 6% \u{b7} 7d 22%");
     expect(lines.some((l) => l.startsWith("cache 42m"))).toBe(true);
     for (const l of glanceLines(dataOf(), 20)) expect(l.length).toBeLessThanOrEqual(20);

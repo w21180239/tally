@@ -407,7 +407,7 @@ describe("window: the 8-hour chart", () => {
     await start($);
     await r.clock.settle();
     const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
-    expect((await band.find({ key: "tally-fold" }))?.props.label).toBe("0\u{a2} \u{b7} ctx 236k (24%)");
+    expect((await band.find({ key: "tally-fold" }))?.props.label).toBe("session 0\u{a2} \u{b7} ctx 24%");
     await band.unmount();
   });
 });
@@ -424,7 +424,7 @@ describe("window: open, fold, remember", () => {
     expect(r.stored.get("mode")).toBe("folded");
     const fold = await band.find({ type: "Button", key: "tally-fold" });
     expect(fold).toBeDefined();
-    expect(fold?.props.label).toMatch(/ctx 236k \(24%\)/);
+    expect(fold?.props.label).toMatch(/ctx 24%/);
     // A press on the line opens the window again, with the keys.
     await band.press({ key: "tally-fold" });
     expect(r.opened).toHaveLength(2);
@@ -570,16 +570,21 @@ describe("window: the person's close", () => {
     await start($);
     await r.clock.settle();
     const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND_MAIN });
-    // The main screen reports no clicks: the line names the command that opens the window.
-    expect(await band.find(TEXT(/\/tally to open/))).toBeDefined();
+    // The main screen reports no clicks: the line names the keys and the command that open the window.
+    expect(await band.find(TEXT(/ctrl\+x tab, enter or \/tally: open/))).toBeDefined();
     expect((await band.find({ key: "tally-fold" }))?.props.autoFocus).toBe(true);
     await band.press({ key: "tally-fold" });
     expect(r.opened).toHaveLength(1);
     expect(r.stored.get("mode")).toBe("open");
+    // Used once, the words are not shown again.
+    expect(r.stored.get("fold-entry-seen")).toBe(true);
     await band.unmount();
     const full = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
-    expect(await full.find(TEXT(/\/tally to open/))).toBeUndefined();
+    expect(await full.find(TEXT(/\/tally: open/))).toBeUndefined();
     await full.unmount();
+    const again = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND_MAIN });
+    expect(await again.find(TEXT(/\/tally: open/))).toBeUndefined();
+    await again.unmount();
   });
 });
 
@@ -686,7 +691,7 @@ describe("window: /clear keeps the line and the timers", () => {
     await $.prompt.submit(prompt("after the clear"));
     await r.clock.settle();
     const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
-    expect((await band.find({ key: "tally-fold" }))?.props.label).toMatch(/ctx 236k/);
+    expect((await band.find({ key: "tally-fold" }))?.props.label).toMatch(/ctx 24%/);
     // The minute redraw still fires.
     const before = r.redraws.n;
     await r.clock.advance(60_000);
@@ -831,7 +836,7 @@ describe("window: the leading hint", () => {
     await r.clock.settle();
     const band = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...BAND });
     await r.clock.settle();
-    expect((await band.find({ key: "tally-fold" }))?.props.label).toContain(HINT);
+    expect((await band.find({ key: "tally-fold" }))?.props.label).toContain("\u{25b2} fast mode: 100% of spend, save ~$2.02");
     await band.unmount();
     const pane = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     await r.clock.settle();

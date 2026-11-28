@@ -102,11 +102,42 @@ claude plugin marketplace remove tally
 | Hints | `5` | 本会话以及过去 24 小时或 30 天的提示：标题、金额、摘要、建议操作和证据 |
 | Help | `0` | 数据来源、颜色图例、键位、设置、版本、价格来源与更新日期、未定价的模型 |
 
-窗口底部显示缓存计时和重填成本、带 compact 阈值的 context 条，以及 5 小时和 7 天限额与重置时间。限额超过 80% 时，每个会话弹一次 toast。
+窗口底部显示缓存计时和重写成本（rewrite cost）、带 compact 阈值的 context 条，以及 5 小时和 7 天限额与重置时间。限额超过 80% 时，每个会话弹一次 toast。
 
 ### 布局
 
-窗口按宽度选择排版：小于 40 列为紧凑卡片，40 到 69 列为窄版，70 列及以上为完整版。内嵌显示且不足 10 行时画简短视图。窗口折叠后，prompt 上方的一行会显示最重要的提示和可省金额、最近 8 小时的字符图、花费、context 和缓存计时，终端变窄时依次丢掉其中几项。桌面应用多一条低调的摘要栏，VS Code 里窗口照常绘制，只是不显示键位栏。停靠窗口默认请求 90×40；终端小于 144 列时默认折叠，小于 110 列时无法停靠。可用 `esc`、关闭标记或窗口里的 `× fold` 按钮关闭窗口；tally 会记住这一选择，之后每次都折叠启动，直到你用 `/tally` 或点击折叠行再次打开。Claude Code 只在全屏（`/tui fullscreen`）下上报点击；在主屏幕请用 `esc` 和 `/tally`，折叠行上会写出它。
+窗口按宽度选择排版：小于 40 列为紧凑卡片，40 到 69 列为窄版，70 列及以上为完整版。内嵌显示且不足 10 行时画简短视图。窗口折叠后，prompt 上方只留一行，按重要性排序：`session $1.16 · ctx 21% · cache expired · ▲ 1 installed plugin never used, save ~$0.03`。每个金额都带语义词（`session`、`save`）；终端变窄时从右侧依次丢掉：进入方式提示、8 小时字符图（`8h`）、提示的可省金额、缓存、提示（只剩标记），最后是 context，会话花费保留。桌面应用多一条低调的摘要栏（其 `details ▸` 按钮打开窗口），VS Code 里窗口照常绘制，只是不显示键位栏。停靠窗口默认请求 90×40；终端小于 144 列时默认折叠，小于 110 列时无法停靠。用 `esc`（或 `/tally close`）折叠窗口；tally 会记住这一选择，之后每次都折叠启动，直到你用 `/tally` 或点击折叠行再次打开。Claude Code 只在全屏（`/tui fullscreen`）下上报点击。在主屏幕上，折叠行末尾会写 `ctrl+x tab, enter or /tally: open`，直到你从这一行打开过一次窗口：先按 `ctrl+x` 再按 `tab` 把键盘交给这一行，`enter` 打开窗口，`/tally` 在任何时候都能打开。
+
+### 键位
+
+| 键 | 作用 |
+| --- | --- |
+| `1`-`5`、`0` | 切换标签（`0` 是 Help）。 |
+| `tab`、`enter` | 移动到行并打开。 |
+| `PgUp`、`PgDn` | PgUp/PgDn 滚动停靠窗口。 |
+| `esc` | 折叠窗口。 |
+| `ctrl+x` 然后 `tab` | 在主屏幕上把键盘交给折叠行或窗口。 |
+| `s` | 时间跨度（Usage、Hints）。 |
+| `r` | 仓库过滤（History、Hints）。 |
+| `t` | 本机或全部电脑（History、Hints，需设置 `syncDir`）。 |
+| `a`、`p`、`n` | 选择 agent、上一个、下一个（Usage、Context）。 |
+| `v`、`b` | 完整文本或 transcript、返回（Usage、Context）。 |
+| `m` | 展开被截断的列表。 |
+| `y` | 采纳提示（Hints）。 |
+
+### 术语
+
+| 词 | 含义 |
+| --- | --- |
+| `expired` | prompt 缓存已过期；下一次请求会按 `rewrite cost` 重新写入。 |
+| `rewrite cost` | 在主模型上把整个 context 重新写入缓存的成本。 |
+| `this session` | 你所在的 Claude Code 会话，包括 resume 之前的各次启动。 |
+| `save ~$0.03` | 提示估算的可省金额；`~` 表示估算值。 |
+| `fold`、`folded` | 把窗口收成一行，以及这个状态。 |
+| `sub-agent` | 由主对话启动、交给另一个 agent 运行的任务。 |
+| `computer` | 通过 `syncDir` 合并汇总的一台机器。 |
+| `▂▃▅▇█` | 过去 8 小时中每小时的 token 总量，最早的在前；`·` 表示该小时没有请求。 |
+| `⧗` | 缓存计时。 |
 
 ### 提示（Hints）
 
@@ -154,6 +185,7 @@ claude plugin marketplace remove tally
 | 命令 | 作用 |
 | --- | --- |
 | `/tally` | 打开窗口，或展开已折叠的窗口。 |
+| `/tally close` | `close`：折叠窗口（等同于 `esc`）。 |
 | `/tally <tab>` | 直接打开到 `session`、`usage`、`context`、`history`、`hints` 或 `help`。 |
 | `/tally 24h` 或 `30d` | 以该时间跨度打开。 |
 | `/tally money dollars` | 设置显示选项；还有 `decimals`、`open`、`row`，词序不限。`money` 还接受 `both`、`dollar`、`cent`，`row` 接受 `show`、`hide`；`tokens` 打开 Usage tab，`settings` 打开 Help。设置缺值或取值不对时，回复会列出可用的值。 |

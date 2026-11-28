@@ -10,7 +10,7 @@ import { summarizeAsync } from "../core/summary.ts";
 import { inputOf, loadScope, sharedOf } from "./hints-view.ts";
 import { locate } from "./locate.ts";
 import { makeSlicer } from "./slicer.ts";
-import { invalidateWindow } from "./window.ts";
+import { invalidateWindow, settingsNow } from "./window.ts";
 
 // The rules' input for a 30-day window, cut to what came after `since` when given, and how many requests it holds.
 async function measure($: EngineInterface, since?: number): Promise<{ input: HintInput; requests: number; unread: number }> {
@@ -46,7 +46,7 @@ export async function loadAdopted($: EngineInterface): Promise<void> {
 /** Records `hint` as adopted. A rule with a metric also gets its value now, measured over all repos, and the saving that same measurement predicts. */
 export async function adoptHint($: EngineInterface, hint: Hint): Promise<void> {
   const now = await $.clock.now();
-  let record: Adoption = { rule: hint.rule, at: now, expectedUsd: hint.usd };
+  let record: Adoption = { rule: hint.rule, title: hint.title, at: now, expectedUsd: hint.usd };
   const rule = HINT_RULES.find((r) => r.id === hint.rule);
   if (rule?.metric !== undefined && hint.metric !== undefined) {
     // Without a measurement the shown hint's own figures stand in.
@@ -85,7 +85,8 @@ async function recheck($: EngineInterface, days: number): Promise<void> {
     // Marked before the toast, so one adoption never toasts twice.
     checked.push(adoptionId(a));
     await $.store.set(CHECKED_KEY, checked);
-    $.ui.toast(recheckText(a.rule, result));
+    // The money format is read when the toast is made, so a setting changed since the start applies.
+    $.ui.toast(recheckText(a.title ?? a.rule, result, settingsNow()));
   }
 }
 

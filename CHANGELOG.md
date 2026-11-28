@@ -8,6 +8,11 @@ Release notes are cut from this file. Newest first.
 - Hints worth under a cent are no longer listed, and their amounts follow the shared money format (cents under a dollar). tally no longer reports itself as an unused plugin or MCP server.
 - `/tally` accepts `tokens` (Usage), `settings` (Help), `money both|dollar|cent|dollars only` and `row show|hide`. Command errors give the concrete usage and the allowed values.
 - `/tally report <repo>` for a repository with no requests writes no file and names the repositories that have data.
+- Folded line: parts are ordered by importance (`session` cost, context, cache, chart, hint), every amount has a word (`session $1.16`, `save ~$0.03`), and the line gives way from the right as the width shrinks. On the main screen it ends with `ctrl+x tab, enter or /tally: open` until you open the window from it once. A focused line is drawn without tone colours.
+- One word per concept: `expired` replaces `cold`, `rewrite cost` replaces `refill`, `sub-agent` replaces `subagent`; the desktop row's button reads `details ▸` and its hint amount reads `save ...`.
+- The cache countdown shows whole minutes and `<1m` instead of seconds.
+- The recheck toast names the hint's title and follows the `money` and `decimals` settings (`tally: Cache expired while idle: expected save $7.13, actual $5.80`).
+- README and docs: key and word tables (English and Chinese), `/tally close` and `PgUp`/`PgDn` scrolling.
 
 - Fixed the window coming back every session after it was closed: a fold the store refused (a locked file on Windows, a full disk) is now logged and written again, and the person's close always counts. The pane has a fold button, and on the main screen, where Claude Code reports no clicks, the folded line names `/tally to open`.
 

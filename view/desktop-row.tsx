@@ -10,6 +10,9 @@ import { tableOf } from "./table.ts";
 /** Address of the row's `details` Button. */
 export const INFO_KEY = "tally-details";
 
+/** The row's one way into the figures behind it; the hover card needs a pointer. */
+export const DETAILS_LABEL = "details \u{25b8}";
+
 const LOW_SHARE = 0.2;
 const BAR_PX = 72;
 const BAR_H = 8;
@@ -18,10 +21,10 @@ const LABEL_CELLS = 8;
 export type Run = { text: string; tone?: Tone; bold?: boolean };
 export type Section = { label: string; lines: Array<Run[] | { name: string; share: number; tone: Tone; alt: string; words: Run[] }> };
 
-/** Main's cache timer as the row says it: warm with its time left, or cold. */
+/** Main's cache timer as the row says it: warm with its time left, or expired. */
 export function cacheRun(d: WindowData): Run | null {
   if (d.cache === null) return null;
-  if (d.cache.isExpired) return { text: "cold", tone: "error" };
+  if (d.cache.isExpired) return { text: "expired", tone: "error" };
   return { text: leftText(d.cache.leftMs), tone: d.cache.leftMs / d.cache.lifeMs < LOW_SHARE ? "warning" : "success" };
 }
 
@@ -32,7 +35,7 @@ export function rowRuns(d: WindowData): Run[] {
   return [
     { text: moneyOf(d, d.costUsd), bold: true },
     { text: " session", tone: "dim" },
-    ...(d.agents > 0 ? [{ text: `${SEP}${d.agents} subagent${d.agents === 1 ? "" : "s"}`, tone: "dim" as const }] : []),
+    ...(d.agents > 0 ? [{ text: `${SEP}${d.agents} sub-agent${d.agents === 1 ? "" : "s"}`, tone: "dim" as const }] : []),
     { text: `${SEP}cache `, tone: "dim" },
     cache ?? { text: "-", tone: "dim" },
     ...(d.context.tokens === null ? [] : [{ text: `${SEP}ctx ${tokensText(d.context.tokens)} `, tone: "dim" as const }]),
@@ -47,7 +50,7 @@ export function cardSections(d: WindowData): Section[] {
     out.push({ label: "Models", lines: [d.models.flatMap(([name, usd], i): Run[] => [...(i === 0 ? [] : [{ text: "  \u{b7}  ", tone: "dim" as const }]), { text: name }, { text: ` ${moneyOf(d, usd)}` }])] });
   }
   if (d.hint !== null) {
-    out.push({ label: "Hint", lines: [[{ text: `${HINT_MARK} `, tone: "accent", bold: true }, { text: d.hint.found }, ...(d.hint.saving === null ? [] : [{ text: `${SEP}${d.hint.saving}`, tone: "success" as const }])]] });
+    out.push({ label: "Hint", lines: [[{ text: `${HINT_MARK} `, tone: "accent", bold: true }, { text: d.hint.found }, ...(d.hint.saving === null ? [] : [{ text: `${SEP}save ${d.hint.saving}`, tone: "success" as const }])]] });
   }
   if (d.limits.length > 0) {
     out.push({
@@ -110,7 +113,7 @@ export function drawInfoRow($: EngineInterface, e: RenderInput<"AbovePrompt">, d
       )}
       <Box flexDirection="row" gap={1}>
         {runs(rowRuns(d))}
-        <Button key={INFO_KEY} label="details" plain dimColor onPress={onDetails} />
+        <Button key={INFO_KEY} label={DETAILS_LABEL} plain dimColor onPress={onDetails} />
       </Box>
     </Box>
   );
