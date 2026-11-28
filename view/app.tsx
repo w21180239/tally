@@ -14,7 +14,7 @@ import { needsHints, needsTop, readHints, readTopHint, refreshHints, refreshTop 
 import { needsRemotes, readRemotes, refreshRemotes } from "../engine/sync.ts";
 import { currentPrices, lastPriceError } from "../engine/price-update.ts";
 import { needsUsage, readUsage, refreshUsage } from "../engine/usage-view.ts";
-import { attempt, inBackground, openWindow, readChart, readFoot, readView, setAgent, setCtxAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, setTranscript, showTab, toggleShown } from "../engine/window.ts";
+import { attempt, foldByHand, inBackground, openWindow, readChart, readFoot, readView, setAgent, setCtxAgent, setFull, setListing, setMachines, setMore, setRepoOnly, setSpan, setTranscript, showTab, toggleShown } from "../engine/window.ts";
 import { drawInfoRow } from "./desktop-row.tsx";
 import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
@@ -147,6 +147,9 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
           {isNarrow ? s.short : s.label}
         </Button>
       ))}
+      <Button key="tally-pane-fold" label="fold" dimColor onPress={() => attempt($, () => foldByHand($))}>
+        {"\u{00d7} fold"}
+      </Button>
     </Box>
   );
 

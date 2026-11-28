@@ -106,7 +106,7 @@ The foot of the window shows cache timers with the cost to refill them, a contex
 
 ### Layouts
 
-The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. Folded, the window leaves one line over the prompt: the best hint and its saving, a character chart of the past 8 hours, cost, context and cache timer, with parts dropped as the terminal narrows. The desktop app adds a low-key summary strip, and in VS Code the window draws without the key bar. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock.
+The window picks a drawing from its width: under 40 columns a compact card, 40 to 69 narrow, 70 and up full. Inline and under 10 rows it draws a short view. Folded, the window leaves one line over the prompt: the best hint and its saving, a character chart of the past 8 hours, cost, context and cache timer, with parts dropped as the terminal narrows. The desktop app adds a low-key summary strip, and in VS Code the window draws without the key bar. A docked window asks for 90 by 40; a terminal under 144 columns starts folded, and under 110 columns the window cannot dock. Close the window with `esc`, its close mark or its `× fold` button; tally remembers that and starts folded next time until you open it again with `/tally` or a click on the line. Claude Code reports clicks only in fullscreen (`/tui fullscreen`); on the main screen use `esc` and `/tally`, which the folded line names.
 
 ### Hints
 
