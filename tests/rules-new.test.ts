@@ -4,7 +4,7 @@ import { drain, STEP_ROWS } from "../core/steps.ts";
 import { ttlModelSteps } from "../core/cache-life.ts";
 import type { TtlModel } from "../core/cache-life.ts";
 import { analyzeFlow, HUGE_RESULT_MIN_TOKENS } from "../core/flow.ts";
-import type { BigResult } from "../core/flow.ts";
+import type { BigResult, CompactionEffect } from "../core/flow.ts";
 import { HINT_RULES, runRules } from "../core/hint.ts";
 import type { Hint, HintInput, HintRule } from "../core/hint.ts";
 import { emptyLive } from "../core/live-state.ts";
@@ -78,8 +78,8 @@ const live = emptyLive("s1", NOW - DAY);
 const THOUSAND = { byModel: { [OPUS]: money(0, 1000) }, main: money(0, 1000) };
 
 describe("rule registry", () => {
-  test("8 new rules, 22 unique ids in the shipped registry", () => {
-    expect(NEW_RULES.map((r) => r.id).sort()).toEqual(["cache-ttl-choice", "huge-tool-result", "limit-pace", "main-model-overkill", "mcp-schema-heavy", "memory-heavy", "skill-catalog-heavy", "subagent-overhead"]);
+  test("9 new rules, 22 unique ids in the shipped registry", () => {
+    expect(NEW_RULES.map((r) => r.id).sort()).toEqual(["cache-ttl-choice", "huge-tool-result", "ineffective-compaction", "limit-pace", "main-model-overkill", "mcp-schema-heavy", "memory-heavy", "skill-catalog-heavy", "subagent-overhead"]);
     const ids = HINT_RULES.map((r) => r.id);
     expect(ids.length).toBe(22);
     expect(new Set(ids).size).toBe(22);
@@ -89,6 +89,61 @@ describe("rule registry", () => {
   test("an empty span raises nothing from the new rules", async () => {
     for (const r of NEW_RULES) expect(r.run(inputOf())).toEqual([]);
     expect(await runRules(NEW_RULES, inputOf())).toEqual([]);
+  });
+});
+
+describe("ineffective-compaction", () => {
+  const effect = (over: Partial<CompactionEffect> = {}): CompactionEffect => ({
+    sessionId: "s1",
+    ts: NOW - HOUR,
+    trigger: "manual",
+    preTokens: 300_000,
+    postTokens: 270_000,
+    requests: 40,
+    savedTokens: 0,
+    savedUsd: 0,
+    keptTokens: 90_000,
+    keptUsd: 1.5,
+    ineffective: true,
+    repeated: false,
+    ...over,
+  });
+  const stats = (ineffective: CompactionEffect[], count = 5): Summary["compaction"] => ({ count, savedTokens: 0, savedUsd: 0, bySession: {}, ineffective });
+
+  test("flags compactions that left the context large; the amount is what they kept, re-read", () => {
+    const h = only(fire("ineffective-compaction", { compaction: stats([effect(), effect({ sessionId: "s2", keptUsd: 0.5 })]) }));
+    expect(h.rule).toBe("ineffective-compaction");
+    expect(near(h.usd, 2)).toBe(true);
+    expect(h.projected).toBeUndefined();
+    expect(h.summary).toContain("2 of 5 compactions");
+    expect(h.short).toBe("2 compactions left the context large");
+    expect(h.evidence.map((e) => e.detail)).toEqual(["300k tokens before, 270k after (90%)", "300k tokens before, 270k after (90%)"]);
+  });
+
+  test("a compaction followed by another within a few requests is flagged even when it shrank the context", () => {
+    const h = only(fire("ineffective-compaction", { compaction: stats([effect({ postTokens: 50_000, keptTokens: 0, keptUsd: 0, requests: 2, repeated: true })], 3) }));
+    expect(h.usd).toBe(0);
+    expect(h.evidence[0]!.detail).toBe("300k tokens before, 50k after (17%); compacted again after 2 requests");
+  });
+
+  test("quiet without compaction data or with none flagged; never tells anyone to compact less", () => {
+    expect(fire("ineffective-compaction", {})).toEqual([]);
+    expect(fire("ineffective-compaction", { compaction: stats([]) })).toEqual([]);
+    const h = only(fire("ineffective-compaction", { compaction: stats([effect()]) }));
+    for (const text of [h.title, h.summary, h.action, h.short]) expect(text).not.toMatch(/new session|avoid compact|fewer compact|too many|repeated/i);
+    expect(h.action).toContain("task boundary");
+  });
+
+  test("a titled session shows its title, and the list is capped", () => {
+    const top = { sessionId: "s1", repo: "r", started: 0, usd: 5, resume: "claude --resume s1", title: "Fix it" };
+    const many = Array.from({ length: 9 }, (_, i) => effect({ sessionId: `s${i}` }));
+    const h = only(fire("ineffective-compaction", { compaction: stats(many, 20), topSessions: [top] }));
+    const at = h.evidence.findIndex((e) => e.kind === "title");
+    expect(h.evidence[at]).toEqual({ label: "Session", detail: "Fix it", kind: "title" });
+    // The title sits right before its own compaction row.
+    expect(h.evidence[at + 1]!.label).toBe("Compaction");
+    // The costliest five, plus the title row of the one that has a title.
+    expect(h.evidence.length).toBe(6);
   });
 });
 

@@ -19,6 +19,35 @@ export type BigResult = { sessionId: string; tool: string; source: FlowSource; l
 /** A chunk of text that entered the context, sized in chars until a request tells its token count. `text` is the full text where one is known. */
 export type Piece = { source: FlowSource; label: string; chars: number; paste: boolean; tool?: string; text?: string };
 
+/**
+ * What one main-thread compaction did to the context. `preTokens` is the context before it (the host's figure, else the
+ * last request before the boundary; 0 when neither is known), `postTokens` the first request after it (null when none followed).
+ * `requests`: main-thread requests until the next compaction. `savedTokens` and `savedUsd`: per counted request until the next
+ * compaction, the context it did not carry compared with before the compaction (max(0, pre - request context)), priced at that
+ * request's cache-read rate; a lower bound, since the context would have kept growing. `ineffective`: the context stayed at
+ * EFFECTIVE_SHARE of its old size or more, or another compaction followed within QUICK_REPEAT requests (`repeated`).
+ * `keptTokens`/`keptUsd`: the part of the post-compaction context above the EFFECTIVE_SHARE line, and its cache-read cost over the counted requests until the next compaction.
+ */
+export type CompactionEffect = {
+  sessionId: string;
+  ts: number;
+  trigger?: "manual" | "auto";
+  preTokens: number;
+  postTokens: number | null;
+  requests: number;
+  savedTokens: number;
+  savedUsd: number;
+  keptTokens: number;
+  keptUsd: number;
+  ineffective: boolean;
+  repeated: boolean;
+};
+
+/** A compaction that leaves at least this share of the old context in place did not shed enough. */
+export const EFFECTIVE_SHARE = 0.6;
+/** A compaction followed by another within this many main-thread requests counts as ineffective. */
+export const QUICK_REPEAT = 3;
+
 /** What the replay shows an observer for each request, before the request's parts are admitted. */
 export type RequestSeen = {
   row: UsageRow;
@@ -60,6 +89,8 @@ export type FlowOut = {
   peakContext: Record<string, number>;
   /** MCP server to the re-read cost of every tool result it returned, over all agents and before the lists are cut to FLOW_ITEMS. */
   mcpReread: Record<string, number>;
+  /** Every main-thread compaction, oldest first, whether or not it is in the span; the caller filters. */
+  compactionEffects: CompactionEffect[];
 };
 
 export const FLOW_ITEMS = 40;
@@ -109,7 +140,7 @@ function piecesOf(u: UserRow, tools: Map<string, Tool>): Piece[] {
   return blocks.map((b) => pieceOfResult(tools.get(b.toolUseId), b.chars));
 }
 
-type Conv = { sessionId: string; sub: boolean; agent: string; fixedLabel: string; rows: UsageRow[]; users: UserRow[]; compacts: number[] };
+type Conv = { sessionId: string; sub: boolean; agent: string; fixedLabel: string; rows: UsageRow[]; users: UserRow[]; compacts: CompactRow[] };
 
 function median(xs: number[]): number {
   if (xs.length === 0) return 0;
@@ -151,7 +182,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     if (++n % STEP_ROWS === 0) yield;
     convs.get(streamOf(u))?.users.push(u);
   }
-  for (const k of input.compacts) convs.get(streamOf(k))?.compacts.push(k.ts);
+  for (const k of input.compacts) convs.get(streamOf(k))?.compacts.push(k);
   for (const c of convs.values()) {
     n += c.rows.length + c.users.length;
     if (n >= STEP_ROWS) {
@@ -160,7 +191,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     }
     c.rows.sort((a, b) => a.ts - b.ts);
     c.users.sort((a, b) => a.ts - b.ts);
-    c.compacts.sort((a, b) => a - b);
+    c.compacts.sort((a, b) => a.ts - b.ts);
   }
 
   // The largest fixed part a first request may keep, for main and sub-agent conversations separately.
@@ -185,6 +216,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
   const toolFill = new Map<string, number>();
   const peak = new Map<string, number>();
   const wholeBest = new Map<string, number>();
+  const effects: CompactionEffect[] = [];
 
   type Stay = { source: FlowSource; label: string; tokens: number; counted: boolean; listed: boolean; paste: boolean; tool?: string; from: number; item: FlowItem | null };
 
@@ -228,6 +260,24 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       spend = [0];
     };
 
+    // The main-thread compaction whose requests are being tallied, and the sum of their cache-read rates.
+    let cur: CompactionEffect | null = null;
+    let curRate = 0;
+    const finish = (followed: boolean): void => {
+      if (cur === null) return;
+      const e = cur;
+      cur = null;
+      e.repeated = followed && e.requests <= QUICK_REPEAT;
+      // Integer arithmetic keeps the 60 percent edge exact.
+      const stayed = e.postTokens !== null && e.preTokens > 0 && e.postTokens * 10 >= e.preTokens * 6;
+      if (stayed) {
+        e.keptTokens = (e.postTokens! * 10 - e.preTokens * 6) / 10;
+        e.keptUsd = e.keptTokens * curRate;
+      }
+      e.ineffective = stayed || e.repeated;
+      effects.push(e);
+    };
+
     const { rows, users, compacts } = c;
     let ri = 0;
     let ui = 0;
@@ -235,11 +285,17 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     // Wake order at one instant: compaction, then arrivals, then the request that read them.
     while (ri < rows.length || ui < users.length || ci < compacts.length) {
       if (++n % STEP_ROWS === 0) yield;
-      const tc = ci < compacts.length ? compacts[ci] : Infinity;
+      const tc = ci < compacts.length ? compacts[ci].ts : Infinity;
       const tu = ui < users.length ? users[ui].ts : Infinity;
       const tr = ri < rows.length ? rows[ri].ts : Infinity;
       if (tc <= tu && tc <= tr) {
-        ci++;
+        const k = compacts[ci++];
+        if (!c.sub) {
+          finish(true);
+          const pre = k.preTokens !== undefined && k.preTokens > 0 ? k.preTokens : prevPrompt;
+          cur = { sessionId: c.sessionId, ts: k.ts, ...(k.trigger !== undefined && { trigger: k.trigger }), preTokens: pre, postTokens: null, requests: 0, savedTokens: 0, savedUsd: 0, keptTokens: 0, keptUsd: 0, ineffective: false, repeated: false };
+          curRate = 0;
+        }
         dropAll();
         opening = true;
         afterCompact = true;
@@ -256,6 +312,18 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       const prompt = promptOf(row.tokens);
       input.onRequest?.({ row, counted, pieces: waiting, opening, afterCompact, prevTs });
       prevTs = row.ts;
+      if (cur !== null) {
+        const e: CompactionEffect = cur;
+        e.requests++;
+        e.postTokens ??= prompt;
+        if (counted) {
+          const rate = input.cacheReadUsd(row);
+          const gone = Math.max(0, e.preTokens - prompt);
+          e.savedTokens += gone;
+          e.savedUsd += gone * rate;
+          curRate += rate;
+        }
+      }
       if (counted) {
         const share = held <= 0 ? 1 : Math.min(1, row.tokens.cacheRead / held);
         shares.push(shares[shares.length - 1] + share);
@@ -290,6 +358,7 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
       prevPrompt = prompt;
       prevOutput = row.tokens.output;
     }
+    finish(false);
     dropAll();
     for (const [file, n] of wholes) if (n > (wholeBest.get(file) ?? 0)) wholeBest.set(file, n);
   };
@@ -331,7 +400,8 @@ export function* analyzeFlowSteps(input: FlowInput): Steps<FlowOut> {
     if (server !== null) mcpReread[server] = (mcpReread[server] ?? 0) + it.rereadUsd;
   }
   const flow = ranked(whole.values());
+  effects.sort((a, b) => a.ts - b.ts || text(a.sessionId, b.sessionId));
   pastes.sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.sessionId, b.sessionId));
   bigResults.sort((a, b) => b.rereadUsd - a.rereadUsd || b.tokens - a.tokens || text(a.sessionId, b.sessionId) || text(a.label, b.label));
-  return { flow, byAgent, pastes: pastes.slice(0, FLOW_ITEMS), bigResults: bigResults.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak), mcpReread };
+  return { flow, byAgent, pastes: pastes.slice(0, FLOW_ITEMS), bigResults: bigResults.slice(0, FLOW_ITEMS), wholeReads: dictOf(repeated.slice(0, FLOW_ITEMS)), toolFill: dictOf(toolFill), peakContext: dictOf(peak), mcpReread, compactionEffects: effects };
 }

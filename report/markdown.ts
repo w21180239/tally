@@ -1,7 +1,7 @@
 // Markdown rendering of a report in five sections: Summary, Tables, Drivers, Baseline comparison, Confidence. Session titles never appear;
 // hint evidence is the redacted form `buildReport` made.
 import type { Hint } from "../core/hint.ts";
-import { activeDays } from "../core/rules/shared.ts";
+import { activeDays, tokensText } from "../core/rules/shared.ts";
 import type { Money } from "../core/summary.ts";
 import { DAY_MS } from "../core/time.ts";
 import { PRICING_URL } from "../engine/price-update.ts";
@@ -38,6 +38,8 @@ function summarySection(r: Report): string {
     `- Main thread: ${usd(s.main.usd)} (${pct(s.main.usd, s.total.usd)}); sub-agents: ${usd(s.sub.usd)} (${pct(s.sub.usd, s.total.usd)}).`,
   ];
   if (s.fast.usd > 0) lines.push(`- Fast mode: ${usd(s.fast.usd)} (${pct(s.fast.usd, s.total.usd)}).`);
+  const c = s.compaction;
+  if (c !== undefined && c.savedTokens > 0) lines.push(`- Compaction saved ~${usd(c.savedUsd)} across ${plural(c.count, "compaction")} (about ${tokensText(c.savedTokens)} tokens not re-read), a lower bound at cache-read prices.`);
   const worth = r.hints.filter((h) => h.usd > 0).length;
   lines.push(r.hints.length === 0 ? "- Hints: none for this window." : `- Hints: ${r.hints.length}, ${worth} with a dollar figure. The figures are estimates that overlap, so they are not added up.`);
   return lines.join("\n");

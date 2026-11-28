@@ -110,6 +110,39 @@ describe("baseline records", () => {
 
 const HEADINGS = ["## Summary", "## Tables", "## Drivers", "## Baseline comparison", "## Confidence"];
 
+describe("compaction saving in the report", () => {
+  const withCompaction = (): Summary => {
+    const rows = [
+      at(req({ id: "a", at: 0, cwd: CWD, tokens: { cacheRead: 100_000 } }), ago(2)),
+      at(req({ id: "b", at: 0, cwd: CWD, tokens: { cw5m: 20_000 } }), ago(2) + 60_000),
+      at(req({ id: "c", at: 0, cwd: CWD, tokens: { cacheRead: 22_000 } }), ago(2) + 120_000),
+    ];
+    const shard: Shard = { ...shardOf(rows), compacts: [{ sessionId: "s", ts: ago(2) + 30_000, trigger: "manual", preTokens: 100_000 }] };
+    return summarize([shard], BUILTIN_PRICES, { span: "30d", nowMs: NOW, tzOffsetMin: TZ, usage: true });
+  };
+
+  test("the Summary section says what compaction saved and over how many compactions", async () => {
+    const s = withCompaction();
+    expect(s.compaction!.count).toBe(1);
+    // (100k - 20k) + (100k - 22k) = 158k tokens at opus 5.5's cache-read rate ($0.2 per MTok), about 3 cents.
+    expect(s.compaction!.savedTokens).toBe(158_000);
+    const md = renderMarkdown(await buildReport(inputOf(s), OPTS));
+    expect(md).toMatch(/- Compaction saved ~\$0\.0\d across 1 compaction \(about 158k tokens not re-read\)/);
+  });
+
+  test("no compaction, no line; and no hint tells anyone to compact less", async () => {
+    const md = renderMarkdown(await buildReport(inputOf(summaryOf([usageRow("a", 2)])), OPTS));
+    expect(md).not.toContain("Compaction saved");
+    expect(md).not.toMatch(/Repeated compaction|compacted \d\+ times/);
+  });
+
+  test("a baseline that holds a rule since removed still renders", async () => {
+    const baseline: Baseline = { at: ago(10), runRate: 100, perHint: [{ rule: "repeat-compaction", expectedUsd: 3 }] };
+    const md = renderMarkdown(await buildReport(inputOf(summaryOf([usageRow("a", 2)])), { ...OPTS, compare: true, baseline, runRate: 40 }));
+    expect(md).toContain("| repeat-compaction | $3.00 | no |");
+  });
+});
+
 describe("renderMarkdown", () => {
   test("holds the five sections in order", async () => {
     const md = renderMarkdown(await buildReport(inputOf(summaryOf([usageRow("a", 2)])), OPTS));

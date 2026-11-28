@@ -64,7 +64,16 @@ export type MetaRow = {
   value: unknown;
 };
 
-export type CompactRow = { sessionId: string; ts: number; /** Sub-agent transcript the boundary was written in; absent for the main thread. */ agentId?: string };
+export type CompactRow = {
+  sessionId: string;
+  ts: number;
+  /** Sub-agent transcript the boundary was written in; absent for the main thread. */
+  agentId?: string;
+  /** Who started the compaction. Absent in shards written before it was kept (they fill in on a rescan). */
+  trigger?: "manual" | "auto";
+  /** Tokens in the context just before the compaction, as the host measured it. Absent like `trigger`. */
+  preTokens?: number;
+};
 
 export type Parsed =
   | { t: "usage"; row: UsageRow }
