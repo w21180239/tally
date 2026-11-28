@@ -141,16 +141,16 @@ claude plugin marketplace remove tally
 
 ### 提示（Hints）
 
-每条提示都写明能省多少，并链接到证据。规则如下：
+每条提示都写明能省多少，并链接到证据。带金额的提示只有在金额至少为 $1 且达到窗口花费的 0.05% 时才会出现。订阅用户看到的金额是按 API 标价折算的等价值。规则如下：
 
-- `near-limit`、`limit-pace`：已接近 5 小时或 7 天限额，或按当前速度会在重置前用完。
-- `cache-rebuilt`、`cache-ttl-choice`：停顿期间缓存过期后被重写（建议离开前先压缩）；按你的停顿习惯，5 分钟缓存和 1 小时缓存哪个更省（给出 `promptCacheTtl` 设置）。
+- `near-limit`、`limit-pace`：已接近 5 小时或 7 天限额，或按当前速度会在重置前用完。两者同时成立时只显示一条：保留速度预测，窗口的现状并入其证据。
+- `cache-rebuilt`、`cache-ttl-choice`：停顿期间缓存过期后被重写（建议离开前先压缩或 /clear）；按你的停顿习惯，5 分钟缓存和 1 小时缓存哪个更省（给出 `promptCacheTtl` 设置）。只有多数重写发生在 5 分钟缓存下 5 到 60 分钟的停顿之后，`cache-rebuilt` 才建议改该设置；停顿长达数小时，任何缓存都撑不住。
 - `mid-session-switch`：会话中途更换模型、速度（fast 模式）或 effort，使下一次请求把整段提示重新写入缓存。
 - `subagent-model`、`subagent-overhead`、`main-model-overkill`：任务用了比所需更大的模型（内置 Explore 代理沿用主模型，所以建议里给出覆盖 Explore 的做法）、请求不超过两次且工具输出很少的子代理任务、主会话在大模型上长时间只读（至少 50 个工具回合）。置信度低的建议只提示“试用”，不会直接建议降级。
-- `memory-heavy`、`skill-catalog-heavy`、`mcp-schema-heavy`、`unused-plugin`、`unused-mcp-server`：每次请求都在为之付费的常驻 context。
-- `long-session`、`ineffective-compaction`：增长超过窗口 70% 的会话（办法是在任务边界更早地 compact），以及压缩后上下文仍保留 60% 以上、在 3 次请求内又被压缩、或在缓存已过期后才开始的 compaction。能缩小上下文的 compaction 是节省；报告的 Summary 会给出估算的节省额。
-- `costly-attribution`：某个 skill 或插件占归因花费的 20% 以上。
-- `whole-reads`、`command-output`、`tool-output`、`huge-tool-result`、`big-paste`：同一文件在两次压缩之间、且期间未被编辑时被整读三次、输出每次请求都被重读的命令和工具、单次极大的工具结果、很大的粘贴。
+- `memory-heavy`、`skill-catalog-heavy`、`mcp-schema-heavy`、`unused-plugin`、`unused-mcp-server`：每次请求都在为之付费的常驻 context。`mcp-schema-heavy` 跳过插件自己注册的工具（它们无法脱离插件单独延迟加载），且被调用过的 server 每 30 天的常驻成本须达到 $25。`unused-plugin` 会点出该插件被使用过的仓库，并建议在那里运行 `claude plugin install <plugin> -s project`。
+- `long-session`、`ineffective-compaction`：增长超过窗口 70% 的会话（办法是在任务边界更早地 compact），以及压缩后仍有 60% 以上的上下文留在会话固定开头部分（系统提示、工具、记忆、列表）之上、在 3 次请求内又被压缩、或在缓存已过期后才开始的 compaction。只评估固定部分之上至少有 20k tokens 的 compaction。能缩小上下文的 compaction 是节省；报告的 Summary 会给出估算的节省额。
+- `costly-attribution`：某个 skill 或插件占归因花费的 20% 以上。skill 的数字是它活跃期间各请求的花费；插件的数字是它自己的列表加上它自带 skill 与代理的请求，而不是它只是被加载进去的所有请求。
+- `whole-reads`、`command-output`、`tool-output`、`huge-tool-result`、`big-paste`：同一文件在两次压缩之间、且期间未被编辑时被整读三次（图片和 PDF 不算）、输出每次请求都被重读的命令和工具、单次极大的工具结果、很大的粘贴。
 - `thinking-output`、`effort-max`、`fast-mode`：在 `xhigh` 或 `max` effort 下 thinking 超过输出的 60%（`high` 时需超过 70% 且达到 $3）、多数请求在 `max` effort 下运行，以及 fast 模式超过花费的 20%。
 - `long-prompt-tier`：提示超过模型长上下文价格档（Haiku 超过 100k tokens），并给出多收的金额。
 - `idle-loop`：自节奏 `/loop` 的轮次几乎没做什么，却每次都重发整段对话。

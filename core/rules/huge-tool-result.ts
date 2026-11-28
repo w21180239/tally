@@ -1,7 +1,7 @@
 import { HUGE_RESULT_MIN_TOKENS } from "../flow.ts";
 import type { BigResult } from "../flow.ts";
 import type { Evidence, HintRule } from "../hint.ts";
-import { LISTED, titleOf, tokensText, usdText } from "./shared.ts";
+import { LISTED, sessionEvidence, tokensText, usdText } from "./shared.ts";
 
 /** Size of one tool result, in tokens, from which it is reported: 5 pastes. The scan lists results from this size on. */
 export const HUGE_RESULT_TOKENS = HUGE_RESULT_MIN_TOKENS;
@@ -25,9 +25,7 @@ export const hugeToolResult: HintRule = {
     if (usd < HUGE_RESULT_MIN_USD || summary.total.usd <= 0 || usd / summary.total.usd <= HUGE_RESULT_MIN_SHARE) return [];
     const evidence: Evidence[] = [];
     for (const r of huge.slice(0, LISTED)) {
-      const title = titleOf(summary, r.sessionId);
-      if (title !== undefined && title !== "") evidence.push({ label: "Session", detail: title, kind: "title" });
-      evidence.push(what(r), { label: "Size", detail: `${tokensText(r.tokens)} tokens, ${usdText(r.rereadUsd)} re-read`, kind: "text" });
+      evidence.push(...sessionEvidence(summary, r.sessionId), what(r), { label: "Size", detail: `${tokensText(r.tokens)} tokens, ${usdText(r.rereadUsd)} re-read`, kind: "text" });
     }
     const n = huge.length;
     return [

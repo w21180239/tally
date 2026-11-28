@@ -273,13 +273,13 @@ describe("hint ranking", () => {
         throw new Error("rule bug");
       },
     };
-    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
+    const input = { scope: "span" as const, nowMs: NOW, summary: { total: { usd: 0 } } as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
     expect((await runRules([ruleOf([hintOf("low", 1)]), boom, ruleOf([hintOf("high", 9)])], input)).map((h) => h.rule)).toEqual(["high", "low"]);
     expect(await runRules([], input)).toEqual([]);
   });
 
   test("runRules yields to the caller between rules", async () => {
-    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
+    const input = { scope: "span" as const, nowMs: NOW, summary: { total: { usd: 0 } } as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
     const log: string[] = [];
     const rule = (id: string): HintRule => ({ id, run: () => (log.push(`run ${id}`), []) });
     await runRules([rule("a"), rule("b"), rule("c")], input, async () => void log.push("tick"));
@@ -287,7 +287,7 @@ describe("hint ranking", () => {
   });
 
   test("runRules keeps the costlier hint when two share a rule id", async () => {
-    const input = { scope: "span" as const, nowMs: NOW, summary: {} as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
+    const input = { scope: "span" as const, nowMs: NOW, summary: { total: { usd: 0 } } as never, snaps: [], plugins: [], prices: BUILTIN_PRICES };
     const found = await runRules([ruleOf([hintOf("x", 2, { title: "small" }), hintOf("y", 1), hintOf("x", 7, { title: "big" })]), ruleOf([hintOf("x", 7, { title: "later tie" })])], input);
     expect(found.map((h) => [h.rule, h.usd, h.title])).toEqual([["x", 7, "big"], ["y", 1, "Title of y"]]);
   });
@@ -420,7 +420,7 @@ describe("hints tab", () => {
     const ui = await open($, r, { long: true });
     await ui.press({ key: "open-hint|span|long-session" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Session \u{b7} Fix the widget")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Title \u{b7} Fix the widget")))).toBeDefined();
     expect(await ui.find(TEXT(exact("Peak context \u{b7} 75% full: 750k tokens in a 1M window")))).toBeDefined();
     await ui.unmount();
   });
@@ -430,7 +430,8 @@ describe("hints tab", () => {
     const ui = await open($, r, { long: true });
     await ui.press({ key: "open-hint|span|long-session" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Session")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Title")))).toBeDefined();
+    expect(await ui.find(TEXT(/^Session \u{b7} s-1 \(demo\)$/u))).toBeDefined();
     expect(await ui.find(TEXT(exact("Peak context \u{b7} 75% full: 750k tokens in a 1M window")))).toBeDefined();
     expect(await ui.find(TEXT(/Fix the widget/))).toBeUndefined();
     await ui.unmount();
@@ -439,17 +440,19 @@ describe("hints tab", () => {
   test("installed plugins, breakdown snapshots and the last limits reach the rules", async ($, on) => {
     const r = rig(on);
     r.world.put(registryPath(CFG), JSON.stringify({ version: 2, plugins: { "idle@m": [{ scope: "user", installPath: "/p/idle" }] } }));
-    await saveSnapshot(r.world.$, CFG, "-work-demo", { sessionId: "s-1", ts: ago(0.5), skills: { "idle:thing": 200_000 }, mcp: {}, agents: {}, memory: {}, system: 0, tools: 0 });
+    await saveSnapshot(r.world.$, CFG, "-work-demo", { sessionId: "s-1", ts: ago(0.5), skills: { "idle:thing": 6_000_000 }, mcp: {}, agents: {}, memory: {}, system: 0, tools: 0 });
     r.stored.set(LAST_LIMITS_KEY, { at: NOW, limits: [{ kind: "five_hour", percentUsed: 91, resetsAt: new Date(NOW + 3_600_000).toISOString() }] });
     const ui = await open($, r);
-    // Session: the limit alerts lead (about now, no amount; 4h into the 5h window at 91% also runs out early), then fast mode 2.02, then the plugin's 200k tokens on one request.
-    expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|limit-pace", "title-hint|session|near-limit", "title-hint|session|fast-mode", "title-hint|session|unused-plugin"]);
+    // Session: one limit alert leads (about now, no amount; 4h into the 5h window at 91% also runs out early, so the pace hint absorbs the near-limit one), then fast mode 2.02, then the plugin's 6M listing tokens on one request (over the 1 dollar floor).
+    expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|limit-pace", "title-hint|session|fast-mode", "title-hint|session|unused-plugin"]);
     // The span block carries no limit hint: the limits belong to the live session.
-    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode", "title-hint|span|cache-rebuilt", "title-hint|span|unused-plugin"]);
-    expect(await ui.find(TEXT(exact("Rate-limit window almost spent")))).toBeDefined();
-    await ui.press({ key: "open-hint|session|near-limit" });
+    expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|unused-plugin", "title-hint|span|fast-mode", "title-hint|span|cache-rebuilt"]);
+    expect(await ui.find(TEXT(exact("Rate limit on course to run out")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Rate-limit window almost spent")))).toBeUndefined();
+    await ui.press({ key: "open-hint|session|limit-pace" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("5-hour window \u{b7} 91% consumed; 1h 00m until reset")))).toBeDefined();
+    expect(await ui.find(TEXT(/^5-hour window \u{b7} 91% used, 4h 00m into the window/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^Limit \u{b7} 5-hour window: 91% used\. At 100%/u))).toBeDefined();
     await ui.unmount();
   });
 

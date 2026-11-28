@@ -6,7 +6,7 @@ import { baseName } from "./path.ts";
 import type { InstalledPlugin } from "./plugins.ts";
 import type { PriceTable } from "./pricing.ts";
 import { ALL_RULES } from "./rules/index.ts";
-import { MIN_HINT_USD } from "./rules/shared.ts";
+import { MIN_HINT_SHARE, MIN_HINT_USD } from "./rules/shared.ts";
 import type { Summary } from "./summary.ts";
 
 export type EvidenceKind = "command" | "path" | "title" | "text";
@@ -68,10 +68,11 @@ const NO_TICK: Tick = () => Promise.resolve();
 /** Every rule over `input`, ranked, one hint per rule id (the costlier one). A rule that throws is skipped so the others still show. */
 export async function runRules(rules: readonly HintRule[], input: HintInput, tick: Tick = NO_TICK): Promise<Hint[]> {
   const best = new Map<string, Hint>();
+  const floor = Math.max(MIN_HINT_USD, MIN_HINT_SHARE * input.summary.total.usd);
   for (const rule of rules) {
     try {
       for (const h of rule.run(input)) {
-        if (h.urgent !== true && h.usd > 0 && h.usd < MIN_HINT_USD) continue;
+        if (h.urgent !== true && h.usd > 0 && h.usd < floor) continue;
         const seen = best.get(h.rule);
         if (seen === undefined || h.usd > seen.usd) best.set(h.rule, h);
       }
@@ -80,7 +81,18 @@ export async function runRules(rules: readonly HintRule[], input: HintInput, tic
     }
     await tick();
   }
-  return sortHints([...best.values()]);
+  return sortHints(foldNearLimit(best));
+}
+
+// near-limit and limit-pace say the same thing to the same reader: with both, the pace projection stays and the window facts join its evidence.
+function foldNearLimit(best: Map<string, Hint>): Hint[] {
+  const near = best.get("near-limit");
+  const pace = best.get("limit-pace");
+  const out = [...best.values()];
+  if (near === undefined || pace === undefined) return out;
+  const known = new Set(pace.evidence.map((e) => e.label));
+  const merged: Hint = { ...pace, evidence: [...pace.evidence, ...near.evidence.filter((e) => !known.has(e.label)), { label: "Limit", detail: near.summary, kind: "text" }] };
+  return out.filter((h) => h.rule !== "near-limit" && h.rule !== "limit-pace").concat(merged);
 }
 
 // A leading VAR=value word; the value may hold quoted runs with spaces. An escape, `$(` or a backtick makes it no match.

@@ -61,10 +61,9 @@ function tablesSection(r: Report): string {
 function hintBlock(h: Hint, i: number): string {
   const tags = [h.urgent === true ? "urgent" : "", h.projected === true ? "estimate under a what-if" : "", h.confidence === "low" ? "low confidence" : ""].filter((t) => t !== "");
   const lines = [`### ${i + 1}. ${h.title}`, "", `Rule: ${h.rule}`, "", `${h.usd > 0 ? usd(h.usd) : "No dollar figure"}${tags.length === 0 ? "" : ` (${tags.join(", ")})`}`, "", h.summary, "", `Action: ${h.action}`];
-  if (h.evidence.length > 0) {
-    lines.push("", "Evidence:");
-    for (const e of h.evidence) lines.push(e.detail === "" ? `- ${e.label}` : `- ${e.label}: ${e.detail}`);
-  }
+  // A row `redact` blanked (a session title) carries nothing to read.
+  const shown = h.evidence.filter((e) => e.detail !== "");
+  if (shown.length > 0) lines.push("", "Evidence:", ...shown.map((e) => `- ${e.label}: ${e.detail}`));
   return lines.join("\n");
 }
 

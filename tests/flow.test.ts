@@ -394,22 +394,42 @@ describe("compaction effects", () => {
     expect([e.trigger, e.preTokens, e.savedTokens]).toEqual([undefined, 1200, 900]);
   });
 
-  test("a context still at 60 percent or more is ineffective; the amount is the part above the 60 percent line, re-read until the next compaction", () => {
-    const rows = [...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 1000 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 1100 } })];
+  // A session with an 80k fixed opening context (its first request) that grew to 110k: 30k of it can be compacted.
+  const base = [req({ id: "a", at: 1 * MIN, tokens: { cw5m: 80_000 } }), req({ id: "b", at: 2 * MIN, tokens: { cacheRead: 110_000 } })];
+
+  test("a compressible part still at 60 percent or more is ineffective; the amount is the part above the 60 percent line, re-read until the next compaction", () => {
+    const rows = [...base, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 100_000 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 101_000 } })];
     const e = effects(rows, [cut(3 * MIN)])[0];
-    expect(e.ineffective).toBe(true);
-    // 1000 left of 1200; the line is 720; 280 tokens over, read by two requests.
-    expect(near(e.keptUsd, 280 * 2 * READ_USD)).toBe(true);
-    expect(effects([...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 719 } })], [cut(3 * MIN)])[0].ineffective).toBe(false);
-    expect(effects([...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 720 } })], [cut(3 * MIN)])[0].ineffective).toBe(true);
+    expect([e.baseTokens, e.ineffective]).toEqual([80_000, true]);
+    // 20k left of 30k compressible; the line is 18k; 2k tokens over, read by two requests.
+    expect(near(e.keptUsd, 2000 * 2 * READ_USD)).toBe(true);
+    expect(effects([...base, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 97_999 } })], [cut(3 * MIN)])[0].ineffective).toBe(false);
+    expect(effects([...base, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 98_000 } })], [cut(3 * MIN)])[0].ineffective).toBe(true);
+  });
+
+  test("the fixed base is not counted against a compaction: 103k to 86k over an 80k base shed most of what could go", () => {
+    const rows = [req({ id: "a", at: 1 * MIN, tokens: { cw5m: 80_000 } }), req({ id: "b", at: 2 * MIN, tokens: { cacheRead: 103_000 } }), req({ id: "c", at: 4 * MIN, tokens: { cw5m: 86_000 } })];
+    const e = effects(rows, [cut(3 * MIN)])[0];
+    // 6k left of 23k compressible is 26 percent; the old measure (86/103 = 83 percent) would have flagged it.
+    expect([e.preTokens, e.postTokens, e.ineffective, e.keptUsd]).toEqual([103_000, 86_000, false, 0]);
+  });
+
+  test("a compaction with under 20k above the base is never flagged, whatever it left, however soon another came or after how long an idle", () => {
+    const small = [req({ id: "a", at: 1 * MIN, tokens: { cw5m: 80_000 } }), req({ id: "b", at: 2 * MIN, tokens: { cacheRead: 99_999 } }), req({ id: "c", at: 20 * MIN, tokens: { cw5m: 99_000 } })];
+    const [e] = effects(small, [cut(19 * MIN)]);
+    expect([e.cold, e.ineffective]).toEqual([true, false]);
+    const repeat = effects([...small, req({ id: "d", at: 22 * MIN, tokens: { cacheRead: 99_000 } })], [cut(19 * MIN), cut(21 * MIN)]);
+    expect(repeat.map((c) => [c.repeated, c.ineffective])).toEqual([[true, false], [false, false]]);
+    // 20k above the base is judged.
+    expect(effects([...base.slice(0, 1), req({ id: "b", at: 2 * MIN, tokens: { cacheRead: 100_000 } }), req({ id: "c", at: 4 * MIN, tokens: { cw5m: 100_000 } })], [cut(3 * MIN)])[0].ineffective).toBe(true);
   });
 
   test("a next compaction within 3 requests marks the first one; 4 requests is fine", () => {
-    const quick = [...before, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 300 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 320 } }), req({ id: "e", at: 7 * MIN, tokens: { cw5m: 100 } })];
+    const quick = [...base, req({ id: "c", at: 4 * MIN, tokens: { cw5m: 85_000 } }), req({ id: "d", at: 5 * MIN, tokens: { cacheRead: 86_000 } }), req({ id: "e", at: 7 * MIN, tokens: { cw5m: 82_000 } })];
     const two = effects(quick, [cut(3 * MIN), cut(6 * MIN)]);
     expect(two.map((c) => [c.requests, c.repeated, c.ineffective])).toEqual([[2, true, true], [1, false, false]]);
     expect(two[0].keptUsd).toBe(0);
-    const slow = [...before, ...[4, 5, 6, 7].map((m) => req({ id: `x${m}`, at: m * MIN, tokens: { cacheRead: 300 } })), req({ id: "z", at: 9 * MIN, tokens: { cw5m: 200 } })];
+    const slow = [...base, ...[4, 5, 6, 7].map((m) => req({ id: `x${m}`, at: m * MIN, tokens: { cacheRead: 85_000 } })), req({ id: "z", at: 9 * MIN, tokens: { cw5m: 82_000 } })];
     expect(effects(slow, [cut(3 * MIN), cut(8 * MIN)])[0].ineffective).toBe(false);
   });
 
@@ -427,11 +447,11 @@ describe("compaction effects", () => {
   });
 
   test("a compaction that began after the cache had expired is cold and ineffective, though it shrank the context", () => {
-    const after = [req({ id: "c", at: 11 * MIN, tokens: { cw5m: 300 } })];
-    const cold = effects([...before, ...after], [cut(10 * MIN, { preTokens: 1500 })])[0];
+    const after = [req({ id: "c", at: 11 * MIN, tokens: { cw5m: 85_000 } })];
+    const cold = effects([...base, ...after], [cut(10 * MIN, { preTokens: 110_000 })])[0];
     expect([cold.cold, cold.idleMs, cold.ineffective, cold.keptUsd]).toEqual([true, 8 * MIN, true, 0]);
     // The boundary is written when the compaction ends: it began 2.5 minutes earlier, 2 minutes after the last request.
-    const warm = effects([...before, req({ id: "c", at: 8 * MIN, tokens: { cw5m: 300 } })], [cut(6.5 * MIN, { preTokens: 1500, durationMs: 2.5 * MIN })])[0];
+    const warm = effects([...base, req({ id: "c", at: 8 * MIN, tokens: { cw5m: 85_000 } })], [cut(6.5 * MIN, { preTokens: 110_000, durationMs: 2.5 * MIN })])[0];
     expect([warm.cold, warm.idleMs, warm.ineffective]).toEqual([false, 2 * MIN, false]);
   });
 
@@ -491,9 +511,27 @@ describe("summary compaction", () => {
   });
 
   test("ineffective compactions are listed costliest first with their session and what they left", () => {
-    const c = go().compaction!;
-    // The manual one left 1200 of 1300; the auto one shrank well but was followed by another after 2 requests.
-    expect(c.ineffective.map((e) => [e.sessionId, e.trigger, e.preTokens, e.postTokens])).toEqual([["s", "manual", 1300, 1200], ["s", "auto", 1500, 300]]);
+    // An 80k fixed opening context. The manual one left 25k of 30k compressible; the auto one shed well but was followed by another after 2 requests.
+    const big: Shard = {
+      ...shard(),
+      usage: [
+        req({ id: "a", at: 1 * MIN, cwd: "/work/alpha", tokens: { cw5m: 80_000 } }),
+        req({ id: "b", at: 2 * MIN, cwd: "/work/alpha", tokens: { cacheRead: 120_000 } }),
+        req({ id: "c", at: 4 * MIN, cwd: "/work/alpha", tokens: { cw5m: 100_000 } }),
+        req({ id: "d", at: 5 * MIN, cwd: "/work/alpha", tokens: { cacheRead: 101_000 } }),
+        req({ id: "e", at: 7 * MIN, cwd: "/work/alpha", tokens: { cw5m: 105_000 } }),
+        req({ id: "f", at: 8 * MIN, cwd: "/work/alpha", tokens: { cacheRead: 106_000 } }),
+      ],
+      compacts: [
+        { sessionId: "s", ts: T0 + 3 * MIN, trigger: "auto", preTokens: 120_000 },
+        { sessionId: "s", ts: T0 + 6 * MIN, trigger: "manual", preTokens: 110_000 },
+      ],
+    };
+    const c = summarize([big], PRICES, { span: "30d", nowMs: NOW, tzOffsetMin: 0 }).compaction!;
+    expect(c.ineffective.map((e) => [e.sessionId, e.trigger, e.baseTokens, e.preTokens, e.postTokens])).toEqual([["s", "manual", 80_000, 110_000, 105_000], ["s", "auto", 80_000, 120_000, 100_000]]);
+    expect(c.ineffective[0].keptUsd).toBeGreaterThan(0);
+    // The small-context shard has under 20k above its base: none flagged.
+    expect(go().compaction!.ineffective).toEqual([]);
   });
 
   test("the repo filter and the window apply as they do for the compaction count", () => {

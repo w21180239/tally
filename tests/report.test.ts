@@ -63,6 +63,16 @@ describe("buildReport", () => {
     const md = renderMarkdown(report);
     for (const leak of ["secret", "TOKEN", "example.test", "someone", "private prompt"]) expect(md).not.toContain(leak);
     expect(md).toContain("- Command: curl");
+    // The blanked title leaves no bare "- Prompt" line.
+    expect(md).not.toMatch(/^- Prompt$/m);
+  });
+
+  test("a hint whose only evidence was blanked prints no empty Evidence heading", async () => {
+    const rule = stub([{ label: "Prompt", detail: "private", kind: "title" }]);
+    const md = renderMarkdown(await withRule(rule, () => buildReport(inputOf(summaryOf([usageRow("a", 1)])), OPTS)));
+    const block = md.slice(md.indexOf("Rule: stub-rule"), md.indexOf("## Baseline comparison"));
+    expect(block).toContain("Stub summary.");
+    expect(block).not.toContain("Evidence:");
   });
 
   test("compare needs both a baseline and a run rate; without a baseline the report holds neither", async () => {

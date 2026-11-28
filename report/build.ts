@@ -84,7 +84,7 @@ export async function buildReport(input: HintInput, opts: ReportOpts, tick?: Tic
 }
 
 // Detail dropped, in order, until a snapshot fits: first what each top session carries, then the list, then the bulky tables.
-const BULKY: Array<keyof Summary> = ["flow", "flowByAgent", "pastes", "hugeResults", "wholeReads", "usage", "cacheRebuilds", "mcpReread", "bySubType", "bySkill", "byPlugin", "byMcp"];
+const BULKY: Array<keyof Summary> = ["flow", "flowByAgent", "pastes", "hugeResults", "wholeReads", "usage", "cacheRebuilds", "mcpReread", "bySubType", "bySkill", "byPlugin", "byMcp", "elsewhere"];
 
 /** The report as JSON for `report-<span>.json`, cut down to fit `max` bytes; null when even the cut one is too big. */
 export function snapshotJson(r: Report, max = SNAPSHOT_MAX): string | null {
