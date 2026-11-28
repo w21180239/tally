@@ -32,6 +32,9 @@ describe("path", () => {
     const win = scanRoots(env({ USERPROFILE: "C:\\Users\\a", APPDATA: "C:\\Users\\a\\AppData\\Roaming" }), "win32");
     expect(win).toContain("C:\\Users\\a\\.claude\\projects");
     expect(win).toContain("C:\\Users\\a\\AppData\\Roaming\\Claude\\local-agent-mode-sessions");
+    const store = scanRoots(env({ USERPROFILE: "C:\\Users\\a", LOCALAPPDATA: "D:\\Local" }), "win32");
+    expect(store).toContain("D:\\Local\\Packages\\Claude_pzs8sxrjxfjjc\\LocalCache\\Roaming\\Claude\\local-agent-mode-sessions");
+    expect(win).toContain("C:\\Users\\a\\AppData\\Local\\Packages\\Claude_pzs8sxrjxfjjc\\LocalCache\\Roaming\\Claude\\local-agent-mode-sessions");
     const lin = scanRoots(env({ HOME: "/home/a" }), "linux");
     expect(lin).toContain("/home/a/.config/Claude/local-agent-mode-sessions");
   });
