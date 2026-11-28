@@ -286,8 +286,10 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
   }
+  // flexShrink 0: when a tab is taller than the dock, rows keep their height and the dock clips the rest. A shrinkable
+  // body squeezes its rows under their text, so a wrapped row's second line is drawn over by the row below.
   const body = (
-    <Box key={`body-${tab}`} flexDirection="column">
+    <Box key={`body-${tab}`} flexDirection="column" flexShrink={0}>
       {tabRows}
     </Box>
   );

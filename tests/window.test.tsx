@@ -289,6 +289,19 @@ describe("window: layouts", () => {
     expect((await ui2.find({ key: "tab-session" }))?.props.plain).toBe(true);
     await ui2.unmount();
   });
+
+  test("a docked body does not shrink at any width: rows keep their height and the dock clips (issue #7)", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    for (const bodyColumns of [54, 55, 80, 120]) {
+      const dock: Omit<RenderInput<"Pane">, "surface"> = { ...PANE, props: { ...PANE.props, bodyColumns, scroll: { offset: 0, bodyRows: 40 } } };
+      const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...dock });
+      expect((await ui.find({ key: "window" }))?.props.height).toBe(40);
+      expect((await ui.find({ key: "body-session" }))?.props.flexShrink).toBe(0);
+      await ui.unmount();
+    }
+  });
 });
 
 describe("window: surfaces", () => {
