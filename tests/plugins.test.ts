@@ -42,6 +42,10 @@ describe("pluginsFrom", () => {
     expect(flags(used({ byMcp: { [pluginServerName("alpha", "web")]: money } }))).toEqual([true, false]);
   });
 
+  test("a plugin the status line runs counts as used though no request names it", () => {
+    expect(pluginsFrom([{ name: "hud", mcpServers: [], statusLine: true }, { name: "idle", mcpServers: [] }], s, used()).map((p) => p.used)).toEqual([true, false]);
+  });
+
   test("a user skill that shares a name with a plugin's is not that plugin's use", () => {
     expect(pluginsFrom(inv, s, used({ bySkill: { review: money, plan: money } })).map((p) => p.used)).toEqual([false, false]);
   });
@@ -102,6 +106,15 @@ describe("readInventory", () => {
     expect(await readInventory(w.$, CFG)).toEqual([]);
     w.put(registryPath(CFG), registry({ "gone@m": [{ installPath: "/nowhere" }], "empty@m": [] }));
     expect(await readInventory(w.$, CFG)).toEqual([{ name: "empty", mcpServers: [] }, { name: "gone", mcpServers: [] }]);
+  });
+
+  test("a plugin the settings' status line runs is marked, by its folder name or its install path; others are not", async () => {
+    const w = worldOf();
+    w.put(registryPath(CFG), registry({ "hud@m": [{ installPath: "/p/cache/hud/1.0" }], "bar@m": [{ installPath: "C:\\x\\bar" }], "other@m": [{ installPath: "/p/other" }] }));
+    w.put(`${CFG}/settings.json`, JSON.stringify({ statusLine: { type: "command", command: 'exec "$HOME/.claude/plugins/HUD/statusline.cmd"' } }));
+    expect((await readInventory(w.$, CFG)).map((p) => [p.name, p.statusLine === true])).toEqual([["bar", false], ["hud", true], ["other", false]]);
+    w.put(`${CFG}/settings.json`, JSON.stringify({ statusLine: { command: "node C:\\x\\bar\\line.js" } }));
+    expect((await readInventory(w.$, CFG)).filter((p) => p.statusLine === true).map((p) => p.name)).toEqual(["bar"]);
   });
 
   test("a plugin installed under several ids is read one time, with a tick per plugin", async () => {

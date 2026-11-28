@@ -1,5 +1,5 @@
 import type { Evidence, HintRule } from "../hint.ts";
-import { DEFAULT_WINDOW, LISTED, percentText, sessionEvidence, sessionsUsd, tokensText } from "./shared.ts";
+import { DEFAULT_WINDOW, LISTED, percentText, sessionEvidence, sessionsUsd, tokensText, usdText } from "./shared.ts";
 
 /** A session counts as long when its largest prompt exceeds this fraction of the window. */
 export const FULL_SHARE = 0.7;
@@ -16,6 +16,7 @@ export const longSession: HintRule = {
     for (const [id, peak] of long.slice(0, LISTED)) {
       evidence.push(...sessionEvidence(summary, id));
       evidence.push({ label: "Peak context", detail: `${percentText(peak / size)} full: ${tokensText(peak)} tokens in a ${tokensText(size)} window`, kind: "text" });
+      evidence.push({ label: "Session spend", detail: `${usdText(sessionsUsd(summary, [id]))}, all of it, not a saving`, kind: "text" });
       // An automatic compaction fires when the context runs to the host's limit: the compaction came late.
       const auto = summary.compaction?.bySession[id]?.autoPeak;
       if (auto !== undefined) evidence.push({ label: "Auto-compaction", detail: `ran to the automatic limit at ${tokensText(auto)} tokens`, kind: "text" });
@@ -25,7 +26,8 @@ export const longSession: HintRule = {
       {
         rule: "long-session",
         title: "Sessions close to the context limit",
-        usd: sessionsUsd(summary, long.map(([id]) => id)),
+        // A session's spend is mostly its work; what compacting earlier would save is not measurable from the peak alone.
+        usd: 0,
         summary: `${long.length} ${long.length === 1 ? "session" : "sessions"} peaked at a prompt size over ${percentText(FULL_SHARE)} of the context limit. Each request carried that entire prompt, and answers tend to get worse as the window fills.${ranToLimit > 0 ? ` ${ranToLimit} of them ran into automatic compaction, which fires only once the context reaches the host's limit.` : ""}`,
         action: "Compact earlier: run /compact <next step> at a task boundary, before the window fills, or /clear when the next task is unrelated. /autocompact (the autoCompactWindow setting) sets an earlier point for automatic compaction. A new session begun from a brief hand-off note works too.",
         evidence,

@@ -25,8 +25,9 @@ export type Shard = {
  * unchanged transcripts would lack: an index stamped with another value is dropped and read again.
  * 2: agentType, tool ids and whole reads, user-row sidechain, agentId.
  * 3: failed tool results counted on user rows.
+ * 4: image blocks in tool results sized by pixels, not base64 length.
  */
-export const INDEX_FORMAT = 3;
+export const INDEX_FORMAT = 4;
 
 export const PART_MAX = 3.5 * 1024 * 1024;
 const USAGE_CHUNK = 500;

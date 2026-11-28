@@ -1,5 +1,5 @@
 import { describe, test, expect } from "claude-code/testing";
-import { parseLine } from "../core/parse.ts";
+import { IMAGE_MAX_TOKENS, parseLine } from "../core/parse.ts";
 import type { FileCtx, Parsed } from "../core/types.ts";
 import { assistant, user, toolResult, compactBoundary, meta, SESSION, TIME } from "./fixtures/lines.ts";
 
@@ -147,6 +147,22 @@ describe("parseLine user", () => {
     expect(r.toolUseId).toBe("tu-1");
     expect(r.chars).toBe(5);
     expect(userRow(parseLine(toolResult("tu-2", [{ type: "text", text: "a" }]), ctx)).chars).toBe(JSON.stringify([{ type: "text", text: "a" }]).length);
+  });
+
+  // A PNG header for the given size, base64, padded with filler so the data is as long as a real screenshot's.
+  const png = (w: number, h: number): string => {
+    const head = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, w >>> 24, (w >> 16) & 255, (w >> 8) & 255, w & 255, h >>> 24, (h >> 16) & 255, (h >> 8) & 255, h & 255];
+    return btoa(String.fromCharCode(...head)) + "A".repeat(150_000);
+  };
+  const image = (data: string) => ({ type: "image", source: { type: "base64", media_type: "image/png", data } });
+
+  test("an image counts by its pixels, not its base64 length: 4 chars a token, long edge scaled to 1568, capped", () => {
+    // 1000x750 = 1000 tokens; 3136x1568 scales to 1568x784 = 1639, capped; a JPEG or torn header takes the cap.
+    expect(userRow(parseLine(toolResult("tu-3", [image(png(1000, 750))]), ctx)).chars).toBe(JSON.stringify([]).length + 4000);
+    expect(userRow(parseLine(toolResult("tu-4", [image(png(3136, 1568))]), ctx)).chars).toBe(2 + 4 * IMAGE_MAX_TOKENS);
+    expect(userRow(parseLine(toolResult("tu-5", [image("/9j/" + "A".repeat(150_000))]), ctx)).chars).toBe(2 + 4 * IMAGE_MAX_TOKENS);
+    const mixed = userRow(parseLine(toolResult("tu-6", [{ type: "text", text: "a" }, image(png(1000, 750))]), ctx)).chars;
+    expect(mixed).toBe(JSON.stringify([{ type: "text", text: "a" }]).length + 4000);
   });
   test("several tool results keep per-block sizes", () => {
     const line = user([
