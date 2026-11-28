@@ -1,5 +1,22 @@
+import type { On } from "claude-code";
 import { describe, test, expect } from "claude-code/testing";
-import { worldOf } from "./world.ts";
+import { clockOf, worldOf } from "./world.ts";
+
+describe("clockOf", () => {
+  test("answers a zero wait at once and holds a longer one until the clock moves", async () => {
+    const handlers = new Map<string, (c: unknown, e: { ms: number }, next: unknown) => unknown>();
+    const on = ((event: string, h: never) => void handlers.set(event, h)) as unknown as On;
+    const clock = clockOf(on, { now: 0 });
+    const sleep = handlers.get("clock.sleep")!;
+    expect(await sleep({}, { ms: 0 }, undefined)).toEqual({ value: undefined });
+    let woke = false;
+    void Promise.resolve(sleep({}, { ms: 10 }, { signal: new AbortController().signal })).then(() => void (woke = true));
+    await clock.settle();
+    expect(woke).toBe(false);
+    await clock.advance(10);
+    expect(woke).toBe(true);
+  });
+});
 
 describe("fake world", () => {
   test("reads slice UTF-8 bytes and decode cut characters to U+FFFD", async () => {

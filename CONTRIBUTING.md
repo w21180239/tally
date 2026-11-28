@@ -12,6 +12,7 @@ The most useful things you can send are bug reports with `/tally debug` output, 
    claude plugin test .
    ```
 
+   `claude plugin test` starts every test file at once and has no way to cap that. On a heavily loaded machine (a laptop under a build, a small CI runner) an engine-driven test can still time out; a green re-run is the check, and a test that fails twice in a row is a real failure.
 3. Add or update a test for any behavior change. For a bug fix, flip the assertion once and confirm the test fails before you commit.
 4. Note user-visible changes under a new heading in `CHANGELOG.md`.
 5. If you change a setting, a key or a hint, update `README.md`, `README.zh-cn.md` and the pages under `docs/` in the same pull request. If you cannot write Chinese, say so in the pull request and the maintainer will translate.

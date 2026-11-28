@@ -1,5 +1,24 @@
 // In-memory fake `$` for engine tests. The kit's `Engine` speaks hook events, not the plugin-side
 // `$.fs.read(path, opts)` shape, so engine code is tested against this plain object instead.
+import type { On } from "claude-code";
+import { mock } from "claude-code/testing";
+
+/**
+ * `mock.clock` that answers a zero wait at once, as the real host does. The kit's own clock holds `$.clock.sleep(0)`
+ * until the test advances it, so the slicer's yield (after 50 ms of real CPU time) would stall a hook for the kit's
+ * 10 s budget whenever a loaded machine pauses the test process between two ticks.
+ */
+export function clockOf(on: On, opts: { now?: number } = {}): ReturnType<typeof mock.clock> {
+  const wrapped = ((event: string, ...rest: unknown[]) => {
+    if (event === "clock.sleep") {
+      const own = rest[rest.length - 1] as (...a: unknown[]) => unknown;
+      rest[rest.length - 1] = (c: unknown, e: { ms: number }, next: unknown) => (e.ms <= 0 ? { value: undefined } : own(c, e, next));
+    }
+    return (on as (...a: unknown[]) => unknown)(event, ...rest);
+  }) as unknown as On;
+  return mock.clock(wrapped, opts);
+}
+
 type Entry = { bytes: Uint8Array; mtimeMs: number };
 type Kind = "file" | "dir";
 export type FsEntry = { name: string; kind: Kind; size: number; mtimeMs: number; isLink: boolean };

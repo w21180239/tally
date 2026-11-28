@@ -4,7 +4,7 @@ import { describe, expect, mock, test } from "claude-code/testing";
 import type { Shard } from "../core/shard.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { req, T0 } from "./fixtures/rows.ts";
-import { worldOf } from "./world.ts";
+import { clockOf, worldOf } from "./world.ts";
 import type { World } from "./world.ts";
 
 const PLUGIN = "tally";
@@ -59,7 +59,7 @@ function rig(on: On, store: Record<string, unknown> = {}, world?: World): Rig {
     place: { v: () => ({ isPlaced: true }) },
     usage: { v: { startedAt: NOW, context: { tokens: 236_000, window: 1_000_000, percent: 24 }, rateLimits: limits(6), cost: { usd: 0 } } },
     config: { sets: [] },
-    clock: mock.clock(on, { now: NOW }),
+    clock: clockOf(on, { now: NOW }),
     sid: { v: "s-1" },
     logs: [],
     redraws: { n: 0 },
