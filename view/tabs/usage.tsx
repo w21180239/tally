@@ -229,7 +229,7 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   };
 
   for (const s of sections) {
-    out.push(section(t, g, { key: s.kind, name: KIND_LABEL[s.kind], note: KIND_NOTE[s.kind], tokens: tokensText(s.total.tokens), money: money(s.total.usd), est: s.total.estimated === true }));
+    out.push(section(t, g, { key: s.kind, name: KIND_LABEL[s.kind], note: KIND_NOTE[s.kind], tokens: tokensText(s.total.tokens), money: money(s.total.usd) }));
     const cut = cutRows(s.kind, s.rows, view.more);
     hidden += cut.hidden;
     const top = cut.rows.reduce((n, { row: r }) => (isItem(r) ? n : Math.max(n, r.usd)), 0);
