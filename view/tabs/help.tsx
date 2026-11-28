@@ -1,5 +1,6 @@
-// The Help tab: sources of the figures, a legend for colours and keys, the settings with their current values, the
-// price table's provenance and the version. `drawHelp` returns the rows; the tab adds no keys.
+// The Help tab: the keys, a legend for colours and glyphs, where the figures come from, the settings with their
+// current values, the price table's provenance and the version. The keys come from keys.ts, the one source the key
+// line at the window's foot also reads. `drawHelp` returns the rows; the tab adds no keys.
 import type { RenderElement } from "claude-code";
 import { PRICING_URL } from "../../engine/price-update.ts";
 import type { PriceError } from "../../engine/price-update.ts";
@@ -7,17 +8,20 @@ import type { PriceTable } from "../../core/pricing.ts";
 import { SETTING_KEYS } from "../../core/settings.ts";
 import type { Settings } from "../../core/settings.ts";
 import type { HelpData } from "../../engine/help-view.ts";
+import { INDENT, TERM_KEYS, gridOf } from "../grid.ts";
+import { ESC_FOLD, ESC_WORDS, TABS, keyLine } from "../keys.ts";
 import type { KeyCtx } from "../keys.ts";
-import { blank, title } from "../rows.tsx";
+import { blank, hanging, row, section, wrapped } from "../rows.tsx";
 import type { Table } from "../table.ts";
-import { CACHE_MARK, HINT_MARK, HOT_SHARE, WARN_SHARE } from "../theme.ts";
+import { CACHE_MARK, CRIT_MARK, HINT_MARK, HOT_SHARE, PART_GLYPHS, WARN_SHARE } from "../theme.ts";
 
 /** Unpriced models listed before the rest are counted. */
 export const UNPRICED_ROWS = 10;
-const NAME_CELLS = 16;
-const VALUE_CELLS = 22;
-const KEY_CELLS = 14;
 const LEGEND_CELLS = 8;
+/** A setting's value column: `cents-and-dollars` is the longest word a setting takes. */
+const VALUE_CELLS = 18;
+const NOTE_INDENT = 4;
+const SOURCE_LINES = 3;
 
 export type HelpInput = {
   settings: Settings;
@@ -45,26 +49,34 @@ const SOURCES = [
   "Amounts are list-price API equivalents of your token use, not an invoice.",
 ];
 
-const KEYS: Array<[string, string]> = [
-  ["0-5", "jump to a tab by its number; Help is 0"],
-  ["s", "time span (Usage and Hints)"],
-  ["y", "adopt the chosen hint, so tally can check later that the saving held (Hints)"],
-  ["r", "all repos or the current repo (History and Hints)"],
-  ["t", "this machine or all computers (with a sync folder)"],
-  ["a, p, n", "pick an agent, then step to the previous or next (Usage, Context)"],
-  ["v", "open the chosen agent's transcript (Context); full row text (Usage)"],
-  ["b", "back from a transcript"],
-  ["m", "show the cut lists whole"],
-  ["tab, enter", "walk the rows and open one"],
-  ["esc", "collapse the window to one line"],
+/** Every key that works somewhere, with the words keys.ts gives it, and the keys that are not tab keys. */
+const FULL: KeyCtx = { agents: true, canView: true, canGoBack: true, canFull: true, more: true, rows: true, evidence: true, adopt: true, machines: true };
+const EXTRA_KEYS: Array<[string, string]> = [
   ["ctrl+x, tab", "hand the keyboard to the window"],
   ["/tally", "open the window; add a tab name or a span, or set an option like money dollars"],
 ];
 
+/** The key line's entries, each split into its key and its words; one key that shows twice reads once. */
+export function keyRows(): Array<[string, string]> {
+  const byKey = new Map<string, string[]>();
+  // Hints has the most keys, in the order the key line gives them, so it goes first.
+  for (const { tab } of [...TABS].sort((a, b) => Number(b.tab === "hints") - Number(a.tab === "hints"))) {
+    for (const full of keyLine(tab, FULL)) {
+      const entry = full === ESC_WORDS ? ESC_FOLD : full;
+      const at = entry.indexOf(" ");
+      const [key, words] = at < 0 ? [entry, ""] : [entry.slice(0, at), entry.slice(at + 1)];
+      const seen = byKey.get(key) ?? [];
+      if (!seen.includes(words)) seen.push(words);
+      byKey.set(key, seen);
+    }
+  }
+  return [...byKey.entries()].map(([key, words]): [string, string] => [key, words.join(" / ")]);
+}
+
 const SETTING_NOTES: Record<keyof Settings, string> = {
   priceUpdate: "fetch current prices weekly",
-  syncDir: "git-synced folder for sharing totals between machines",
-  machineName: "this machine's label in shared totals; empty uses the hostname",
+  syncDir: "git-synced folder for sharing totals between computers",
+  machineName: "this computer's label in shared totals; empty uses the hostname",
   shareDetail: "how much shared totals reveal: numbers, repos or full",
   redactEvidence: "in hint evidence, commands keep the program name, paths the file name, titles are blank",
   recheckDays: "days after a hint is adopted before tally checks whether the saving held",
@@ -84,81 +96,52 @@ export function drawHelp(t: Table, i: HelpInput): HelpDrawing {
   const { Box, Text } = t;
   const { settings, prices, priceError, data } = i;
   const out: RenderElement[] = [];
+  const g = gridOf(t.cols, { money: true, moneyCells: VALUE_CELLS });
+  const head = gridOf(t.cols);
   const line = (key: string, text: string, tone?: "warning"): void => {
     out.push(
-      <Box key={key} paddingLeft={2}>
-        <Text {...(tone === undefined ? { dimColor: true } : { color: tone })}>{text}</Text>
+      <Box key={key} paddingLeft={INDENT}>
+        <Text wrap="wrap" {...(tone === undefined ? { dimColor: true } : { color: tone })}>
+          {text}
+        </Text>
       </Box>,
     );
   };
-  const pair = (key: string, left: string, cells: number, right: string): void => {
-    out.push(
-      <Box key={key} flexDirection="row" columnGap={1} paddingLeft={2}>
-        <Box width={cells} flexShrink={0}>
-          <Text>{left}</Text>
-        </Box>
-        <Box flexGrow={1} flexShrink={1}>
-          <Text dimColor>{right}</Text>
-        </Box>
-      </Box>,
-    );
-  };
+  const legend = (key: string, term: string, text: string, color?: string): RenderElement => hanging(t, key, term, text, { cells: LEGEND_CELLS, ...(color !== undefined && { termColor: color }) });
 
-  out.push(title(t, "sources", "Data sources"));
-  SOURCES.forEach((s, n) => line(`source-${n}`, s));
-  out.push(blank(t, "sources"));
-
-  out.push(title(t, "colours", "Colours"));
-  const legend: Array<[string, "success" | "warning" | "error" | "claude", string]> = [
-    ["green", "success", `under ${percent(WARN_SHARE)} of a window or budget used`],
-    ["amber", "warning", `${percent(WARN_SHARE)} up to ${percent(HOT_SHARE)} used`],
-    ["red", "error", `${percent(HOT_SHARE)} or more used`],
-    ["orange", "claude", "the main share in a bar"],
-  ];
-  for (const [name, color, meaning] of legend) {
-    out.push(
-      <Box key={`colour-${name}`} flexDirection="row" columnGap={1} paddingLeft={2}>
-        <Box width={LEGEND_CELLS} flexShrink={0}>
-          <Text color={color}>{name}</Text>
-        </Box>
-        <Box flexGrow={1} flexShrink={1}>
-          <Text dimColor>{meaning}</Text>
-        </Box>
-      </Box>,
-    );
-  }
-  pair("colour-dim", "dim", LEGEND_CELLS, "secondary labels and figures");
-  pair("colour-hint", HINT_MARK, LEGEND_CELLS, "a hint was found");
-  pair("colour-cache", CACHE_MARK, LEGEND_CELLS, "time left before the prompt cache expires");
-  out.push(blank(t, "colours"));
-
-  out.push(title(t, "keys", "Keys"));
-  KEYS.forEach(([key, meaning], n) => pair(`key-${n}`, key, KEY_CELLS, meaning));
+  out.push(section(t, head, { key: "keys", name: "Keys", note: "the key line at the foot shows those that work on this tab" }));
+  const rows = [...keyRows(), ...EXTRA_KEYS];
+  rows.forEach(([key, words], n) => out.push(hanging(t, `key-${n}`, key, words, { cells: TERM_KEYS, termColor: "claude" })));
   out.push(blank(t, "keys"));
 
-  out.push(title(t, "settings", "Settings", "change them in the plugin menu or with /tally <name> <value>"));
+  out.push(section(t, head, { key: "colours", name: "Colours" }));
+  out.push(legend("colour-green", "green", `under ${percent(WARN_SHARE)} of a window or budget used`, "success"));
+  out.push(legend("colour-amber", "amber", `${percent(WARN_SHARE)} up to ${percent(HOT_SHARE)} used, with a word such as near limit`, "warning"));
+  out.push(legend("colour-red", "red", `${percent(HOT_SHARE)} or more used; a red figure starts with ${CRIT_MARK}`, "error"));
+  out.push(legend("colour-orange", "orange", "key names and the main thread's part of a bar", "claude"));
+  out.push(legend("colour-dim", "dim", "secondary labels and figures"));
+  out.push(legend("glyph-parts", PART_GLYPHS.join(""), "the parts of a stacked bar, each with its own colour too"));
+  out.push(legend("glyph-hours", "\u{2582}\u{2583}\u{2585}\u{2587}\u{2588}", "tokens in each of the last 8 hours; taller is more, a dot is none"));
+  out.push(legend("glyph-hint", HINT_MARK, "a hint was found"));
+  out.push(legend("glyph-cache", CACHE_MARK, "time left before the prompt cache expires"));
+  out.push(blank(t, "colours"));
+
+  out.push(section(t, head, { key: "sources", name: "Data sources" }));
+  SOURCES.forEach((s, n) => out.push(wrapped(t, `source-${n}`, s, { max: SOURCE_LINES, quiet: true })));
+  out.push(blank(t, "sources"));
+
+  out.push(section(t, head, { key: "settings", name: "Settings", note: "plugin menu or /tally <name> <value>" }));
   for (const key of SETTING_KEYS) {
-    out.push(
-      <Box key={`setting-${key}`} flexDirection="row" columnGap={1} paddingLeft={2}>
-        <Box width={NAME_CELLS} flexShrink={0}>
-          <Text>{key}</Text>
-        </Box>
-        <Box width={VALUE_CELLS} flexShrink={0}>
-          <Text weight="bold">{valueText(settings[key])}</Text>
-        </Box>
-        <Box flexGrow={1} flexShrink={1}>
-          <Text dimColor>{SETTING_NOTES[key]}</Text>
-        </Box>
-      </Box>,
-    );
+    out.push(row(t, g, { key: `setting-${key}`, label: key, money: valueText(settings[key]) }));
+    out.push(wrapped(t, `setting-${key}-note`, SETTING_NOTES[key], { max: 2, quiet: true, indent: NOTE_INDENT }));
   }
   out.push(blank(t, "settings"));
 
-  out.push(title(t, "prices", "Prices"));
+  out.push(section(t, head, { key: "prices", name: "Prices" }));
   const source = prices.source === "builtin" ? `built-in (${isoDay(prices.updatedAt)})` : `fetched ${isoDay(prices.updatedAt)} from ${PRICING_PAGE}`;
   out.push(
-    <Box key="prices-source" paddingLeft={2}>
-      <Text>{`Prices: ${source}`}</Text>
+    <Box key="prices-source" paddingLeft={INDENT}>
+      <Text wrap="wrap">{`Prices: ${source}`}</Text>
     </Box>,
   );
   line("prices-size", `${Object.keys(prices.models).length} models, fast mode ${prices.fastMul}x`);
@@ -171,8 +154,8 @@ export function drawHelp(t: Table, i: HelpInput): HelpDrawing {
       line("unpriced-note", "These models have no price and are counted as $0:");
       for (const m of data.unpriced.slice(0, UNPRICED_ROWS)) {
         out.push(
-          <Box key={`unpriced-${m}`} paddingLeft={4}>
-            <Text>{m}</Text>
+          <Box key={`unpriced-${m}`} paddingLeft={NOTE_INDENT}>
+            <Text wrap="truncate-end">{m}</Text>
           </Box>,
         );
       }
@@ -186,9 +169,9 @@ export function drawHelp(t: Table, i: HelpInput): HelpDrawing {
   }
   out.push(blank(t, "prices"));
 
-  out.push(title(t, "version", "Version"));
+  out.push(section(t, head, { key: "version", name: "Version" }));
   out.push(
-    <Box key="version-text" paddingLeft={2}>
+    <Box key="version-text" paddingLeft={INDENT}>
       <Text>{data.version === "" ? "tally (version unknown)" : `tally ${data.version}`}</Text>
     </Box>,
   );

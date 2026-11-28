@@ -36,8 +36,8 @@ const fitEnd = (s: string, width: number): string => (width === INF || s.length 
 
 function renderText(n: Exclude<Node, string>, width: number): string[] {
   const s = textOf(n);
-  const wrap = n.props.wrap;
-  const max = num(n.props.maxLines);
+  const wrap = n.props?.wrap;
+  const max = num(n.props?.maxLines);
   if (typeof wrap === "string" && wrap !== "wrap") return s.split("\n").map((l) => fitEnd(l, width));
   const lines = wrapLines(s, width);
   if (max !== undefined && lines.length > max) return [...lines.slice(0, max - 1), fitEnd(`${lines[max - 1]}\u{2026}`, width)];
@@ -47,8 +47,9 @@ function renderText(n: Exclude<Node, string>, width: number): string[] {
 const widest = (lines: string[]): number => lines.reduce((m, l) => Math.max(m, l.length), 0);
 
 /** The lines of `n` laid out in `width` cells (INF for its natural size). */
-export function render(n: Node, width: number): string[] {
-  if (typeof n === "string") return wrapLines(n, width);
+export function render(node: Node, width: number): string[] {
+  if (typeof node === "string") return wrapLines(node, width);
+  const n = node.props === undefined ? { ...node, props: {} } : node;
   if (n.type === "Text" || n.type === "Button") return renderText(n, width);
   if (n.type === "Svg") return [];
   if (n.props.display === "none") return [];
@@ -66,7 +67,7 @@ export function render(n: Node, width: number): string[] {
 function renderRow(n: Exclude<Node, string>, kids: Node[], width: number): string[] {
   const gap = num(n.props.columnGap) ?? num(n.props.gap) ?? 0;
   const items = kids.map((c) => {
-    const p = typeof c === "string" ? {} : c.props;
+    const p = typeof c === "string" ? {} : (c.props ?? {});
     const natural = widest(render(c, INF));
     return { c, base: num(p.width) ?? natural, grow: num(p.flexGrow) ?? 0, shrink: num(p.flexShrink) ?? 1, min: num(p.minWidth) ?? 0 };
   });
@@ -91,7 +92,7 @@ function renderRow(n: Exclude<Node, string>, kids: Node[], width: number): strin
   const cols = items.map((i, k) => {
     const w = sizes[k]!;
     let lines = render(i.c, w);
-    const p = typeof i.c === "string" ? {} : i.c.props;
+    const p = typeof i.c === "string" ? {} : (i.c.props ?? {});
     if (p.justifyContent === "flex-end") lines = lines.map((l) => l.padStart(w));
     return { lines, w };
   });

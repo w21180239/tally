@@ -6,12 +6,15 @@ import type { RenderElement } from "claude-code";
 import { dayWords, historyKeyOf, localDayName, scanText } from "../../core/history.ts";
 import type { HistoryData, ScanState } from "../../core/history.ts";
 import { KIND_LABEL, shortModel } from "../../core/usage-detail.ts";
-import { moneyOf, tokensText } from "../data.ts";
+import { headlineOf, moneyColumn, tokensText } from "../data.ts";
 import type { WindowData } from "../data.ts";
+import { gridOf } from "../grid.ts";
 import type { KeyCtx } from "../keys.ts";
-import { amountRow, blank, textLines, title } from "../rows.tsx";
+import { blank, row, section, status, textLines } from "../rows.tsx";
 import type { Table } from "../table.ts";
-import { SEP } from "../theme.ts";
+import { SEP, textBar } from "../theme.ts";
+
+const SCAN_BAR_CELLS = 8;
 
 /** Rows a section lists before `m` opens the rest; the day list shows a week. */
 export const SECTION_ROWS = 5;
@@ -45,7 +48,7 @@ export const ONLY_HERE = "This computer only";
 export const SOME_MISSING = "Not every computer shares this";
 
 export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
-  const { Text, Button } = t;
+  const { Box, Text, Button } = t;
   const { d, view } = i;
   const ctx: KeyCtx = {};
   const out: RenderElement[] = [];
@@ -63,32 +66,56 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
     const label = labelOf(block);
     return label === undefined ? note : note === undefined ? label : `${note}${SEP}${label}`;
   };
+  // A running scan reads as progress: what is happening, how far, and that the figures are not final.
+  const percent = i.scan?.percent ?? null;
   const scanLine: RenderElement[] =
     i.scan === null
       ? []
-      : [
-          <Text key="scan" dimColor wrap="truncate-end">
-            {scanText(i.scan)}
-          </Text>,
-        ];
+      : percent === null
+        ? [
+            <Text key="scan" dimColor wrap="truncate-end">
+              {scanText(i.scan)}
+            </Text>,
+          ]
+        : [
+            <Box key="scan" flexDirection="row" columnGap={1}>
+              <Text>Indexing transcripts</Text>
+              <Text>{textBar(percent / 100, SCAN_BAR_CELLS)}</Text>
+              <Text>{`${percent}%`}</Text>
+              <Text dimColor wrap="truncate-end">figures are still changing</Text>
+            </Box>,
+          ];
 
   if (data.key !== want) {
-    if (data.failure?.key === want) return { rows: [<Text key="failed" dimColor wrap="truncate-end">{`Could not read the index: ${data.failure.why}`}</Text>], ctx };
-    return { rows: [<Text key="loading" dimColor>Reading the index...</Text>, ...scanLine], ctx };
+    if (data.failure?.key === want) return { rows: [status(t, "failed", `Could not read the index: ${data.failure.why}`, "tally reads it again on the next refresh.")], ctx };
+    return { rows: [status(t, "loading", "Reading the index...", "History fills in as the transcripts are read. It is safe to keep working."), ...scanLine], ctx };
   }
   const where = i.repoOnly ? ` in ${data.repo}` : "";
   if (data.requests === 0) {
     // No index yet means unknown, not zero.
     if (i.scan !== null || data.unread > 0) {
-      return { rows: [<Text key="unknown" dimColor>{`No figures for ${SPAN_WORDS}${where} yet: the transcripts are not indexed.`}</Text>, ...scanLine], ctx };
+      return { rows: [status(t, "unknown", `No figures for ${SPAN_WORDS}${where} yet: the transcripts are not indexed.`, "History fills in as projects finish. It is safe to keep working."), ...scanLine], ctx };
     }
-    return { rows: [<Text key="empty" dimColor>{`No requests in ${SPAN_WORDS}${where}.`}</Text>], ctx };
+    return { rows: [status(t, "empty", `No requests in ${SPAN_WORDS}${where}.`, i.repoOnly ? "Press r to look at all repos." : "Spend appears here once a conversation has run.")], ctx };
   }
 
-  const { Box } = t;
+  const g = gridOf(t.cols, { tokens: true, money: true, bar: true });
+  // One block for every amount in the money column, so the column reads in one unit.
+  const money = moneyColumn(d, [
+    data.total.usd,
+    ...data.kinds.map((k) => k.usd),
+    ...data.days.map((x) => x.usd),
+    ...data.models.map((m) => m.usd),
+    data.main.usd,
+    data.sub.usd,
+    ...data.subTypes.map((s) => s.usd),
+    ...data.repos.map((r) => r.usd),
+    ...data.sessions.map((s) => s.usd),
+    ...data.mcp.map((m) => m.usd),
+  ]);
   out.push(
     <Box key="headline" flexDirection="row" columnGap={1}>
-      <Text weight="bold">{moneyOf(d, data.total.usd)}</Text>
+      <Text weight="bold">{headlineOf(d, data.total.usd)}</Text>
       <Text dimColor wrap="truncate-end">{`${tokensText(data.total.tokens)} tokens in ${SPAN_WORDS}${SEP}${data.requests} ${data.requests === 1 ? "request" : "requests"}${i.repoOnly ? `${SEP}${data.repo}` : ""}`}</Text>
     </Box>,
     ...scanLine,
@@ -139,43 +166,47 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
   const topOf = (values: number[]): number => values.reduce((a, v) => Math.max(a, v), 0);
   const share = (v: number, top: number): number => (top > 0 ? v / top : 0);
 
-  out.push(title(t, "kinds", "Billed kinds", noted("usage", "tokens and spend")));
+  const head = (key: string, name: string, note?: string): RenderElement => section(t, g, { key, name, ...(note !== undefined && { note }) });
+  const nested = (key: string, label: string, usd: number, top: number, extra: { tokens?: number } = {}): RenderElement =>
+    row(t, g, { key, label, money: money(usd), share: share(usd, top), ...(extra.tokens !== undefined && { tokens: tokensText(extra.tokens) }) });
+
+  out.push(head("kinds", "Billed kinds", noted("usage", "tokens and spend")));
   const kindTop = topOf(data.kinds.map((k) => k.usd));
-  for (const k of data.kinds) out.push(amountRow(t, { key: `kind-${k.kind}`, label: `${KIND_LABEL[k.kind]}${SEP}${tokensText(k.tokens)}`, amount: moneyOf(d, k.usd), share: share(k.usd, kindTop) }));
+  for (const k of data.kinds) out.push(nested(`kind-${k.kind}`, KIND_LABEL[k.kind], k.usd, kindTop, { tokens: k.tokens }));
   out.push(blank(t, "kinds"));
 
-  out.push(title(t, "days", "Spend per day", "newest first"));
+  out.push(head("days", "Spend per day", "newest first"));
   const dayTop = topOf(data.days.map((x) => x.usd));
-  for (const x of shownOf(data.days, DAYS_SHOWN)) out.push(amountRow(t, { key: `day-${x.day}`, label: `${dayWords(x.day)}${SEP}${tokensText(x.tokens)}`, amount: moneyOf(d, x.usd), share: share(x.usd, dayTop) }));
+  for (const x of shownOf(data.days, DAYS_SHOWN)) out.push(nested(`day-${x.day}`, dayWords(x.day), x.usd, dayTop, { tokens: x.tokens }));
   out.push(blank(t, "days"));
 
-  out.push(title(t, "models", "Spend per model"));
+  out.push(head("models", "Spend per model"));
   const modelTop = topOf(data.models.map((m) => m.usd));
-  for (const m of shownOf(data.models, SECTION_ROWS)) out.push(amountRow(t, { key: `model-${m.name}`, label: shortModel(m.name), amount: moneyOf(d, m.usd), share: share(m.usd, modelTop) }));
+  for (const m of shownOf(data.models, SECTION_ROWS)) out.push(nested(`model-${m.name}`, shortModel(m.name), m.usd, modelTop, { tokens: m.tokens }));
   out.push(blank(t, "models"));
 
-  out.push(title(t, "split", "Main thread and sub-agents"));
+  out.push(head("split", "Main thread and sub-agents"));
   const splitTop = Math.max(data.main.usd, data.sub.usd);
-  out.push(amountRow(t, { key: "split-main", label: "Main thread", amount: moneyOf(d, data.main.usd), share: share(data.main.usd, splitTop) }));
-  out.push(amountRow(t, { key: "split-sub", label: "Sub-agents", amount: moneyOf(d, data.sub.usd), share: share(data.sub.usd, splitTop) }));
+  out.push(nested("split-main", "Main thread", data.main.usd, splitTop));
+  out.push(nested("split-sub", "Sub-agents", data.sub.usd, splitTop));
   out.push(blank(t, "split"));
 
   if (data.subTypes.length > 0) {
-    out.push(title(t, "subtypes", "Sub-agent type and model"));
+    out.push(head("subtypes", "Sub-agent type and model"));
     const top = topOf(data.subTypes.map((s) => s.usd));
-    for (const s of shownOf(data.subTypes, SECTION_ROWS)) out.push(amountRow(t, { key: `subtype-${s.type}-${s.model}`, label: `${s.type}${SEP}${shortModel(s.model)}`, amount: moneyOf(d, s.usd), share: share(s.usd, top) }));
+    for (const s of shownOf(data.subTypes, SECTION_ROWS)) out.push(nested(`subtype-${s.type}-${s.model}`, `${s.type}${SEP}${shortModel(s.model)}`, s.usd, top));
     out.push(blank(t, "subtypes"));
   }
 
   if (!i.repoOnly && data.repos.length > 0) {
-    out.push(title(t, "repos", "Spend per repo", noted("byRepo")));
+    out.push(head("repos", "Spend per repo", noted("byRepo")));
     const top = topOf(data.repos.map((r) => r.usd));
-    for (const r of shownOf(data.repos, SECTION_ROWS)) out.push(amountRow(t, { key: `repo-${r.name}`, label: r.name, amount: moneyOf(d, r.usd), share: share(r.usd, top) }));
+    for (const r of shownOf(data.repos, SECTION_ROWS)) out.push(nested(`repo-${r.name}`, r.name, r.usd, top));
     out.push(blank(t, "repos"));
   }
 
   if (data.sessions.length > 0) {
-    out.push(title(t, "sessions", "Largest sessions", noted("topSessions", "press a row for its resume command")));
+    out.push(head("sessions", "Largest sessions", noted("topSessions", "press a row to resume")));
     const top = topOf(data.sessions.map((s) => s.usd));
     for (const s of shownOf(data.sessions, SECTION_ROWS)) {
       const key = sessionRowKey(s.sessionId);
@@ -183,7 +214,7 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
       const day = dayWords(localDayName(s.started, -new Date(s.started).getTimezoneOffset()));
       // A session of another computer resumes only there: its machine is named and no resume line is offered.
       const elsewhere = merged?.sessionMachine[s.sessionId];
-      out.push(amountRow(t, { key, label: `${name}${SEP}${day}${SEP}${s.repo}${elsewhere === undefined ? "" : `${SEP}${elsewhere}`}`, amount: moneyOf(d, s.usd), share: share(s.usd, top), onPress: () => i.onShown(key) }));
+      out.push(row(t, g, { key, label: `${name}${SEP}${day}${SEP}${s.repo}${elsewhere === undefined ? "" : `${SEP}${elsewhere}`}`, money: money(s.usd), share: share(s.usd, top), onPress: () => i.onShown(key) }));
       ctx.rows = true;
       if (view.shown.includes(key)) {
         const lines = [...(s.title === undefined || s.title === "" ? [] : [s.title]), `session ${s.sessionId}`, ...(s.pr === undefined ? [] : [`PR ${s.pr}`]), elsewhere === undefined ? s.resume : `on ${elsewhere}: resume it there`];
@@ -194,18 +225,18 @@ export function drawHistory(t: Table, i: HistoryInput): HistoryDrawing {
   }
 
   if (data.fill.length > 0) {
-    out.push(title(t, "fill", "Context fill by tool", noted("toolFill", "tokens each tool added, estimated")));
+    out.push(head("fill", "Context fill by tool", noted("toolFill", "tokens each tool added, estimated")));
     const top = topOf(data.fill.map((f) => f.tokens));
-    for (const f of shownOf(data.fill, SECTION_ROWS)) out.push(amountRow(t, { key: `fill-${f.tool}`, label: f.tool, amount: `~${tokensText(f.tokens)}`, share: share(f.tokens, top) }));
+    for (const f of shownOf(data.fill, SECTION_ROWS)) out.push(row(t, g, { key: `fill-${f.tool}`, label: f.tool, tokens: tokensText(f.tokens), est: true, share: share(f.tokens, top) }));
     out.push(blank(t, "fill"));
   }
 
   if (data.mcp.length > 0) {
     const star = data.mcpProxy ? "*" : "";
-    out.push(title(t, "mcp", "MCP servers", noted("byMcp", "schemas and results, re-read")));
+    out.push(head("mcp", "MCP servers", noted("byMcp", "schemas and results, re-read")));
     const top = topOf(data.mcp.map((m) => m.usd));
     for (const m of shownOf(data.mcp, SECTION_ROWS)) {
-      out.push(amountRow(t, { key: `mcp-${m.server}`, label: `${m.server}${m.calls > 0 ? `${SEP}${m.calls} ${m.calls === 1 ? "call" : "calls"}` : ""}`, amount: `${moneyOf(d, m.usd)}${star}`, share: share(m.usd, top) }));
+      out.push(row(t, g, { key: `mcp-${m.server}`, label: `${m.server}${m.calls > 0 ? `${SEP}${m.calls} ${m.calls === 1 ? "call" : "calls"}` : ""}`, money: `${money(m.usd)}${star}`, share: share(m.usd, top) }));
     }
     if (data.mcpProxy) out.push(<Text key="mcp-proxy" dimColor wrap="truncate-end">* some schema sizes come from a snapshot of another session</Text>);
     if (data.mcpMissing > 0) {

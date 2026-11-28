@@ -298,7 +298,7 @@ describe("usage tab", () => {
     await stepOnce($, { turnId: "t1", index: 0, model: OPUS, messageCount: 2 } as never);
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    await ui.press({ key: "kind-cacheRead" });
+    await ui.press({ key: "open-kind-cacheRead" });
     await r.clock.settle();
     expect(await ui.find({ key: "body-usage" })).toBeDefined();
     expect(r.stored.get("span")).toBe("session");

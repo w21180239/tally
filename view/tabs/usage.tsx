@@ -7,20 +7,19 @@ import { KIND_LABEL, KIND_NOTE, usageText } from "../../core/usage-detail.ts";
 import type { DetailRow } from "../../core/usage-detail.ts";
 import { usageKeyOf } from "../../engine/usage-view.ts";
 import type { UsageData, UsageSection } from "../../engine/usage-view.ts";
-import { moneyOf, tokensText } from "../data.ts";
+import { headlineOf, moneyColumn, tokensText } from "../data.ts";
 import type { WindowData } from "../data.ts";
+import { gridOf } from "../grid.ts";
 import type { KeyCtx } from "../keys.ts";
+import { blank as gap, row, section, status } from "../rows.tsx";
 import type { Table } from "../table.ts";
-import { SEP, svgBar, textBar } from "../theme.ts";
+import { SEP } from "../theme.ts";
 
 /** Items listed under a group before the rest fold under `m`. */
 export const ITEM_ROWS = 3;
-const TOKEN_CELLS = 7;
-const MONEY_CELLS = 8;
-const BAR_CELLS = 8;
-const SVG_BAR_PX = 60;
-const SVG_BAR_H = 8;
 const FULL_LINES = 12;
+/** A row's full text hangs under its label, a step deeper than the row itself. */
+const FULL_INDENT = 4;
 
 export type UsageView = { agent: string; listing: boolean; full: boolean; shown: string[]; more: boolean };
 
@@ -74,34 +73,35 @@ function cutRows(kind: string, rows: DetailRow[], more: boolean): Cut {
   return { rows: out, hidden: rows.length - out.length };
 }
 
-const cell = (d: WindowData, r: { tokens: number; usd: number; estimated?: boolean }): { tokens: string; money: string } => ({
-  tokens: `${r.estimated === true ? "~" : ""}${tokensText(r.tokens)}`,
-  money: `${r.estimated === true ? "~" : ""}${moneyOf(d, r.usd)}`,
-});
-
 export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
-  const { Box, Text, Button, Svg } = t;
+  const { Box, Text, Button } = t;
   const { d, data, view } = i;
   const ctx: KeyCtx = {};
   const out: RenderElement[] = [];
-  const blank = (key: string): RenderElement => <Text key={`gap-${key}`}> </Text>;
+  const blank = (key: string): RenderElement => gap(t, key);
 
-  if (i.span === "session" && i.sessionId === "") return { rows: [<Text key="none" dimColor>No session yet.</Text>], ctx };
+  if (i.span === "session" && i.sessionId === "") return { rows: [status(t, "none", "No session yet.", "Start a conversation and Usage fills in.")], ctx };
   if (data.key !== usageKeyOf({ span: i.span, sessionId: i.sessionId })) {
     const want = usageKeyOf({ span: i.span, sessionId: i.sessionId });
-    if (data.failure?.key === want) return { rows: [<Text key="failed" dimColor wrap="truncate-end">{`Could not read the index: ${data.failure.why}`}</Text>], ctx };
-    return { rows: [<Text key="loading" dimColor>Reading the index...</Text>], ctx };
+    if (data.failure?.key === want) return { rows: [status(t, "failed", `Could not read the index: ${data.failure.why}`, "tally reads it again on the next refresh.")], ctx };
+    return { rows: [status(t, "loading", "Reading the index...", "Usage fills in as soon as the transcripts are read.")], ctx };
   }
-  if (data.requests === 0) return { rows: [<Text key="empty" dimColor>{`No requests in ${SPAN_WORDS[i.span]}.`}</Text>], ctx };
+  if (data.requests === 0) {
+    const next = i.span === "session" ? "Send a message and this tab fills in. Earlier days are on 4 History." : "Try another time span with s, or look at 4 History.";
+    return { rows: [status(t, "empty", `No requests in ${SPAN_WORDS[i.span]}.`, next)], ctx };
+  }
 
   const agent = data.by[view.agent] === undefined ? "" : view.agent;
   const sections: UsageSection[] = data.by[agent] ?? [];
-  const money = sections.reduce((n, s) => n + s.total.usd, 0);
+  const spent = sections.reduce((n, s) => n + s.total.usd, 0);
   const tokens = sections.reduce((n, s) => n + s.total.tokens, 0);
+  const g = gridOf(t.cols, { tokens: true, money: true, bar: true });
+  // One block for every amount in the money column, so the column reads in one unit.
+  const money = moneyColumn(d, sections.flatMap((s) => [s.total.usd, ...s.rows.map((r) => r.usd), ...(s.largest ?? []).map((r) => r.usd)]));
 
   out.push(
     <Box key="headline" flexDirection="row" columnGap={1}>
-      <Text weight="bold">{moneyOf(d, money)}</Text>
+      <Text weight="bold">{headlineOf(d, spent)}</Text>
       <Text dimColor>{`${tokensText(tokens)} tokens in ${SPAN_WORDS[i.span]}${agent === "" ? "" : `${SEP}${agentName(data, agent)}`}`}</Text>
     </Box>,
   );
@@ -142,47 +142,30 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   let hidden = 0;
   let canFull = false;
   let hasRows = false;
-  const amountRow = (key: string, row: DetailRow, share: number | null): RenderElement[] => {
-    const c = cell(d, row);
-    const item = isItem(row);
-    const opens = row.full !== undefined;
-    const bar =
-      share === null ? null : Svg === null ? (
-        <Text dimColor>{textBar(share, BAR_CELLS)}</Text>
-      ) : (
-        <Svg source={svgBar(share, SVG_BAR_PX, SVG_BAR_H, "accent")} alt={`${Math.round(share * 100)}%`} width={SVG_BAR_PX} height={SVG_BAR_H} />
-      );
-    const label = opens ? (
-      <Button key={`open-${key}`} plain dimColor={item} onPress={() => i.onShown(key)}>
-        {row.label}
-      </Button>
-    ) : (
-      <Text wrap="truncate-end" dimColor={item}>
-        {row.label}
-      </Text>
-    );
+  const amountRow = (key: string, r: DetailRow, share: number | null): RenderElement[] => {
+    const item = isItem(r);
+    const opens = r.full !== undefined;
     const rows: RenderElement[] = [
-      <Box key={key} flexDirection="row" columnGap={1}>
-        <Box flexGrow={1} flexShrink={1}>
-          {label}
-        </Box>
-        <Box width={TOKEN_CELLS + 1} flexShrink={0} justifyContent="flex-end">
-          <Text dimColor>{c.tokens}</Text>
-        </Box>
-        <Box width={MONEY_CELLS} flexShrink={0} justifyContent="flex-end">
-          <Text dimColor={item}>{c.money}</Text>
-        </Box>
-        {bar}
-      </Box>,
+      row(t, g, {
+        key,
+        label: r.label,
+        tokens: tokensText(r.tokens),
+        money: money(r.usd),
+        ...(r.estimated === true && { est: true }),
+        ...(share !== null && { share }),
+        ...(item && { quiet: true }),
+        ...(opens && { onPress: () => i.onShown(key) }),
+      }),
     ];
     if (opens) {
       canFull = true;
       hasRows = true;
       if (view.full || view.shown.includes(key)) {
-        const lines = row.full!.split(/\r?\n/);
+        const lines = r.full!.split(/\r?\n/);
         const body = lines.length > FULL_LINES ? [...lines.slice(0, FULL_LINES), "..."] : lines;
+        // The text wraps under the row's own indent, so a long command reads as one block.
         rows.push(
-          <Box key={`${key}-full`} flexDirection="column" paddingLeft={2}>
+          <Box key={`${key}-full`} flexDirection="column" paddingLeft={FULL_INDENT}>
             {body.map((line, n) => (
               <Text key={`${key}-line-${n}`} dimColor>
                 {line === "" ? " " : line}
@@ -196,23 +179,7 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   };
 
   for (const s of sections) {
-    const c = cell(d, s.total);
-    out.push(
-      <Box key={`title-${s.kind}`} flexDirection="row" columnGap={1}>
-        <Box flexGrow={1} flexShrink={1} flexDirection="row" columnGap={1}>
-          <Text weight="bold">{KIND_LABEL[s.kind]}</Text>
-          <Text dimColor wrap="truncate-end">
-            {KIND_NOTE[s.kind]}
-          </Text>
-        </Box>
-        <Box width={TOKEN_CELLS + 1} flexShrink={0} justifyContent="flex-end">
-          <Text>{c.tokens}</Text>
-        </Box>
-        <Box width={MONEY_CELLS} flexShrink={0} justifyContent="flex-end">
-          <Text>{c.money}</Text>
-        </Box>
-      </Box>,
-    );
+    out.push(section(t, g, { key: s.kind, name: KIND_LABEL[s.kind], note: KIND_NOTE[s.kind], tokens: tokensText(s.total.tokens), money: money(s.total.usd), est: s.total.estimated === true }));
     const cut = cutRows(s.kind, s.rows, view.more);
     hidden += cut.hidden;
     const top = cut.rows.reduce((n, { row: r }) => (isItem(r) ? n : Math.max(n, r.usd)), 0);
@@ -254,7 +221,7 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   const text = usageText(
     `Usage${SEP}${SPAN_WORDS[i.span]}${SEP}${agentName(data, agent)}`,
     sections.map((s) => ({ title: KIND_LABEL[s.kind], total: s.total, rows: [...s.rows, ...(s.largest ?? []).map((r) => ({ ...r, label: `  ${r.label}` }))] })),
-    { tokens: tokensText, money: (usd) => moneyOf(d, usd) },
+    { tokens: tokensText, money },
   );
   out.push(
     <Button key="usage-copy" plain dimColor onPress={() => i.onCopy(text)}>

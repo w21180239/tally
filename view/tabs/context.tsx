@@ -9,10 +9,12 @@ import { baseName } from "../../core/path.ts";
 import { isActive } from "../../engine/context-view.ts";
 import type { AgentStates } from "../../engine/context-view.ts";
 import type { TranscriptEntry } from "../../engine/subagent-transcript.ts";
-import { moneyOf, percentText, tokensText } from "../data.ts";
+import { blockOf, percentText, tokensText } from "../data.ts";
 import type { WindowData } from "../data.ts";
+import { gridOf } from "../grid.ts";
+import type { Grid } from "../grid.ts";
 import type { KeyCtx } from "../keys.ts";
-import { amountRow, blank, textLines, title } from "../rows.tsx";
+import { blank, row, section, status, wrapped } from "../rows.tsx";
 import type { Table } from "../table.ts";
 import { SEP } from "../theme.ts";
 import { drawTranscript } from "../transcript.tsx";
@@ -66,26 +68,34 @@ const cutOf = <T,>(rows: T[], more: boolean): T[] => (more ? rows : rows.slice(0
 
 type ListSpec = { key: string; heading: string; rows: ContextRow[]; unused: Set<string>; label: (r: ContextRow) => string };
 
-function drawList(t: Table, mark: string, spec: ListSpec, more: boolean, top: number): { rows: RenderElement[]; hidden: number } {
+// A list: a title with what it holds, its rows, and a line that explains the `*` of a deferred row.
+function drawList(t: Table, g: Grid, isEstimate: boolean, spec: ListSpec, more: boolean, top: number): { rows: RenderElement[]; hidden: number } {
   if (spec.rows.length === 0) return { rows: [], hidden: 0 };
+  const { Text } = t;
   const loaded = spec.rows.reduce((n, r) => n + r.tokens, 0);
   const deferred = spec.rows.reduce((n, r) => n + r.deferred, 0);
-  const note = deferred > 0 ? `${tokensText(deferred)} deferred until searched for` : `${spec.rows.length}${spec.unused.size > 0 ? `${SEP}${spec.unused.size} unused` : ""}`;
-  const out: RenderElement[] = [title(t, spec.key, spec.heading, note, `${mark}${tokensText(loaded)}`)];
+  // When nothing was called the list says so once; only a mixed list marks the idle rows.
+  const allIdle = spec.unused.size > 0 && spec.unused.size === spec.rows.length;
+  const note = allIdle ? `${spec.rows.length}${SEP}none called in 30 days` : `${spec.rows.length}${spec.unused.size > 0 ? `${SEP}${spec.unused.size} unused` : ""}`;
+  const out: RenderElement[] = [section(t, g, { key: spec.key, name: spec.heading, note, tokens: tokensText(loaded), est: isEstimate })];
   const shown = cutOf(spec.rows, more);
   for (const r of shown) {
-    const marks = [...(spec.unused.has(r.name) ? ["unused"] : []), ...(r.deferred > 0 ? [r.tokens > 0 ? "part deferred" : "deferred"] : [])];
+    const isIdle = spec.unused.has(r.name) && !allIdle;
     const weight = r.tokens + r.deferred;
+    // A row that is wholly deferred is not in the window yet: its figure is starred.
+    const star = r.tokens === 0 && r.deferred > 0 ? "*" : "";
     out.push(
-      amountRow(t, {
+      row(t, g, {
         key: `${spec.key}-${r.name}`,
-        label: marks.length === 0 ? spec.label(r) : `${spec.label(r)}${SEP}${marks.join(", ")}`,
-        amount: `${mark}${tokensText(weight)}`,
+        label: isIdle ? `${spec.label(r)}${SEP}unused` : r.deferred > 0 && r.tokens > 0 ? `${spec.label(r)}${SEP}part deferred` : spec.label(r),
+        tokens: `${tokensText(weight)}${star}`,
+        est: isEstimate,
         share: top > 0 ? weight / top : 0,
-        quiet: spec.unused.has(r.name) || r.tokens === 0,
+        quiet: isIdle || r.tokens === 0,
       }),
     );
   }
+  if (deferred > 0) out.push(<Text key={`${spec.key}-deferred`} dimColor wrap="truncate-end">{`* ${tokensText(deferred)} deferred: not loaded until searched for`}</Text>);
   return { rows: out, hidden: spec.rows.length - shown.length };
 }
 
@@ -93,10 +103,11 @@ function drawMain(t: Table, i: ContextInput, ctx: KeyCtx): RenderElement[] {
   const { Text, Button } = t;
   const { data, view } = i;
   const out: RenderElement[] = [];
-  const mark = data.precision === "estimated" ? "~" : "";
+  const g = gridOf(t.cols, { tokens: true, bar: true });
+  const isEstimate = data.precision === "estimated";
   const share = usedShare(data);
-  const note = [data.precision === "estimated" ? "estimated, counting follows" : "counted", ...(data.deferred > 0 ? [`${tokensText(data.deferred)} also deferred`] : [])].join(SEP);
-  out.push(title(t, "context", "In every request", note, `${mark}${tokensText(data.total)}`));
+  const note = [isEstimate ? "estimated, counting follows" : "counted", ...(data.deferred > 0 ? [`${tokensText(data.deferred)} also deferred`] : [])].join(SEP);
+  out.push(section(t, g, { key: "context", name: "In every request", note, tokens: tokensText(data.total), est: isEstimate }));
   if (share !== null) out.push(<Text key="context-share" dimColor>{`${percentText(share)} of the ${tokensText(data.max)} window`}</Text>);
 
   const lists: ListSpec[] = [
@@ -112,11 +123,11 @@ function drawMain(t: Table, i: ContextInput, ctx: KeyCtx): RenderElement[] {
   ];
   const top = Math.max(...fixed.map(([, , n]) => n), ...lists.flatMap((l) => l.rows.map((r) => r.tokens + r.deferred)), 0);
   for (const [key, label, n] of fixed) {
-    if (n > 0) out.push(amountRow(t, { key: `part-${key}`, label, amount: `${mark}${tokensText(n)}`, share: top > 0 ? n / top : 0 }));
+    if (n > 0) out.push(row(t, g, { key: `part-${key}`, label, tokens: tokensText(n), est: isEstimate, share: top > 0 ? n / top : 0 }));
   }
   let hidden = 0;
   for (const spec of lists) {
-    const drawn = drawList(t, mark, spec, view.more, top);
+    const drawn = drawList(t, g, isEstimate, spec, view.more, top);
     if (drawn.rows.length === 0) continue;
     out.push(blank(t, `list-${spec.key}`), ...drawn.rows);
     hidden += drawn.hidden;
@@ -125,11 +136,11 @@ function drawMain(t: Table, i: ContextInput, ctx: KeyCtx): RenderElement[] {
     ctx.more = true;
     out.push(
       <Button key="lists-more" plain dimColor hotkey="m" onPress={() => i.onMore(!view.more)}>
-        {view.more ? "fold lists" : `${hidden} more`}
+        {view.more ? "fold lists" : `${hidden} more rows`}
       </Button>,
     );
   }
-  if (data.max > 0) out.push(blank(t, "free"), amountRow(t, { key: "part-free", label: "Free space", amount: `${mark}${tokensText(Math.max(0, data.max - data.total))}`, quiet: true }));
+  if (data.max > 0) out.push(blank(t, "free"), row(t, g, { key: "part-free", label: "Free space", tokens: tokensText(Math.max(0, data.max - data.total)), est: isEstimate, quiet: true }));
   out.push(blank(t, "foot"));
   out.push(
     <Text key="context-note" dimColor wrap="truncate-end">
@@ -182,14 +193,15 @@ function drawAgent(t: Table, i: ContextInput, a: AgentLive, ctx: KeyCtx): Render
   const own = i.states.byId[a.id]?.window;
   const window = own !== undefined && own > 0 ? own : i.d.context.window;
   const note = [a.description, statusWord(i.states, a.id), a.model === "" ? "" : a.model.replace(/^claude-/, "")].filter((s) => s !== "").join(SEP);
-  out.push(title(t, "agent-head", a.type, note));
+  const g = gridOf(t.cols, { tokens: true, money: true, bar: true });
+  out.push(section(t, g, { key: "agent-head", name: a.type, note }));
   out.push(
     a.context > 0
-      ? amountRow(t, { key: "agent-context", label: `Current context${window > 0 ? `${SEP}${percentText(a.context / window)} of its window` : ""}`, amount: tokensText(a.context), share: window > 0 ? a.context / window : null })
-      : amountRow(t, { key: "agent-context", label: "Current context, no request yet", amount: "", quiet: true }),
+      ? row(t, g, { key: "agent-context", label: `Current context${window > 0 ? `${SEP}${percentText(a.context / window)} of its window` : ""}`, tokens: tokensText(a.context), share: window > 0 ? a.context / window : null })
+      : row(t, g, { key: "agent-context", label: "Current context, no request yet", quiet: true }),
   );
-  out.push(amountRow(t, { key: "agent-peak", label: `Highest context${window > 0 ? `${SEP}${percentText(a.peak / window)} of its window` : ""}`, amount: tokensText(a.peak), share: null }));
-  out.push(amountRow(t, { key: "agent-cost", label: "Spent so far", amount: moneyOf(i.d, a.usd), quiet: true }));
+  out.push(row(t, g, { key: "agent-peak", label: `Highest context${window > 0 ? `${SEP}${percentText(a.peak / window)} of its window` : ""}`, tokens: tokensText(a.peak) }));
+  out.push(row(t, g, { key: "agent-cost", label: "Spent so far", money: blockOf(i.d, [a.usd])[0]!, quiet: true }));
 
   out.push(blank(t, "agent-prompt"));
   out.push(
@@ -197,18 +209,18 @@ function drawAgent(t: Table, i: ContextInput, a: AgentLive, ctx: KeyCtx): Render
       First prompt
     </Text>,
   );
-  out.push(a.firstPrompt.trim() === "" ? <Text key="agent-prompt-none" dimColor>{"  (no prompt recorded)"}</Text> : textLines(t, "agent-prompt", a.firstPrompt, PROMPT_LINES));
+  out.push(a.firstPrompt.trim() === "" ? <Text key="agent-prompt-none" dimColor>{"  (no prompt recorded)"}</Text> : wrapped(t, "agent-prompt", a.firstPrompt, { max: PROMPT_LINES, quiet: true }));
 
   const tools = Object.entries(a.tools).sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1));
   out.push(blank(t, "agent-tools"));
-  out.push(title(t, "agent-tools", "Tools used", `${tools.reduce((n, [, c]) => n + c, 0)}`));
+  out.push(section(t, g, { key: "agent-tools", name: "Tools used", tokens: String(tools.reduce((n, [, c]) => n + c, 0)) }));
   if (tools.length === 0) out.push(<Text key="agent-tools-none" dimColor>No tool calls yet.</Text>);
-  for (const [tool, n] of cutOf(tools, i.view.more)) out.push(amountRow(t, { key: `agent-tool-${tool}`, label: tool, amount: String(n), quiet: true }));
+  for (const [tool, n] of cutOf(tools, i.view.more)) out.push(row(t, g, { key: `agent-tool-${tool}`, label: tool, tokens: String(n), quiet: true }));
   if (tools.length > LIST_ROWS) {
     ctx.more = true;
     out.push(
       <Button key="lists-more" plain dimColor hotkey="m" onPress={() => i.onMore(!i.view.more)}>
-        {i.view.more ? "fold lists" : `${tools.length - LIST_ROWS} more`}
+        {i.view.more ? "fold lists" : `${tools.length - LIST_ROWS} more rows`}
       </Button>,
     );
   }
@@ -231,7 +243,7 @@ export function drawContext(t: Table, i: ContextInput): ContextDrawing {
   const { Text, Button } = t;
   const ctx: KeyCtx = {};
   const { live, data, view } = i;
-  if (live.sessionId === "") return { rows: [<Text key="none" dimColor>No session yet.</Text>], ctx };
+  if (live.sessionId === "") return { rows: [status(t, "none", "No session yet.", "Start a conversation and Context fills in.")], ctx };
 
   const agents = agentOrderOf(live, i.states);
   const chosen = agents.find((a) => a.id === view.ctxAgent);
@@ -258,11 +270,10 @@ export function drawContext(t: Table, i: ContextInput): ContextDrawing {
   if (agents.length > 0) out.push(blank(t, "switch"));
 
   if (data.sessionId !== live.sessionId) {
-    const why = data.failure?.sessionId === live.sessionId ? `Could not read the context: ${data.failure.why}` : "Reading the context breakdown...";
     out.push(
-      <Text key="loading" dimColor wrap="truncate-end">
-        {why}
-      </Text>,
+      data.failure?.sessionId === live.sessionId
+        ? status(t, "failed", `Could not read the context: ${data.failure.why}`, "tally reads it again on the next refresh.")
+        : status(t, "loading", "Reading the context breakdown...", "Context fills in a moment after the first reply."),
     );
     return { rows: out, ctx };
   }

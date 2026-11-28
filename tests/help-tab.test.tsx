@@ -12,8 +12,10 @@ import type { HelpData } from "../engine/help-view.ts";
 import { currentPrices, maybeUpdatePrices, PRICE_ERROR_KEY, PRICES_KEY, PRICING_URL } from "../engine/price-update.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { tableOf } from "../view/table.ts";
-import { drawHelp } from "../view/tabs/help.tsx";
-import { formatMoney } from "../core/money.ts";
+import { drawHelp, keyRows } from "../view/tabs/help.tsx";
+import { gridOf } from "../view/grid.ts";
+import { ESC_WORDS, TABS, keyLine } from "../view/keys.ts";
+import { headlineMoney } from "../core/money.ts";
 import { prompt, req } from "./fixtures/rows.ts";
 import { PRICING_MD } from "./fixtures/pricing-sample.ts";
 import { posixPath, worldOf } from "./world.ts";
@@ -276,6 +278,29 @@ describe("help drawing", () => {
   });
 });
 
+describe("help keys", () => {
+  test("the Keys block comes first and lists every key the key line can show, in the glossary's words", async ($, on) => {
+    helpHost(on, {});
+    const ui = await mountHost($);
+    const heads = (await ui.findAll({ type: "Box" })).map((b) => b.props.key).filter((k): k is string => typeof k === "string" && k.startsWith("title-"));
+    expect(heads).toEqual(["title-keys", "title-colours", "title-sources", "title-settings", "title-prices", "title-version"]);
+    const all = [...new Set(TABS.flatMap((tab) => keyLine(tab.tab, { agents: true, canView: true, canGoBack: true, canFull: true, more: true, rows: true, evidence: true, adopt: true, machines: true })))];
+    for (const entry of all.filter((e) => e !== ESC_WORDS)) expect(keyRows().some(([key]) => entry.startsWith(`${key} `))).toBe(true);
+    expect(keyRows().find(([key]) => key === "esc")?.[1]).toBe("fold");
+    expect(await ui.find(TEXT(exact("y")))).toBeDefined();
+    expect(await ui.find(TEXT(/collapse/))).toBeUndefined();
+    await ui.unmount();
+  });
+
+  test("a setting is one row at any width: the name, then its value right-aligned", () => {
+    for (const cols of [48, 54, 80, 144]) {
+      const g = gridOf(cols, { money: true, moneyCells: 18 });
+      expect(g.label + 18 + 1).toBeLessThanOrEqual(cols);
+      expect(g.label).toBeGreaterThanOrEqual(12);
+    }
+  });
+});
+
 describe("help refresh rules", () => {
   const key = { at: NOW, ready: true };
   test("a first look is due, a fresh one is not, an old one is", () => {
@@ -404,7 +429,9 @@ describe("price update wiring", () => {
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     await ui.press({ key: "tab-usage" });
     await r.clock.settle();
-    const money = (usd: number) => exact(formatMoney(usd, DEFAULT_SETTINGS.money, DEFAULT_SETTINGS.decimals));
+    // Every amount in the tab is under $1, so the whole column reads in cents with one place.
+    // The headline is in dollars: the stored table's 2.8 cents reads $0.03, the built-in 1.4 cents would read $0.01.
+    const money = (usd: number) => exact(headlineMoney(usd, DEFAULT_SETTINGS.money, DEFAULT_SETTINGS.decimals));
     expect((await ui.findAll(TEXT(money(2 * unit)))).length).toBeGreaterThan(0);
     expect((await ui.findAll(TEXT(money(unit)))).length).toBe(0);
     await ui.unmount();

@@ -66,11 +66,15 @@ describe("grid", () => {
 
   test("a section title is the name, a note while there is room, then a rule to the edge", () => {
     const wide = titleParts("Spend per day", "newest first", 40);
-    expect(wide.name + wide.note + wide.rule).toHaveLength(40);
-    expect(wide.note).toBe(" newest first");
-    expect(wide.rule.trim()).toMatch(/^\u{2500}+$/u);
+    expect(wide.name.length + 1 + wide.note.length + 1 + wide.rule.length).toBe(40);
+    expect(wide.note).toBe("newest first");
+    expect(wide.rule).toMatch(/^\u{2500}+$/u);
     const narrow = titleParts("Spend per day", "newest first and a very long note", 24);
-    expect(narrow.name + narrow.note + narrow.rule).toHaveLength(24);
+    expect(narrow.name.length + 1 + narrow.note.length + 1 + narrow.rule.length).toBe(24);
+    expect(narrow.rule.length).toBeGreaterThanOrEqual(2);
+    // No note: the name, a gap and the rule.
+    const bare = titleParts("Where it went", undefined, 30);
+    expect(bare.name.length + 1 + bare.rule.length).toBe(30);
     expect(titleParts("A long section name", "note", 10).note).toBe("");
     expect(titleParts("A long section name", undefined, 10).name).toBe("A long se\u{2026}");
   });
@@ -81,11 +85,11 @@ const LIMITS = [
   { kind: "seven_day", percentUsed: 55, resetsAt: new Date(NOW + 3 * 86_400_000).toISOString() },
 ];
 
-const PANE = (cols: number): Omit<RenderInput<"Pane">, "surface"> => ({
+const PANE = (cols: number, rows = 80): Omit<RenderInput<"Pane">, "surface"> => ({
   component: "Pane",
   requestId: "tally",
-  viewport: { columns: 200, rows: 60, isFullscreen: true },
-  props: { title: "tally", isFocused: true, bodyColumns: cols, placement: "dock", scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  viewport: { columns: 200, rows: rows + 20, isFullscreen: true },
+  props: { title: "tally", isFocused: true, bodyColumns: cols, placement: "dock", scroll: { offset: 0, bodyRows: rows }, view: {} },
 });
 
 function rig(on: On): ReturnType<typeof mock.clock> {
@@ -159,5 +163,44 @@ describe("foot on the grid", () => {
       expect(lines.find((l) => /55%/.test(l))).toContain("near limit");
       await ui.unmount();
     });
+  }
+});
+
+// Every row the primitives draw is one line high, whatever the width, and the settings' values end on the right edge.
+const rowsOf = (n: Node, out: Array<Exclude<Node, string>> = []): Array<Exclude<Node, string>> => {
+  if (typeof n !== "object" || n === null) return out;
+  if (n.props?.height === 1) out.push(n);
+  for (const c of (n.children ?? []).flat() as Node[]) rowsOf(c, out);
+  return out;
+};
+
+describe("tabs on the grid", () => {
+  for (const cols of WIDTHS) {
+    for (const tab of ["session", "usage", "context", "history", "hints", "help"]) {
+      test(`${tab} at ${cols} columns: every grid row is one line and nothing is wider than the body`, async ($, on) => {
+        const clock = rig(on);
+        await $.session.start({ cwd: "/work/demo", surface: "terminal", isInteractive: true });
+        await clock.settle();
+        const ui = await $.ui.mount({ plugin: "tally", surface: "terminal", ...PANE(cols, 400) });
+        await ui.press({ key: `tab-${tab}` });
+        await clock.settle();
+        const body = find((await ui.drawn()) as Node, `body-${tab}`);
+        expect(body).toBeDefined();
+        const rows = rowsOf(body!);
+        // A tab with nothing to show draws a status block, which has no grid rows.
+        if (tab === "help") expect(rows.length).toBeGreaterThan(0);
+        for (const r of rows) {
+          const out = linesOf(r, cols);
+          expect(out.length).toBeLessThanOrEqual(1);
+          for (const line of out) expect(line.length).toBeLessThanOrEqual(cols);
+        }
+        if (tab === "help") {
+          const settings = rows.filter((r) => String(r.props.key).startsWith("setting-"));
+          expect(settings).toHaveLength(11);
+          for (const r of settings) expect(linesOf(r, cols)[0]!.length).toBe(cols);
+        }
+        await ui.unmount();
+      });
+    }
   }
 });

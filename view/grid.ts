@@ -19,7 +19,19 @@ export const SVG_BAR_H = 8;
 /** A sub-item is indented by this many cells. */
 export const INDENT = 2;
 
-export type Want = { tokens?: boolean; money?: boolean; bar?: boolean; /** Width of a fixed leading column (the foot's labels). */ lead?: number };
+/** The key or name column of a definition row (Help's keys, a hint's `Do`), and the widths the tabs use. */
+export const TERM_SHORT = 4;
+export const TERM_KEYS = 12;
+
+export type Want = {
+  tokens?: boolean;
+  money?: boolean;
+  bar?: boolean;
+  /** Width of a fixed leading column (the foot's labels). */
+  lead?: number;
+  /** A wider figure column than MONEY_CELLS, for a figure with a word before it (`save ~$0.03`) or a setting's value. */
+  moneyCells?: number;
+};
 
 /** Widths in cells; 0 is a column that is off. `label` is what is left for the label text. */
 export type Grid = { cols: number; lead: number; label: number; tokens: number; money: number; bar: number };
@@ -32,7 +44,7 @@ export function gridOf(cols: number, want: Want = {}): Grid {
   const g = {
     lead: want.lead ?? 0,
     tokens: want.tokens === true && (want.money !== true || width >= TOKENS_FROM) ? TOKEN_CELLS : 0,
-    money: want.money === true ? MONEY_CELLS : 0,
+    money: want.money === true ? (want.moneyCells ?? MONEY_CELLS) : 0,
     bar: want.bar === true ? (width < COMPACT_COLS ? COMPACT_BAR_CELLS : BAR_CELLS) : 0,
   };
   if (width - taken(g) < LABEL_MIN) g.bar = 0;
@@ -46,17 +58,20 @@ export const cut = (s: string, width: number): string => (s.length <= width ? s 
 /** A figure cell: `~` before the figure marks an estimate, the whole right-aligned in `width` cells. */
 export const figureCell = (value: string | undefined, isEstimate: boolean, width: number): string => (value === undefined || value === "" ? "" : cut(`${isEstimate ? "~" : ""}${value}`, width));
 
-/** What a section title's label column holds: the name, a dim note while there is room, a dim rule to the edge. */
+/**
+ * What a section title's label column holds: the name, a dim note while there is room, a dim rule to the edge.
+ * A cell sits between the parts, so name + note + rule and their gaps add up to `width`.
+ */
 export function titleParts(name: string, note: string | undefined, width: number): { name: string; note: string; rule: string } {
   const shown = cut(name, width);
   let room = width - shown.length;
   let noteText = "";
-  // The note keeps at least a short rule after it.
-  if (note !== undefined && note !== "" && room > 4) {
-    noteText = ` ${cut(note, room - 1 - 3)}`;
-    room -= noteText.length;
+  // The note keeps at least a short rule after it: gap, 3 note cells, gap, 2 rule cells.
+  if (note !== undefined && note !== "" && room >= 7) {
+    noteText = cut(note, room - 4);
+    room -= noteText.length + 1;
   }
-  const rule = room >= 3 ? ` ${"\u{2500}".repeat(room - 1)}` : "";
+  const rule = room >= 3 ? "\u{2500}".repeat(room - 1) : "";
   return { name: shown, note: noteText, rule };
 }
 

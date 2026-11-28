@@ -267,6 +267,14 @@ async function openHints($: Engine, r: Rig, rows = demoRows()) {
   return ui;
 }
 
+// Adopting takes two presses: the first arms the hint, the second adopts it.
+async function adopt(ui: Awaited<ReturnType<typeof openHints>>, r: Rig, key: string): Promise<void> {
+  for (let n = 0; n < 2; n++) {
+    await ui.press({ key });
+    await r.clock.settle();
+  }
+}
+
 describe("adopting a hint", () => {
   test("pressing y stores the leading hint's record: rule, date, metric value and expected saving", async ($, on) => {
     const r = rig(on);
@@ -275,6 +283,11 @@ describe("adopting a hint", () => {
     expect(keyed.map((b) => b.props.key)).toEqual(["adopt-hint|session|fast-mode"]);
     expect(await ui.find(TEXT(/y adopt/))).toBeDefined();
     expect(r.stored.get(ADOPTIONS_KEY)).toBeUndefined();
+    // The first press only arms the hint.
+    await ui.press({ key: "adopt-hint|session|fast-mode" });
+    await r.clock.settle();
+    expect(r.stored.get(ADOPTIONS_KEY)).toBeUndefined();
+    expect((await ui.find({ key: "adopt-hint|session|fast-mode" }))?.props.label).toBe("press y again to adopt");
     await ui.press({ key: "adopt-hint|session|fast-mode" });
     await r.clock.settle();
     const list = parseAdoptions(r.stored.get(ADOPTIONS_KEY));
@@ -292,8 +305,7 @@ describe("adopting a hint", () => {
   test("an adopted hint reads adopted and gives up the key", async ($, on) => {
     const r = rig(on);
     const ui = await openHints($, r);
-    await ui.press({ key: "adopt-hint|session|fast-mode" });
-    await r.clock.settle();
+    await adopt(ui, r, "adopt-hint|session|fast-mode");
     expect((await ui.find({ key: "adopt-hint|session|fast-mode" }))?.props.label).toBe("adopted");
     expect((await ui.findAll({ type: "Button" })).filter((b) => b.props.hotkey === "y").length).toBe(0);
     // The same rule in the span block is the same adoption.
@@ -309,8 +321,7 @@ describe("adopting where the 30-day window is silent", () => {
     const base = demoRows();
     const big = at(req({ id: "big", at: 0, session: "s-2", cwd: CWD, tokens: { output: 2_000_000 } }), ago(0.4));
     const ui = await openHints($, r, { usage: [...base.usage, big], users: [...base.users, at(prompt(0, 50, "other", "s-2"), ago(0.4))] });
-    await ui.press({ key: "adopt-hint|session|fast-mode" });
-    await r.clock.settle();
+    await adopt(ui, r, "adopt-hint|session|fast-mode");
     const a = parseAdoptions(r.stored.get(ADOPTIONS_KEY))[0]!;
     // The shown hint: fast share of 1 in that session and its saving 2.024. The 30-day share would be near 0.09.
     expect(a.before).toBe(1);
