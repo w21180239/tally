@@ -124,10 +124,24 @@ export async function reportText($: EngineInterface, args: ReportArgs): Promise<
   return renderMarkdown(report) + note + (lines.length === 0 ? "" : `\n${lines.join("\n")}\n`);
 }
 
+// Why a repository filter found nothing: near misses by name when there are any, else the repositories with data.
+async function unknownRepoText($: EngineInterface, args: ReportArgs, now: number): Promise<string> {
+  const repo = args.repo!;
+  const days = clampDays(args.days);
+  const all = (await build($, { days: MAX_DAYS, compare: false, saveBaseline: false }, now)).report.summary.byRepo;
+  const names = Object.keys(all).sort((a, b) => all[b]!.usd - all[a]!.usd || (a < b ? -1 : 1));
+  const needle = repo.toLowerCase();
+  const near = names.filter((n) => n.toLowerCase().includes(needle) || needle.includes(n.toLowerCase()));
+  const head = `No requests matched repository "${repo}" in the past ${days} ${days === 1 ? "day" : "days"}; nothing written.`;
+  if (near.length > 0) return `${head} Did you mean ${near.slice(0, 3).join(", ")}?`;
+  return `${head} Repositories with data: ${names.length === 0 ? "none" : names.slice(0, 5).join(", ")}.`;
+}
+
 /** `/tally report [days] [repo]`: writes `api-spend-<date>.md` into the session working folder, then names the file. */
 export async function reportCommand($: EngineInterface, args: ReportArgs): Promise<string> {
   const now = await $.clock.now();
   const { report } = await build($, { ...args, compare: false, saveBaseline: false }, now);
+  if (args.repo !== undefined && report.summary.total.requests === 0) return unknownRepoText($, args, now);
   const date = new Date(now - new Date(now).getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
   const path = joinPath(await $.session.cwd(), `api-spend-${date}.md`);
   await $.fs.write(path, renderMarkdown(report));

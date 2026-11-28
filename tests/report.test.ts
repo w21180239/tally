@@ -439,6 +439,24 @@ describe("/tally report", () => {
     expect(md).toContain("repository demo");
     expect(md).toContain("2 requests");
   });
+
+  test("an unknown repository writes nothing and names the repositories that have data", ENGINE, async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    const out = (await $.command.run(run("report other"))).text;
+    const date = new Date(NOW - new Date(NOW).getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+    expect(out).toBe('No requests matched repository "other" in the past 30 days; nothing written. Repositories with data: demo.');
+    expect(r.world.text(`${CWD}/api-spend-${date}.md`)).toBeUndefined();
+  });
+
+  test("a near miss in case or spelling is suggested first", ENGINE, async ($, on) => {
+    const r = rig(on);
+    await seed(r.world, rowsOf());
+    await start($);
+    const out = (await $.command.run(run("report DEM"))).text;
+    expect(out).toContain("Did you mean demo?");
+  });
 });
 
 const pick = (obj: unknown, path: string): unknown => path.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], obj);

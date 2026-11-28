@@ -6,6 +6,7 @@ import { baseName } from "./path.ts";
 import type { InstalledPlugin } from "./plugins.ts";
 import type { PriceTable } from "./pricing.ts";
 import { ALL_RULES } from "./rules/index.ts";
+import { MIN_HINT_USD } from "./rules/shared.ts";
 import type { Summary } from "./summary.ts";
 
 export type EvidenceKind = "command" | "path" | "title" | "text";
@@ -70,6 +71,7 @@ export async function runRules(rules: readonly HintRule[], input: HintInput, tic
   for (const rule of rules) {
     try {
       for (const h of rule.run(input)) {
+        if (h.urgent !== true && h.usd > 0 && h.usd < MIN_HINT_USD) continue;
         const seen = best.get(h.rule);
         if (seen === undefined || h.usd > seen.usd) best.set(h.rule, h);
       }

@@ -557,7 +557,8 @@ describe("context pieces", () => {
 
   test("mergeUsed adds the live tally's servers and agent types", () => {
     const used = mergeUsed({ skills: ["a"], mcp: ["x"], agents: [] }, { toolCalls: { mcp__live__t: 1, Read: 3 }, agents: { g: { id: "g", type: "Explore", description: "", model: "", context: 0, peak: 0, firstPrompt: "", tools: {}, usd: 0, lastTs: 0 } } });
-    expect(used).toEqual({ skills: ["a"], mcp: ["x", "live"], agents: ["Explore"] });
+    expect(used).toEqual({ skills: ["a"], mcp: ["x", "tally", "live"], agents: ["Explore"] });
+    expect(mergeUsed({ skills: [], mcp: [], agents: [] }, { toolCalls: {}, agents: {} }).mcp).toEqual(["tally"]);
   });
 
   test("needsContext, needsAgentStates, needsTranscript and isActive", () => {

@@ -1,7 +1,7 @@
 // Parses the text after `/tally`. Word order is free; unknown words are collected, never dropped.
 import type { Span } from "./summary.ts";
 import { dict } from "./dict.ts";
-import { COERCE, SETTING_KEYS } from "./settings.ts";
+import { COERCE, SETTING_KEYS, SETTING_VALUES } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 
 export type TabId = "session" | "usage" | "context" | "history" | "hints" | "help";
@@ -28,6 +28,10 @@ const DAYS = /^(\d+)d?$/;
 const KEY_BY_WORD = dict<keyof Settings>();
 KEY_BY_WORD["row"] = "desktopRow";
 for (const k of SETTING_KEYS) KEY_BY_WORD[k.toLowerCase()] = k;
+
+// Old names for a tab.
+const TAB_ALIAS = dict<TabId>();
+TAB_ALIAS["tokens"] = "usage";
 
 type Token = { text: string; quoted: boolean };
 
@@ -63,6 +67,7 @@ export function parseArgs(input: string): ParsedArgs {
   const out: ParsedArgs = { set: {}, unknown: [] };
   const report = words.some((t) => !t.quoted && t.text.toLowerCase() === "report");
   const set = out.set as Record<string, unknown>;
+  let sawSettings = false;
 
   for (let i = 0; i < words.length; i++) {
     const { text: word, quoted } = words[i]!;
@@ -84,6 +89,12 @@ export function parseArgs(input: string): ParsedArgs {
       }
       set[key] = value;
       i++;
+      // "dollars only" and "cents only" read as one value.
+      if (key === "money" && words[i + 1] !== undefined && !words[i + 1]!.quoted && words[i + 1]!.text.toLowerCase() === "only") i++;
+      continue;
+    }
+    if (w === "settings") {
+      sawSettings = true;
       continue;
     }
     if (SUBS.includes(w)) {
@@ -107,6 +118,11 @@ export function parseArgs(input: string): ParsedArgs {
       out.tab = w as TabId;
       continue;
     }
+    const aliased = TAB_ALIAS[w];
+    if (aliased !== undefined) {
+      out.tab = aliased;
+      continue;
+    }
     if (SPANS.includes(w)) {
       out.span = w as Span;
       continue;
@@ -117,5 +133,40 @@ export function parseArgs(input: string): ParsedArgs {
     }
     out.unknown.push(word);
   }
+  // A bare `settings` points at where the settings are listed.
+  if (sawSettings && Object.keys(out.set).length === 0 && out.tab === undefined && out.unknown.length === 0) out.tab = "help";
   return out;
 }
+
+const GENERIC = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), report, sync or debug";
+
+/** The command's answer for input `parseArgs` left unknown words in: the concrete usage of a setting or `report`, else the generic list. */
+export function unknownText(input: string, a: ParsedArgs): string {
+  const first = a.unknown[0];
+  if (first === undefined) return "";
+  const words = tokenize(input);
+  const at = words.findIndex((t) => t.text === first);
+  const key = at >= 0 && !words[at]!.quoted ? KEY_BY_WORD[first.toLowerCase()] : undefined;
+  if (key !== undefined) {
+    const next = words[at + 1];
+    const given = a.unknown[1] !== undefined && next?.text === a.unknown[1] ? next.text : undefined;
+    const name = first.toLowerCase() === "row" ? "row" : key;
+    return given === undefined ? `"${first}" needs a value: ${SETTING_VALUES[key]} (for example /tally ${name} ${EXAMPLE[key]}).` : `"${given}" is not a value for ${key}: use ${SETTING_VALUES[key]}.`;
+  }
+  if (DAYS.test(first.toLowerCase()) && words.some((t) => !t.quoted && t.text.toLowerCase() === "report")) return `"${first}" is not a number of days: use report 7 or report 7d, a whole number above 0.`;
+  return `"${first}" is not ${GENERIC}.`;
+}
+
+const EXAMPLE: { [K in keyof Settings]: string } = {
+  priceUpdate: "off",
+  syncDir: "~/Sync",
+  machineName: "laptop",
+  shareDetail: "repos",
+  redactEvidence: "on",
+  recheckDays: "14",
+  open: "always",
+  money: "cents",
+  decimals: "2",
+  desktopRow: "off",
+  herdrSidebar: "on",
+};

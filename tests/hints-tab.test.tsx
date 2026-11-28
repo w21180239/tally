@@ -429,10 +429,10 @@ describe("hints tab", () => {
   test("installed plugins, breakdown snapshots and the last limits reach the rules", async ($, on) => {
     const r = rig(on);
     r.world.put(registryPath(CFG), JSON.stringify({ version: 2, plugins: { "idle@m": [{ scope: "user", installPath: "/p/idle" }] } }));
-    await saveSnapshot(r.world.$, CFG, "-work-demo", { sessionId: "s-1", ts: ago(0.5), skills: { "idle:thing": 2000 }, mcp: {}, agents: {}, memory: {}, system: 0, tools: 0 });
+    await saveSnapshot(r.world.$, CFG, "-work-demo", { sessionId: "s-1", ts: ago(0.5), skills: { "idle:thing": 200_000 }, mcp: {}, agents: {}, memory: {}, system: 0, tools: 0 });
     r.stored.set(LAST_LIMITS_KEY, { at: NOW, limits: [{ kind: "five_hour", percentUsed: 91, resetsAt: new Date(NOW + 3_600_000).toISOString() }] });
     const ui = await open($, r);
-    // Session: the limit alerts lead (about now, no amount; 4h into the 5h window at 91% also runs out early), then fast mode 2.02, then the plugin's 2000 tokens on one request.
+    // Session: the limit alerts lead (about now, no amount; 4h into the 5h window at 91% also runs out early), then fast mode 2.02, then the plugin's 200k tokens on one request.
     expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|limit-pace", "title-hint|session|near-limit", "title-hint|session|fast-mode", "title-hint|session|unused-plugin"]);
     // The span block carries no limit hint: the limits belong to the live session.
     expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode", "title-hint|span|cache-rebuilt", "title-hint|span|unused-plugin"]);

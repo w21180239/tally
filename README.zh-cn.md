@@ -156,8 +156,8 @@ claude plugin marketplace remove tally
 | `/tally` | 打开窗口，或展开已折叠的窗口。 |
 | `/tally <tab>` | 直接打开到 `session`、`usage`、`context`、`history`、`hints` 或 `help`。 |
 | `/tally 24h` 或 `30d` | 以该时间跨度打开。 |
-| `/tally money dollars` | 设置显示选项；还有 `decimals`、`open`、`row`，词序不限。 |
-| `/tally report [days] [repo]` | 把 markdown 花费报告写到工作目录下的 `api-spend-<日期>.md`。 |
+| `/tally money dollars` | 设置显示选项；还有 `decimals`、`open`、`row`，词序不限。`money` 还接受 `both`、`dollar`、`cent`，`row` 接受 `show`、`hide`；`tokens` 打开 Usage tab，`settings` 打开 Help。设置缺值或取值不对时，回复会列出可用的值。 |
+| `/tally report [days] [repo]` | 把 markdown 花费报告写到工作目录下的 `api-spend-<日期>.md`。仓库在窗口内没有请求时不写文件，并列出有数据的仓库。 |
 | `/tally sync` | 立即同步一次（需要设置 `syncDir`），并列出看到的电脑。 |
 | `/tally debug` | 显示扫描进度和总数；加 `--json` 以 JSON 输出。 |
 

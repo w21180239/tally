@@ -4,6 +4,11 @@ Release notes are cut from this file. Newest first.
 
 ## Unreleased
 
+- The Usage tab on the session span now fills from the live session, so a new session no longer reads "No requests" while the Session tab already shows cost; it refreshes every 10 seconds, and the index's own rows take over once it has caught up.
+- Hints worth under a cent are no longer listed, and their amounts follow the shared money format (cents under a dollar). tally no longer reports itself as an unused plugin or MCP server.
+- `/tally` accepts `tokens` (Usage), `settings` (Help), `money both|dollar|cent|dollars only` and `row show|hide`. Command errors give the concrete usage and the allowed values.
+- `/tally report <repo>` for a repository with no requests writes no file and names the repositories that have data.
+
 - Fixed the window coming back every session after it was closed: a fold the store refused (a locked file on Windows, a full disk) is now logged and written again, and the person's close always counts. The pane has a fold button, and on the main screen, where Claude Code reports no clicks, the folded line names `/tally to open`.
 
 ## 1.0.0 - 2026-11-28

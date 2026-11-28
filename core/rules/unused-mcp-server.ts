@@ -1,7 +1,7 @@
 import { nearestSnapshot, residentTokens } from "../breakdown.ts";
 import type { Evidence, HintRule } from "../hint.ts";
 import { pluginServerName } from "../plugins.ts";
-import { dayText, LISTED, residentUsdPerToken, tokensText, usdText } from "./shared.ts";
+import { dayText, isSelf, LISTED, residentUsdPerToken, tokensText, usdText } from "./shared.ts";
 
 export const unusedMcpServer: HintRule = {
   id: "unused-mcp-server",
@@ -11,7 +11,7 @@ export const unusedMcpServer: HintRule = {
     if (near === null || perToken <= 0) return [];
     const idlePlugins = plugins.filter((p) => !p.used).map((p) => pluginServerName(p.name, ""));
     const idle = Object.entries(residentTokens(near.snap))
-      .filter(([server]) => (summary.byMcp[server]?.calls ?? 0) === 0 && !idlePlugins.some((prefix) => server.startsWith(prefix)))
+      .filter(([server]) => !isSelf(server) && (summary.byMcp[server]?.calls ?? 0) === 0 && !idlePlugins.some((prefix) => server.startsWith(prefix)))
       .map(([server, tokens]) => ({ server, tokens, usd: tokens * perToken }))
       .sort((a, b) => b.usd - a.usd || (a.server < b.server ? -1 : 1));
     if (idle.length === 0) return [];
