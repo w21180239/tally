@@ -36,7 +36,7 @@
 
 ## 多台电脑
 
-**怎么设置同步？** 在每台电脑上把 `syncDir` 设为一个已有工具在同步的文件夹（私有 git 仓库、OneDrive、iCloud、Syncthing），并给每台电脑设不同的 `machineName`。在 History 或 Hints 上按 `t` 在本机和所有电脑之间切换。
+**怎么设置同步？** 在每台电脑上把 `syncDir` 设为一个已有工具在同步的文件夹（私有 git 仓库、OneDrive、iCloud、Syncthing），并给每台电脑设不同的 `machineName`。在 Spend 或 Hints 上按 `t` 在本机和所有电脑之间切换。
 
 **哪些内容会离开我的电脑？** 默认的 `shareDetail` 为 `numbers` 时：按小时、按模型的汇总（token 数和金额），仓库只以不可逆的别名出现。`repos` 增加仓库名；`full` 增加会话标题和提示证据。仓库名或标题属于隐私的电脑，请保持 `numbers`。
 

@@ -124,6 +124,17 @@ describe("desktop row", () => {
     expect(DETAILS_LABEL).toBe("details \u{25b8}");
   });
 
+  test("the hover card shows what a working hour costs and today's and the month's spend (U25)", () => {
+    const d = dataOf({ hourly: 4.2, past: { today: 0.5, month: 12 } });
+    const cost = cardSections(d).find((s) => s.label === "Cost");
+    expect((cost?.lines[0] as Array<{ text: string }>).map((r) => r.text).join("")).toContain("$4.20 an hour while working");
+    const days = cardSections(d).find((s) => s.label === "Days");
+    expect((days?.lines[0] as Array<{ text: string }>).map((r) => r.text).join("")).toBe("today 50\u{a2} \u{b7} 30 days $12.00");
+    // Neither is drawn before there is a figure for it.
+    expect(cardSections(dataOf()).some((s) => s.label === "Days")).toBe(false);
+    expect(JSON.stringify(cardSections(dataOf())[0])).not.toContain("an hour");
+  });
+
   test("the hover card labels the hint's amount as a saving", () => {
     const hint = cardSections(dataOf()).find((s) => s.label === "Hint");
     const runs = hint?.lines[0] as Array<{ text: string }>;

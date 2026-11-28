@@ -1,7 +1,10 @@
-// The Usage tab: where the tokens of a span went, by billed kind. One block per kind, each row an amount of
-// tokens and money; estimated rows carry `~`. Rows with a longer text behind them open to it, and the whole
-// tab can be copied as plain text. `drawUsage` returns the rows and the keys they add.
+// The Tokens tab (id `usage`): why it cost this much, by billed kind and cause. One block per kind, each row an
+// amount of tokens and money; estimated rows carry `~`. Rows with a longer text behind them open to it (with
+// `redactEvidence` on, commands and paths show the program and the file name only), and the whole tab can be copied
+// as plain text. After the kinds come what each tool added to context and what each MCP server cost. `drawUsage`
+// returns the rows and the keys they add.
 import type { RenderElement } from "claude-code";
+import { redact } from "../../core/hint.ts";
 import type { Span } from "../../core/summary.ts";
 import { KIND_LABEL, KIND_NOTE, usageText } from "../../core/usage-detail.ts";
 import type { DetailRow } from "../../core/usage-detail.ts";
@@ -17,6 +20,8 @@ import { SEP } from "../theme.ts";
 
 /** Items listed under a group before the rest fold under `m`. */
 export const ITEM_ROWS = 3;
+/** Rows of the context-fill and MCP blocks listed before the rest fold under `m`. */
+export const BLOCK_ROWS = 5;
 const FULL_LINES = 12;
 /** A row's full text hangs under its label, a step deeper than the row itself. */
 const FULL_INDENT = 4;
@@ -31,6 +36,8 @@ export type UsageInput = {
   sessionId: string;
   view: UsageView;
   cols: number;
+  /** The `redactEvidence` setting: commands and paths are shown cut down. */
+  redact?: boolean;
   onAgent: (key: string) => void;
   onListing: (listing: boolean) => void;
   onFull: (full: boolean) => void;
@@ -52,6 +59,44 @@ export function stepAgent(order: string[], current: string, step: 1 | -1): strin
   const at = Math.max(0, order.indexOf(current));
   return order[(at + step + order.length) % order.length]!;
 }
+
+/**
+ * With `on`, a command row shows its program and a path row its file name; the full text behind it is dropped.
+ * Rows that now share a label under one group add up, costliest first.
+ */
+export function redactRows(rows: DetailRow[], on: boolean): DetailRow[] {
+  if (!on || !rows.some((r) => r.redact !== undefined)) return rows;
+  const out: DetailRow[] = [];
+  let items: DetailRow[] = [];
+  const flush = (): void => {
+    out.push(...items.sort((a, b) => b.usd - a.usd || b.tokens - a.tokens || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0)));
+    items = [];
+  };
+  for (const r of rows) {
+    if (!isItem(r)) {
+      flush();
+      out.push(r);
+      continue;
+    }
+    if (r.redact === undefined) {
+      items.push(r);
+      continue;
+    }
+    const shown = redact({ kind: r.redact, label: "", detail: r.label.trim() }, true).detail;
+    const label = `  ${shown === "" ? (r.redact === "command" ? "command" : "file") : shown}`;
+    const same = items.find((x) => x.label === label);
+    if (same === undefined) items.push({ label, tokens: r.tokens, usd: r.usd, estimated: r.estimated, redact: r.redact });
+    else {
+      same.tokens += r.tokens;
+      same.usd += r.usd;
+    }
+  }
+  flush();
+  return out;
+}
+
+/** With `on`, a big write shows its cause without the text behind it, and that text is dropped. */
+export const redactLargest = (rows: DetailRow[], on: boolean): DetailRow[] => (!on ? rows : rows.map(({ bare, full: _full, ...r }): DetailRow => ({ ...r, label: bare ?? r.label })));
 
 const agentName = (data: UsageData, key: string): string => (key === "" ? "All agents" : (data.agents.find((a) => a.key === key)?.label ?? key));
 
@@ -80,24 +125,29 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   const out: RenderElement[] = [];
   const blank = (key: string): RenderElement => gap(t, key);
 
-  if (i.span === "session" && i.sessionId === "") return { rows: [status(t, "none", "No session yet.", "Start a conversation and Usage fills in.")], ctx };
+  if (i.span === "session" && i.sessionId === "") return { rows: [status(t, "none", "No session yet.", "Start a conversation and Tokens fills in.")], ctx };
   if (data.key !== usageKeyOf({ span: i.span, sessionId: i.sessionId })) {
     const want = usageKeyOf({ span: i.span, sessionId: i.sessionId });
     if (data.failure?.key === want) return { rows: [status(t, "failed", `Could not read the index: ${data.failure.why}`, "tally reads it again on the next refresh.")], ctx };
-    return { rows: [status(t, "loading", "Reading the index...", "Usage fills in as soon as the transcripts are read.")], ctx };
+    return { rows: [status(t, "loading", "Reading the index...", "Tokens fills in as soon as the transcripts are read.")], ctx };
   }
   if (data.requests === 0) {
-    const next = i.span === "session" ? "Send a message and this tab fills in. Earlier days are on 4 History." : "Try another time span with s, or look at 4 History.";
+    const next = i.span === "session" ? "Send a message and this tab fills in. Earlier days are on 4 Spend." : "Try another time span with s, or look at 4 Spend.";
     return { rows: [status(t, "empty", `No requests in ${SPAN_WORDS[i.span]}.`, next)], ctx };
   }
 
   const agent = data.by[view.agent] === undefined ? "" : view.agent;
-  const sections: UsageSection[] = data.by[agent] ?? [];
+  const hide = i.redact === true;
+  const sections: UsageSection[] = (data.by[agent] ?? []).map((s) => ({ ...s, rows: redactRows(s.rows, hide), ...(s.largest !== undefined && { largest: redactLargest(s.largest, hide) }) }));
   const spent = sections.reduce((n, s) => n + s.total.usd, 0);
   const tokens = sections.reduce((n, s) => n + s.total.tokens, 0);
   const g = gridOf(t.cols, { tokens: true, money: true, bar: true });
+  // The fill and MCP blocks cover every agent together, so they show under "All agents" only.
+  const wide = agent === "";
+  const fill = wide ? data.fill : [];
+  const mcp = wide ? data.mcp : [];
   // One block for every amount in the money column, so the column reads in one unit.
-  const money = moneyColumn(d, sections.flatMap((s) => [s.total.usd, ...s.rows.map((r) => r.usd), ...(s.largest ?? []).map((r) => r.usd)]));
+  const money = moneyColumn(d, [...sections.flatMap((s) => [s.total.usd, ...s.rows.map((r) => r.usd), ...(s.largest ?? []).map((r) => r.usd)]), ...mcp.map((m) => m.usd)]);
 
   out.push(
     <Box key="headline" flexDirection="row" columnGap={1}>
@@ -200,6 +250,38 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
     out.push(blank(s.kind));
   }
 
+  // What each tool put into context and what each MCP server cost: the causes behind the kinds above.
+  const topOf = (values: number[]): number => values.reduce((a, v) => Math.max(a, v), 0);
+  const blockRows = <T,>(rows: T[]): T[] => {
+    const kept = view.more ? rows : rows.slice(0, BLOCK_ROWS);
+    hidden += rows.length - kept.length;
+    return kept;
+  };
+  if (fill.length > 0) {
+    out.push(section(t, g, { key: "fill", name: "Context fill by tool", note: "tokens each tool added, estimated" }));
+    const top = topOf(fill.map((f) => f.tokens));
+    for (const f of blockRows(fill)) out.push(row(t, g, { key: `fill-${f.tool}`, label: f.tool, tokens: tokensText(f.tokens), est: true, share: top > 0 ? f.tokens / top : 0 }));
+    out.push(blank("fill"));
+  }
+  if (mcp.length > 0) {
+    const star = data.mcpProxy ? "*" : "";
+    out.push(section(t, g, { key: "mcp", name: "MCP servers", note: "schemas and results, re-read" }));
+    const top = topOf(mcp.map((m) => m.usd));
+    for (const m of blockRows(mcp)) {
+      out.push(row(t, g, { key: `mcp-${m.server}`, label: `${m.server}${m.calls > 0 ? `${SEP}${m.calls} ${m.calls === 1 ? "call" : "calls"}` : ""}`, money: `${money(m.usd)}${star}`, share: top > 0 ? m.usd / top : 0 }));
+    }
+    if (data.mcpProxy) out.push(<Text key="mcp-proxy" dimColor wrap="truncate-end">* some schema sizes come from a snapshot of another session</Text>);
+    if (data.mcpMissing > 0) {
+      out.push(
+        <Text key="mcp-missing" dimColor wrap="truncate-end">
+          {`${data.mcpMissing} ${data.mcpMissing === 1 ? "session has" : "sessions have"} no snapshot, so their schemas are not counted`}
+        </Text>,
+      );
+    }
+    out.push(<Text key="mcp-scope" dimColor wrap="truncate-end">schemas: main thread requests; results: main thread and sub-agents</Text>);
+    out.push(blank("mcp"));
+  }
+
   if (hidden > 0 || view.more) {
     ctx.more = true;
     out.push(
@@ -219,7 +301,7 @@ export function drawUsage(t: Table, i: UsageInput): UsageDrawing {
   if (hasRows) ctx.rows = true;
 
   const text = usageText(
-    `Usage${SEP}${SPAN_WORDS[i.span]}${SEP}${agentName(data, agent)}`,
+    `Tokens${SEP}${SPAN_WORDS[i.span]}${SEP}${agentName(data, agent)}`,
     sections.map((s) => ({ title: KIND_LABEL[s.kind], total: s.total, rows: [...s.rows, ...(s.largest ?? []).map((r) => ({ ...r, label: `  ${r.label}` }))] })),
     { tokens: tokensText, money },
   );

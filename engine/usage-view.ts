@@ -3,7 +3,8 @@
 import { atom, read, update } from "claude-code";
 import type { EngineInterface } from "claude-code";
 import { nearestSnapshot } from "../core/breakdown.ts";
-import type { BreakdownSnapshot } from "../core/breakdown.ts";
+import type { BreakdownSnapshot, McpCost } from "../core/breakdown.ts";
+import { mcpCosts } from "../core/history.ts";
 import { projectNameOf } from "../core/plan-scan.ts";
 import type { Shard } from "../core/shard.ts";
 import { STEP_ROWS } from "../core/steps.ts";
@@ -16,6 +17,7 @@ import { agentLabel, usageAgents, usageDetail, usageTotals, USAGE_KINDS, writePa
 import type { Amount, DetailRow, UsageKind } from "../core/usage-detail.ts";
 import { readLive } from "./live.ts";
 import { locate } from "./locate.ts";
+import { schemaCosts } from "./mcp-cost.ts";
 import { currentPrices } from "./price-update.ts";
 import { loadProject } from "./project-store.ts";
 import { listProjects } from "./scanner.ts";
@@ -37,11 +39,19 @@ export type UsageData = {
   by: Record<string, UsageSection[]>;
   /** The breakdown snapshot the fixed part's split rests on; `proxy` when it was taken in another session. */
   snapshot: { ts: number; proxy: boolean } | null;
+  /** Tokens each tool put into context over the span (all agents), estimated from text length. */
+  fill: Array<{ tool: string; tokens: number }>;
+  /** What each MCP server cost over the span: schemas on main requests plus every tool result re-read. */
+  mcp: McpCost[];
+  /** Some schema sizes rest on another session's snapshot. */
+  mcpProxy: boolean;
+  /** Sessions with main-thread requests and no snapshot: `mcp` leaves their schemas out. */
+  mcpMissing: number;
   /** Set when the last build for `key` failed and none has worked since; the tab shows it instead of waiting. */
   failure?: { key: string; why: string };
 };
 
-export const EMPTY_USAGE: UsageData = { key: "", at: 0, requests: 0, agents: [], by: {}, snapshot: null };
+export const EMPTY_USAGE: UsageData = { key: "", at: 0, requests: 0, agents: [], by: {}, snapshot: null, fill: [], mcp: [], mcpProxy: false, mcpMissing: 0 };
 
 /** Figures older than this are rebuilt when the tab is drawn: the live session's sooner than a span of days. */
 export const USAGE_INTERVAL_MS = { session: 10_000, "24h": 300_000, "30d": 300_000 } as const;
@@ -52,7 +62,7 @@ export const AGENT_SECTIONS = 12;
 /** A failure's reason is shown cut to this many characters. */
 const FAILURE_CHARS = 80;
 
-const usageAtom = atom({ plugin: "tally", key: "usage" } as const, EMPTY_USAGE, { shape: "usage-1" });
+const usageAtom = atom({ plugin: "tally", key: "usage" } as const, EMPTY_USAGE, { shape: "usage-2" });
 
 export function readUsage($: EngineInterface): Promise<UsageData> {
   return read($, usageAtom);
@@ -116,6 +126,26 @@ export function withLive(own: UsageRow[], live: Pick<LiveState, "sessionId" | "s
   return out;
 }
 
+/**
+ * One session's rows of its project as a Shard, with this launch's requests taken from the live tally while the index
+ * has not caught up (`withLive`). A session no index holds yet gives a shard of the live requests alone.
+ */
+export async function sessionShard($: EngineInterface, cfg: string, project: string, id: string, now: number, tick: Tick): Promise<Shard> {
+  const shard = await loadProject($, cfg, project, now, tick);
+  const own = shard === null ? [] : await ownOf(shard.usage, id, tick);
+  const live = await readLive($).catch(() => undefined);
+  return {
+    v: 1,
+    project,
+    files: {},
+    usage: live !== undefined && live.sessionId === id ? withLive(own, live, now) : own,
+    users: shard === null ? [] : await ownOf(shard.users, id, tick),
+    metas: [],
+    compacts: shard === null ? [] : await ownOf(shard.compacts, id, tick),
+    snapshots: [],
+  };
+}
+
 let builtAt = 0;
 let builtKey = "";
 let failedAt = 0;
@@ -131,24 +161,9 @@ async function build($: EngineInterface, want: UsageWant, now: number): Promise<
   const tzOffsetMin = -new Date(now).getTimezoneOffset();
   const isSession = want.span === "session";
   let shards: Shard[] = [];
-  let sessionOnly: Shard | undefined;
 
   if (isSession) {
-    const shard = await loadProject($, loc.cfg, project, now, tick);
-    const id = want.sessionId;
-    const own = shard === null ? [] : await ownOf(shard.usage, id, tick);
-    const live = await readLive($).catch(() => undefined);
-    sessionOnly = {
-      v: 1,
-      project,
-      files: {},
-      usage: live !== undefined && live.sessionId === id ? withLive(own, live, now) : own,
-      users: shard === null ? [] : await ownOf(shard.users, id, tick),
-      metas: [],
-      compacts: shard === null ? [] : await ownOf(shard.compacts, id, tick),
-      snapshots: [],
-    };
-    shards = [sessionOnly];
+    shards = [await sessionShard($, loc.cfg, project, want.sessionId, now, tick)];
   } else {
     for (const p of await listProjects($, loc.roots)) {
       await tick();
@@ -158,11 +173,18 @@ async function build($: EngineInterface, want: UsageWant, now: number): Promise<
   }
   const summary = await summarizeAsync(shards, prices, { span: want.span, nowMs: now, tzOffsetMin, usage: true, ...(isSession && { sessionId: want.sessionId }) }, tick);
 
-  const snaps = await loadSnapshots($, loc.cfg, project, now, tick);
+  // Snapshots of every project in the span (the schema cost needs each one's), and of the live session's project.
+  const snapsOf = new Map<string, BreakdownSnapshot[]>();
+  for (const p of new Set([project, ...shards.map((s) => s.project)])) {
+    await tick();
+    snapsOf.set(p, await loadSnapshots($, loc.cfg, p, now, tick));
+  }
+  const snaps = snapsOf.get(project)!;
   const mine = lastSnapshot();
   if (mine !== undefined && !snaps.some((s) => s.sessionId === mine.sessionId && s.ts === mine.ts)) snaps.push(mine);
   const near = nearestSnapshot(snaps, isSession && summary.total.requests > 0 ? summary.from : summary.to, isSession ? want.sessionId : undefined);
   const snap = near?.snap ?? null;
+  const schema = await schemaCosts(prices, shards, (p) => snapsOf.get(p) ?? [], summary.from, summary.to, "", tick);
 
   const agents = usageAgents(summary).slice(0, AGENT_SECTIONS + 1);
   const by: UsageData["by"] = { "": sectionsOf(summary, undefined, snap, tzOffsetMin) };
@@ -174,6 +196,13 @@ async function build($: EngineInterface, want: UsageWant, now: number): Promise<
     agents: agents.map((a) => ({ key: a.key, label: agentLabel(a.key), usd: a.usd })),
     by,
     snapshot: near === null ? null : { ts: near.snap.ts, proxy: near.proxy },
+    fill: Object.entries(summary.toolFill)
+      .filter(([, tokens]) => tokens > 0)
+      .map(([tool, tokens]) => ({ tool, tokens }))
+      .sort((a, b) => b.tokens - a.tokens || (a.tool < b.tool ? -1 : 1)),
+    mcp: mcpCosts(schema.usd, summary.mcpReread, summary.byMcp),
+    mcpProxy: schema.proxy,
+    mcpMissing: schema.missing,
   };
   await update($, usageAtom, () => data);
   invalidateWindow($);

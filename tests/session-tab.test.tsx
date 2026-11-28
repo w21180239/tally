@@ -195,6 +195,42 @@ describe("session tab", () => {
     await ui.unmount();
   });
 
+  test("a compacted session says what compaction saved, as a lower bound", async ($, on) => {
+    const r = rig(on);
+    // Three main requests with a compaction between the first and the second: 158k tokens not re-read.
+    const t0 = NOW - 3_600_000;
+    const rows = [
+      { ...req({ id: "k0", session: "s-1", at: 0, tokens: { cacheRead: 100_000 } }), ts: t0 },
+      { ...req({ id: "k1", session: "s-1", at: 0, tokens: { cw5m: 20_000 } }), ts: t0 + 60_000 },
+      { ...req({ id: "k2", session: "s-1", at: 0, tokens: { cacheRead: 22_000 } }), ts: t0 + 120_000 },
+    ];
+    const sh: Shard = { v: 1, project: PROJECT, files: {}, usage: rows, users: [], metas: [], compacts: [{ sessionId: "s-1", ts: t0 + 30_000, trigger: "manual", preTokens: 100_000 }], snapshots: [] };
+    await saveBuckets(r.world.$, CFG, PROJECT, { days: new Map([[dayIdx(t0), sh]]) }, {}, NOW);
+    await start($);
+    await r.clock.settle();
+    await mainStep($, 0);
+    await finishTurn($, 1000);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    expect(await ui.find(TEXT(/^Compaction saved ~\S+ \(1 compaction\)$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^a lower bound$/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("a session that never compacted draws no compaction line", async ($, on) => {
+    const r = rig(on);
+    await seedEarlier(r.world, "s-1");
+    await start($);
+    await r.clock.settle();
+    await mainStep($, 0);
+    await finishTurn($, 1000);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    expect(await ui.find({ key: "body-session" })).toBeDefined();
+    expect(await ui.find(TEXT(/Compaction saved|Compacted/))).toBeUndefined();
+    await ui.unmount();
+  });
+
   test("an MCP server's row shows its cost, starred while only another session's snapshot backs the schema figure", async ($, on) => {
     const r = rig(on);
     await seedEarlier(r.world, "s-1");
@@ -247,7 +283,35 @@ describe("session tab", () => {
     await ui.unmount();
   });
 
-  test("token rows drill to Usage on this session, and the key line says rows open", async ($, on) => {
+  test("the compact card names the models the cost went to", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    await mainStep($, 0);
+    await finishTurn($, 1000);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE, props: { ...PANE.props, bodyColumns: 36 } });
+    expect(await ui.find({ key: "card" })).toBeDefined();
+    expect(await ui.find(TEXT(/^opus \S+$/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("a sub-agent row opens the Context tab (U24)", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await r.clock.settle();
+    await mainStep($, 0);
+    await mainStep($, 1, "ag-1");
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    expect(await ui.find({ key: "open-went-1" })).toBeDefined();
+    await ui.press({ key: "open-went-1" });
+    expect(await ui.find({ key: "body-context" })).toBeDefined();
+    expect(r.stored.get("tab")).toBe("context");
+    await ui.unmount();
+  });
+
+  test("token rows drill to Tokens on this session, and the key line says rows open", async ($, on) => {
     const r = rig(on);
     await start($);
     await r.clock.settle();
@@ -366,7 +430,7 @@ describe("session tab", () => {
     // One state, not a column of empty sections: the situation, then the step that follows.
     expect(await ui.find(TEXT(/^no requests yet$/))).toBeDefined();
     expect(await ui.find(TEXT(/^Nothing has been spent in this session\.$/))).toBeDefined();
-    expect(await ui.find(TEXT(/Earlier days are on 4 History/))).toBeDefined();
+    expect(await ui.find(TEXT(/Earlier days are on 4 Spend/))).toBeDefined();
     expect(await ui.find(TEXT(/^Where it went/))).toBeUndefined();
     expect(await ui.find(TEXT(/^Leading hint/))).toBeUndefined();
     await ui.unmount();

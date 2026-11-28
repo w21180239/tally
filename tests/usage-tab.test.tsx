@@ -6,7 +6,8 @@ import type { ToolUse } from "../core/types.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
 import { USAGE_INTERVAL_MS, needsUsage } from "../engine/usage-view.ts";
 import { keyLine } from "../view/keys.ts";
-import { stepAgent } from "../view/tabs/usage.tsx";
+import type { DetailRow } from "../core/usage-detail.ts";
+import { redactLargest, redactRows, stepAgent } from "../view/tabs/usage.tsx";
 import { bash, inAgent, prompt, req, result } from "./fixtures/rows.ts";
 import { worldOf } from "./world.ts";
 import type { World } from "./world.ts";
@@ -159,7 +160,7 @@ describe("usage tab", () => {
     await r.clock.settle();
     expect(r.copied).toHaveLength(1);
     const lines = r.copied[0]!.split("\n");
-    expect(lines[0]).toBe("Usage \u{b7} this session \u{b7} All agents");
+    expect(lines[0]).toBe("Tokens \u{b7} this session \u{b7} All agents");
     expect(lines[1]).toMatch(/^what\s+tokens\s+cost$/);
     expect(r.copied[0]).toContain("Cache write");
     expect(r.copied[0]).toMatch(/Typed messages\s+~/);
@@ -194,7 +195,7 @@ describe("usage tab", () => {
     expect(await ui.find(TEXT(/^Main conversation \u{b7} opus/u))).toBeUndefined();
     await ui.press({ key: "usage-copy" });
     await r.clock.settle();
-    expect(r.copied[0]!.split("\n")[0]).toBe("Usage \u{b7} this session \u{b7} Explore");
+    expect(r.copied[0]!.split("\n")[0]).toBe("Tokens \u{b7} this session \u{b7} Explore");
     await ui.unmount();
   });
 
@@ -219,6 +220,54 @@ describe("usage tab", () => {
     await r.clock.settle();
     expect(await ui.find(whole)).toBeUndefined();
     await ui.unmount();
+  });
+
+  test("redactEvidence on shows a command as its program and a path as its file name, and opens no full text", { options: { redactEvidence: true } }, async ($, on) => {
+    const r = rig(on);
+    const ui = await open($, r);
+    // The long command and the three short ones fold into their programs; the path keeps its file name.
+    expect(await ui.find(TEXT(/^\s+echo$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^\s+ls$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^\s+a\.ts$/))).toBeDefined();
+    expect(await ui.find(TEXT(/xxxxxxxx/))).toBeUndefined();
+    expect(await ui.find(TEXT(/\/src\/a\.ts/))).toBeUndefined();
+    expect((await ui.findAll({ type: "Button" })).some((b) => typeof b.props.key === "string" && b.props.key.startsWith("open-output|"))).toBe(false);
+    await ui.unmount();
+  });
+
+  test("redactEvidence off keeps the command and the path as found", { options: { redactEvidence: false } }, async ($, on) => {
+    const r = rig(on);
+    const ui = await open($, r);
+    expect(await ui.find(TEXT(/^\s+echo x+$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^\s+\/src\/a\.ts$/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("redactLargest gives a big write's cause without the text behind it, and drops that text", () => {
+    const big: DetailRow = { label: "11-28 00:11 \u{b7} tool output: Bash echo secret", bare: "11-28 00:11 \u{b7} tool output", tokens: 9, usd: 1, estimated: false, id: "main@1", full: "Bash echo secret" };
+    expect(redactLargest([big], true)).toEqual([{ label: "11-28 00:11 \u{b7} tool output", tokens: 9, usd: 1, estimated: false, id: "main@1" }]);
+    expect(redactLargest([big], false)).toEqual([big]);
+  });
+
+  test("redactRows adds rows that share a program, costliest first, and leaves other rows as they are", () => {
+    const item = (label: string, usd: number, redact?: "command" | "path"): DetailRow => ({ label: `  ${label}`, tokens: usd * 1000, usd, estimated: true, ...(redact !== undefined && { redact }), ...(redact === "command" && { full: label }) });
+    const rows: DetailRow[] = [
+      { label: "Shell commands", tokens: 10, usd: 10, estimated: true },
+      item("git -C /x status", 3, "command"),
+      item("ls a", 5, "command"),
+      item("git log", 4, "command"),
+      { label: "Replies", tokens: 1, usd: 1, estimated: true },
+      item("a plain item", 2),
+    ];
+    expect(redactRows(rows, true).map((r) => [r.label, r.usd, r.full])).toEqual([
+      ["Shell commands", 10, undefined],
+      ["  git", 7, undefined],
+      ["  ls", 5, undefined],
+      ["Replies", 1, undefined],
+      ["  a plain item", 2, undefined],
+    ]);
+    expect(redactRows(rows, false)).toBe(rows);
+    expect(redactRows([item("C:\\work\\deep\\file.ts", 1, "path")], true)[0]!.label).toBe("  file.ts");
   });
 
   test("an opened row stays the same row when m unfolds the lists above it", async ($, on) => {
@@ -380,7 +429,7 @@ describe("usage tab helpers", () => {
 
 describe("usage tab keys", () => {
   test("the key line lists the full-text key only while rows hold full text", () => {
-    expect(keyLine("usage", { canFull: true, agents: true })).toEqual(["0-5 switch tab", "s time span", "a agent list", "p/n prev/next", "v full text", "esc collapse"]);
-    expect(keyLine("usage")).toEqual(["0-5 switch tab", "s time span", "esc collapse"]);
+    expect(keyLine("usage", { canFull: true, agents: true })).toEqual(["0-5 switch tab", "s time span", "a agent list", "p/n prev/next", "v full text", "esc fold"]);
+    expect(keyLine("usage")).toEqual(["0-5 switch tab", "s time span", "esc fold"]);
   });
 });

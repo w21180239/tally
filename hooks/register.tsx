@@ -43,7 +43,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: COMMAND,
       description: "Open the tally window: spend, context and hints. A tab or 24h/30d opens it there; close folds it; money, decimals, open or row sets an option; report [days] [repo] writes a spend report file; debug shows the scan",
-      argumentHint: "[session|usage|context|history|hints|help|24h|30d] or money <cents-and-dollars|cents|dollars> or decimals <auto|0-4> or row <on|off> or close or report [days] [repo]",
+      argumentHint: "[session|tokens|context|spend|hints|help|24h|30d] or money <cents-and-dollars|cents|dollars> or decimals <auto|0-4> or row <on|off> or close or report [days] [repo]",
     });
     // The report tool is optional too: without it the window and the command still work.
     await registerReportTool($).catch(() => {});

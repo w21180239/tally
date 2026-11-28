@@ -20,7 +20,7 @@ import { drawFold } from "./fold.tsx";
 import { drawFoot } from "./foot.tsx";
 import { readLive, watchSession } from "../engine/live.ts";
 import { noteMetrics } from "../engine/scroll.ts";
-import { glanceLines, glanceOf, moneyOf, windowData } from "./data.ts";
+import { glanceLines, glanceOf, moneyOf, pastOf, windowData } from "./data.ts";
 import type { WindowData } from "./data.ts";
 import { layoutOf, MAX_COLUMNS } from "./layout.ts";
 import { ESC_FOLD, hasRepoSwitch, HOW_TO_FOCUS, KEYS_ACTIVE, keyLine, keyLineRuns, spansOf, TABS } from "./keys.ts";
@@ -58,7 +58,7 @@ async function loadData($: EngineInterface, settings: Pick<Settings, "money" | "
   // The session's leading hint is rebuilt off the draw once it is stale; until then the line shows none.
   if (needsTop(top, live.sessionId, now)) inBackground($, () => refreshTop($, live.sessionId));
   const hint = top.sessionId === live.sessionId && top.hint !== null ? glanceOf(top.hint, settings) : null;
-  return windowData({ live, foot, chart, hint, settings, now });
+  return windowData({ live, foot, chart, hint, past: pastOf(await readHistory($), now), settings, now });
 }
 
 const SPAN_LABEL: Record<Span, string> = { session: "Session", "24h": "24 hours", "30d": "30 days" };
@@ -106,8 +106,8 @@ const rule = (t: Table, cols: number): RenderElement => {
 function drawShort(t: Table, d: WindowData, cols: number, isFocused: boolean, isFullscreen: boolean): RenderElement {
   const { Box, Text } = t;
   const lines = glanceLines(d, cols);
-  // Short only when the frame is under 10 rows: the tabs need more height.
-  const note = isFullscreen ? "a taller terminal shows the tabs" : "a taller frame, or /tui fullscreen, shows the tabs";
+  // Short only when the frame is under 6 rows: the tabs need more height. The note is short so it is never cut.
+  const note = isFullscreen ? "taller for tabs" : "taller or /tui fullscreen for tabs";
   return (
     <Box key="short" flexDirection="column">
       {lines.map((line, i) => (
@@ -134,6 +134,11 @@ function drawCard(t: Table, d: WindowData, cols: number): RenderElement {
         <Text dimColor>session</Text>
       </Box>
       {d.chart !== null && <Text dimColor>{`8h ${d.chart}`}</Text>}
+      {d.models.length > 0 && (
+        <Text dimColor wrap="truncate-end">
+          {d.models.map(([name, usd]) => `${name} ${moneyOf(d, usd)}`).join(SEP)}
+        </Text>
+      )}
       {d.hint !== null && (
         <Text wrap="truncate-end">{`\u{25b2} ${d.hint.found}`}</Text>
       )}
@@ -156,7 +161,12 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
   const placement = e.props.placement === "inline" ? "inline" : "dock";
   // A widget (the desktop's small form of a minimised pane) draws what reads at a glance, like a short inline frame.
   const layout = e.props.placement === "widget" ? "short" : layoutOf(cols, rows, placement);
-  if (layout === "short") return drawShort(t, d, cols, e.props.isFocused, isFullscreen);
+  if (layout === "short") {
+    // The short view carries today's and the month's spend once the Spend figures are held; ask for them off the draw.
+    const [held, scan] = await Promise.all([readHistory($), readScanView($)]);
+    wantHistory($, held, scan, { repoOnly: false, sync: settings.syncDir !== "" }, d.now);
+    return drawShort(t, d, cols, e.props.isFocused, isFullscreen);
+  }
   if (layout === "compact") return drawCard(t, d, cols);
 
   const isNarrow = layout === "narrow";
@@ -225,12 +235,14 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
       cols,
       more: view.more,
       onMore: (more) => attempt($, () => setMore($, more)),
-      // A token row drills to Usage, on this session.
+      // A token row drills to Tokens, on this session.
       onUsage: () =>
         attempt($, async () => {
           await setSpan($, "session");
           await showTab($, "usage");
         }),
+      onContext: () => attempt($, () => showTab($, "context")),
+      onHints: () => attempt($, () => showTab($, "hints")),
     });
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
@@ -246,6 +258,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
       sessionId: live.sessionId,
       view: { agent: view.agent, listing: view.listing, full: view.full, shown: view.shown, more: view.more },
       cols,
+      redact: settings.redactEvidence,
       onAgent: (key) => attempt($, () => setAgent($, key)),
       onListing: (listing) => attempt($, () => setListing($, listing)),
       onFull: (full) => attempt($, () => setFull($, full)),
@@ -282,15 +295,17 @@ export async function drawPane($: EngineInterface, e: RenderInput<"Pane">, setti
     tabRows = drawn.rows;
     Object.assign(ctx, drawn.ctx);
   } else if (tab === "history") {
-    const [data, scan] = await Promise.all([readHistory($), readScanView($)]);
+    const [data, scan, live] = await Promise.all([readHistory($), readScanView($), readLive($)]);
     // Stale figures, or a scan not looked at lately, are handled off the draw; the tab shows what it has meanwhile.
-    wantHistory($, data, scan, { repoOnly: view.repoOnly, sync: ctx.machines === true }, d.now);
+    wantHistory($, data, scan, { repoOnly: view.repoOnly, sync: ctx.machines === true, span, sessionId: live.sessionId }, d.now);
     const drawn = drawHistory(t, {
       d,
       data,
       machines: view.machines,
       sync: ctx.machines === true,
       scan: scan.scan,
+      span,
+      sessionId: live.sessionId,
       repoOnly: view.repoOnly,
       view: { more: view.more, shown: view.shown },
       onMore: (more) => attempt($, () => setMore($, more)),

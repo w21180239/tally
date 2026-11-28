@@ -95,10 +95,10 @@ The first scan of a large history takes a minute or two (see [Performance](#perf
 
 | Tab | Key | What it shows |
 | --- | --- | --- |
-| Session | `1` | Total cost of this session (including the launches before a resume), cost per active hour, a bar per model, the four token kinds, cache time left and rebuild cost for each conversation, where the money went (main, each subagent, other requests), cost by skill and MCP server, and the best hint |
-| Usage | `2` | Session, 24 hours or 30 days, for all agents or one: input by source, output (thinking, replies, writes, commands, agent prompts), cache read by content, cache write by agent and model with the biggest single write and why it happened |
+| Session | `1` | Total cost of this session (including the launches before a resume), cost per active hour, what compaction saved (a lower bound), a bar per model, the four token kinds, cache time left and rebuild cost for each conversation, where the money went (main, each subagent, other requests), cost by skill and MCP server, and the best hint |
+| Tokens | `2` | Why it cost this much, over the session, 24 hours or 30 days, for all agents or one: input by source, output (thinking, replies, writes, commands, agent prompts), cache read by content, cache write by agent and model with the biggest single write and why it happened, then the context fill by tool and the cost of each MCP server |
 | Context | `3` | What each request carries: system, tools, messages, skills, MCP tools, agents, memory files, with unused and deferred items marked; subagent detail; a transcript view of any agent |
-| History | `4` | 30 days: total, token kinds, by day, by model, main versus subagent, subagent type by model, by repository, top sessions with the `claude --resume` command, context fill by tool |
+| Spend | `4` | When and where the money went, over the same session, 24 hours or 30 days: total, by day (by hour under a day), by model, main versus subagent, subagent type by model, by repository, top sessions with the `claude --resume` command |
 | Hints | `5` | Hints for this session and for the past 24 hours or 30 days: title, amount, summary, action and evidence |
 | Help | `0` | Data sources, color legend, keys, settings, version, price source and date, unpriced models |
 
@@ -117,11 +117,11 @@ The window picks a drawing from its width: under 40 columns a compact card, 40 t
 | `PgUp`, `PgDn`, arrows | Scroll a docked tab that is taller than the window; the mouse wheel does too. |
 | `esc` | Folds the window. |
 | `ctrl+x` then `tab` | Hands the folded line or the window the keyboard, on the main screen. |
-| `s` | Time span (Usage, Hints). |
-| `r` | Repository filter (History, Hints). |
-| `t` | This computer or all computers (History, Hints, with `syncDir`). |
-| `a`, `p`, `n` | Choose an agent, previous, next (Usage, Context). |
-| `v`, `b` | Full text or transcript, back (Usage, Context). |
+| `s` | Time span: session, 24 hours, 30 days. Tokens, Spend and Hints share it (Hints has no session span). |
+| `r` | Repository filter (Spend, Hints). |
+| `t` | This computer or all computers (Spend, Hints, with `syncDir`; the 30-day span only on Spend). |
+| `a`, `p`, `n` | Choose an agent, previous, next (Tokens, Context). |
+| `v`, `b` | Full text or transcript, back (Tokens, Context). |
 | `m` | Expand a truncated list. |
 | `y` | Adopt the hint (Hints). |
 
@@ -159,7 +159,7 @@ On the Hints tab, `y` adopts a hint. tally records the rule's metric, the expect
 
 ### Multiple machines
 
-With `syncDir` set, each machine writes its totals to `<syncDir>/tally/<machineName>.json` and reads the others. History and Hints then get a `t` key that switches between this computer and all computers. Blocks that cannot be merged say "This computer only" in the all-computers view. See [Privacy](#privacy) for what each `shareDetail` level shares.
+With `syncDir` set, each machine writes its totals to `<syncDir>/tally/<machineName>.json` and reads the others. Spend and Hints then get a `t` key that switches between this computer and all computers. Blocks that cannot be merged say "This computer only" in the all-computers view. See [Privacy](#privacy) for what each `shareDetail` level shares.
 
 ### Report and Herdr
 
@@ -189,9 +189,9 @@ Set the options through the plugin settings (`userConfig` in `plugin.json`), for
 | --- | --- |
 | `/tally` | Opens the window, or unfolds it. |
 | `/tally close` | `close`: folds the window (same as `esc`). |
-| `/tally <tab>` | Opens on `session`, `usage`, `context`, `history`, `hints` or `help`. |
+| `/tally <tab>` | Opens on `session`, `tokens`, `context`, `spend`, `hints` or `help` (`usage` and `history` still work). |
 | `/tally 24h` or `30d` | Opens with that time span. |
-| `/tally money dollars` | Sets a display option; also `decimals`, `open`, `row`. Word order is free. `money` also takes `both`, `dollar` and `cent`, and `row` takes `show` and `hide`. `tokens` opens the Usage tab, and `settings` opens Help. A setting with a missing or wrong value answers with the values it accepts. |
+| `/tally money dollars` | Sets a display option; also `decimals`, `open`, `row`. Word order is free. `money` also takes `both`, `dollar` and `cent`, and `row` takes `show` and `hide`. `settings` opens Help. A setting with a missing or wrong value answers with the values it accepts. |
 | `/tally report [days] [repo]` | Writes a markdown spend report to `api-spend-<date>.md` in the working folder. A repository with no requests in the window writes nothing and names the repositories that have data. |
 | `/tally sync` | Runs one sync now (needs `syncDir`) and lists the machines it saw. |
 | `/tally debug` | Shows scan progress and totals; `--json` prints them as JSON. |

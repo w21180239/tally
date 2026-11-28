@@ -7,9 +7,9 @@ export type TabSpec = { tab: TabId; label: string; short: string; hotkey: string
 // Help takes 0, the key after 9.
 export const TABS: readonly TabSpec[] = [
   { tab: "session", label: "Session", short: "Session", hotkey: "1" },
-  { tab: "usage", label: "Usage", short: "Usage", hotkey: "2" },
+  { tab: "usage", label: "Tokens", short: "Tokens", hotkey: "2" },
   { tab: "context", label: "Context", short: "Context", hotkey: "3" },
-  { tab: "history", label: "History", short: "History", hotkey: "4" },
+  { tab: "history", label: "Spend", short: "Spend", hotkey: "4" },
   { tab: "hints", label: "Hints", short: "Hints", hotkey: "5" },
   { tab: "help", label: "Help", short: "Help", hotkey: "0" },
 ];
@@ -21,7 +21,7 @@ export type KeyCtx = {
   /** `v` puts the chosen agent's transcript in view; `b` goes back. */
   canView?: boolean;
   canGoBack?: boolean;
-  /** `v` shows the full text behind each row (Usage). */
+  /** `v` shows the full text behind each row (Tokens). */
   canFull?: boolean;
   /** `m` opens the cut lists. */
   more?: boolean;
@@ -34,9 +34,9 @@ export type KeyCtx = {
   machines?: boolean;
 };
 
-/** Spans a tab switches with `s`, in cycle order; none means no span switch. */
+/** Spans a tab switches with `s`, in cycle order; none means no span switch. Tokens, Spend and Hints share one span. */
 export function spansOf(tab: TabId): Span[] {
-  return tab === "usage" ? ["session", "24h", "30d"] : tab === "hints" ? ["24h", "30d"] : [];
+  return tab === "usage" || tab === "history" ? ["session", "24h", "30d"] : tab === "hints" ? ["24h", "30d"] : [];
 }
 
 /** True on the tabs that filter by repository with `r`. */
@@ -64,14 +64,13 @@ export function keyLine(tab: TabId, ctx: KeyCtx = {}): string[] {
 export const HOW_TO_FOCUS = "ctrl+x then tab to focus";
 /** What the key line says while the window holds the keys, and how Esc reads there. */
 export const KEYS_ACTIVE = "keys active";
-export const ESC_WORDS = "esc collapse";
-/** The same entry as the key line spells it, and as the short view says it. */
-export const ESC_FOLD = "esc fold";
+export const ESC_WORDS = "esc fold";
+/** The same entry as the short view says it. */
+export const ESC_FOLD = ESC_WORDS;
 
 // How the line spells each entry of `keyLine`: the key, then one or two dim words. Entries not listed keep their words.
 const SPELLED: Record<string, string> = {
   "0-5 switch tab": "1-5,0 tab",
-  "esc collapse": "esc fold",
   "s time span": "s span",
   "r repo filter": "r repo",
   "a agent list": "a agents",

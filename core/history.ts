@@ -1,11 +1,12 @@
-// Plain rows for the History tab, cut from a 30-day Summary, and the transcript scan's progress as a percent.
+// Plain rows for the Spend tab (the History data), cut from a Summary of the span, and the transcript scan's progress as a percent.
 import type { McpCost } from "./breakdown.ts";
-import type { Money, Summary, TopSession } from "./summary.ts";
+import type { Money, Span, Summary, TopSession } from "./summary.ts";
+import { HOUR_MS, hourStart, localDayStart } from "./time.ts";
 import { USAGE_KINDS, usageTotals } from "./usage-detail.ts";
 import type { Amount, UsageKind } from "./usage-detail.ts";
 
 export type HistoryData = {
-  /** Which view this is: `all`, or `repo` for the live session's repo alone. */
+  /** Which view this is (see `historyKeyOf`): the repo filter, the span and, for a session, its id. */
   key: string;
   at: number;
   /** The repo `key: "repo"` stands for. */
@@ -13,7 +14,9 @@ export type HistoryData = {
   requests: number;
   total: Amount;
   kinds: Array<{ kind: UsageKind } & Amount>;
-  /** Local days with requests, newest first; `day` is `YYYY-MM-DD`. */
+  /** `hour` when the span is short (24h, a session under 72 hours), else `day`. */
+  bucket: "hour" | "day";
+  /** Local buckets with requests, newest first; `day` is `YYYY-MM-DD`, or `YYYY-MM-DD HH` for an hour. */
   days: Array<{ day: string; usd: number; tokens: number; requests: number }>;
   models: Array<{ name: string; usd: number; tokens: number }>;
   main: Amount;
@@ -23,11 +26,6 @@ export type HistoryData = {
   sessions: TopSession[];
   /** Tokens each tool put into context, estimated from text length. */
   fill: Array<{ tool: string; tokens: number }>;
-  mcp: McpCost[];
-  /** Some schema sizes rest on another session's snapshot. */
-  mcpProxy: boolean;
-  /** Sessions with main-thread requests and no snapshot: `mcp` leaves their schemas out. */
-  mcpMissing: number;
   unpriced: string[];
   /** Projects with no usable index yet: their spend is unknown, not zero. */
   unread: number;
@@ -56,6 +54,7 @@ export const EMPTY_HISTORY: HistoryData = {
   requests: 0,
   total: { usd: 0, tokens: 0 },
   kinds: [],
+  bucket: "day",
   days: [],
   models: [],
   main: { usd: 0, tokens: 0 },
@@ -64,16 +63,20 @@ export const EMPTY_HISTORY: HistoryData = {
   repos: [],
   sessions: [],
   fill: [],
-  mcp: [],
-  mcpProxy: false,
-  mcpMissing: 0,
   unpriced: [],
   unread: 0,
   partial: false,
 };
 
-/** `sync`: a sync folder is set, so the figures also carry the all-computers merge (never for one repo). */
-export const historyKeyOf = (repoOnly: boolean, sync = false): string => (repoOnly ? "repo" : sync ? "all+sync" : "all");
+/**
+ * The key of a view: `repo`, `all` or `all+sync` for 30 days; another span adds `@24h` or `@session:<id>`.
+ * `sync`: a sync folder is set, so the 30-day figures also carry the all-computers merge (never for one repo or
+ * another span: the other computers' files hold days only).
+ */
+export function historyKeyOf(repoOnly: boolean, sync = false, span: Span = "30d", sessionId = ""): string {
+  if (span === "30d") return repoOnly ? "repo" : sync ? "all+sync" : "all";
+  return `${repoOnly ? "repo" : "all"}@${span === "session" ? `session:${sessionId}` : span}`;
+}
 
 const tokenSum = (m: Money): number => m.tokens.input + m.tokens.output + m.tokens.cacheRead + m.tokens.cw5m + m.tokens.cw1h;
 const amount = (m: Money): Amount => ({ usd: m.usd, tokens: tokenSum(m) });
@@ -96,15 +99,28 @@ export function dayWords(day: string): string {
   return m === null || at < 1 || at > 12 ? day : `${MONTH_LETTERS.slice(3 * (at - 1), 3 * at)} ${Number(m[2])}`;
 }
 
-export type HistoryMeta = { key: string; at: number; repo: string; tzOffsetMin: number; mcp: McpCost[]; mcpProxy: boolean; mcpMissing: number; unread: number; partial: boolean };
+/** `2026-11-26 14` as `Nov 26 14:00`; anything else is returned unchanged. */
+export function hourWords(hour: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2}) (\d{2})$/.exec(hour);
+  return m === null ? hour : `${dayWords(m[1]!)} ${m[2]}:00`;
+}
 
-/** The tab's rows from a 30-day summary built with `usage: true`. */
+/** The local hour at `tzOffsetMin` minutes east of UTC for a UTC ms, as `YYYY-MM-DD HH`. */
+export const localHourName = (ms: number, tzOffsetMin: number): string => `${localDayName(ms, tzOffsetMin)} ${two(new Date(ms + tzOffsetMin * 60_000).getUTCHours())}`;
+
+export type HistoryMeta = { key: string; at: number; repo: string; tzOffsetMin: number; unread: number; partial: boolean };
+
+/** The tab's rows from a summary built with `usage: true`, over any span. */
 export function historyOf(s: Summary, meta: HistoryMeta): HistoryData {
   const days: HistoryData["days"] = [];
+  const bucket = s.timeline.bucketMs === HOUR_MS ? "hour" : "day";
+  // A session's window starts at its first request, not at a bucket edge; the 24h and 30d windows start on one.
+  const start = s.span !== "session" ? s.from : bucket === "hour" ? hourStart(s.from) : localDayStart(s.from, meta.tzOffsetMin);
   // Newest bucket first.
   for (let i = s.timeline.points.length - 1; i >= 0; i--) {
     const p = s.timeline.points[i]!;
-    if (p.requests > 0) days.push({ day: localDayName(s.from + i * s.timeline.bucketMs, meta.tzOffsetMin), usd: p.usd, tokens: tokenSum(p), requests: p.requests });
+    const at = start + i * s.timeline.bucketMs;
+    if (p.requests > 0) days.push({ day: bucket === "hour" ? localHourName(at, meta.tzOffsetMin) : localDayName(at, meta.tzOffsetMin), usd: p.usd, tokens: tokenSum(p), requests: p.requests });
   }
   const subTypes: HistoryData["subTypes"] = [];
   for (const [type, models] of Object.entries(s.bySubType)) for (const [model, m] of Object.entries(models)) subTypes.push({ type, model, usd: m.usd, requests: m.requests });
@@ -115,6 +131,7 @@ export function historyOf(s: Summary, meta: HistoryMeta): HistoryData {
     requests: s.total.requests,
     total: amount(s.total),
     kinds: USAGE_KINDS.map((kind) => ({ kind, ...usageTotals(s, kind) })),
+    bucket,
     days,
     models: Object.entries(s.byModel)
       .map(([name, m]) => ({ name, ...amount(m) }))
@@ -130,9 +147,6 @@ export function historyOf(s: Summary, meta: HistoryMeta): HistoryData {
       .filter(([, tokens]) => tokens > 0)
       .map(([tool, tokens]) => ({ tool, tokens }))
       .sort((a, b) => b.tokens - a.tokens || (a.tool < b.tool ? -1 : 1)),
-    mcp: meta.mcp,
-    mcpProxy: meta.mcpProxy,
-    mcpMissing: meta.mcpMissing,
     unpriced: s.unpriced,
     unread: meta.unread,
     partial: meta.partial,

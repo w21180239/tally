@@ -98,7 +98,7 @@ export async function drawFold($: EngineInterface, e: RenderInput<"AbovePrompt">
   };
   return (
     <Box width={cols} justifyContent="flex-end">
-      <Button key={FOLD_KEY} autoFocus label={parts.filter((p) => p.role !== "entry").map((p) => p.text).join(SEP)} onPress={press}>
+      <Button key={FOLD_KEY} autoFocus plain label={parts.filter((p) => p.role !== "entry").map((p) => p.text).join(SEP)} onPress={press}>
         {parts.map((p, i) => (
           <Text key={`fold-${i}`} {...(focused ? {} : toneProps(ROLE_TONE[p.role].tone, ROLE_TONE[p.role].bold === true))}>
             {i === 0 ? p.text : `${SEP}${p.text}`}

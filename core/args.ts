@@ -29,9 +29,10 @@ const KEY_BY_WORD = dict<keyof Settings>();
 KEY_BY_WORD["row"] = "desktopRow";
 for (const k of SETTING_KEYS) KEY_BY_WORD[k.toLowerCase()] = k;
 
-// Old names for a tab.
+// The tabs are called Tokens and Spend; their ids stay `usage` and `history`, and both spellings open them.
 const TAB_ALIAS = dict<TabId>();
 TAB_ALIAS["tokens"] = "usage";
+TAB_ALIAS["spend"] = "history";
 
 type Token = { text: string; quoted: boolean };
 
@@ -138,7 +139,7 @@ export function parseArgs(input: string): ParsedArgs {
   return out;
 }
 
-const GENERIC = "a tab (session, usage, context, history, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), close, report, sync or debug";
+const GENERIC = "a tab (session, tokens, context, spend, hints, help), a span (24h, 30d), a setting (money, decimals, open, row, ...), close, report, sync or debug";
 
 /** The command's answer for input `parseArgs` left unknown words in: the concrete usage of a setting or `report`, else the generic list. */
 export function unknownText(input: string, a: ParsedArgs): string {

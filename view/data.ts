@@ -1,8 +1,10 @@
 // What the window draws from, as plain data: built once per drawing from the live atom, the foot and the chart.
+import { localDayName } from "../core/history.ts";
+import type { HistoryData } from "../core/history.ts";
 import type { Hint } from "../core/hint.ts";
 import type { LiveState } from "../core/live-state.ts";
 import { formatMoney, headlineMoney, moneyBlock } from "../core/money.ts";
-import { totalUsd } from "../core/where.ts";
+import { perActiveHour, totalUsd } from "../core/where.ts";
 import type { Settings } from "../core/settings.ts";
 import { CACHE_MARK, chartText, HINT_MARK, SEP } from "./theme.ts";
 
@@ -45,7 +47,23 @@ export type WindowData = {
   cache: Cache | null;
   chart: string | null;
   hint: HintGlance | null;
+  /** Spend today and over 30 days, all repos, once the Spend tab's index figures are held; else absent. */
+  past?: Past | null;
+  /** What a working hour costs this launch; null before a minute of turn time (a shorter run says nothing). */
+  hourly?: number | null;
 };
+
+/** A rate over under a minute of turn time is not a rate. */
+export const MIN_HOURLY_MS = 60_000;
+
+export type Past = { today: number; month: number };
+
+/** Today's and the 30 days' spend from the Spend figures, when they are the all-repo 30 days and no build failed. */
+export function pastOf(h: Pick<HistoryData, "key" | "days" | "total" | "failure">, now: number): Past | null {
+  if ((h.key !== "all" && h.key !== "all+sync") || h.failure?.key === h.key) return null;
+  const today = localDayName(now, -new Date(now).getTimezoneOffset());
+  return { today: h.days.find((x) => x.day === today)?.usd ?? 0, month: h.total.usd };
+}
 
 export const EMPTY_FOOT: Foot = { contextTokens: null, contextWindow: 0, compactAt: null, limits: [], refillUsd: null };
 export const EMPTY_CHART: Chart = { values: [], bands: [] };
@@ -72,7 +90,7 @@ export function cacheOf(lastWrite: LiveState["lastWrite"], now: number, refillUs
   return { leftMs: Math.max(0, leftMs), lifeMs, isExpired: leftMs <= 0, refillUsd };
 }
 
-export type DataIn = { live: LiveState; foot: Foot; chart: Chart; hint?: HintGlance | null; settings: Pick<Settings, "money" | "decimals">; now: number };
+export type DataIn = { live: LiveState; foot: Foot; chart: Chart; hint?: HintGlance | null; past?: Past | null; settings: Pick<Settings, "money" | "decimals">; now: number };
 
 export function windowData(i: DataIn): WindowData {
   // No chart while no hour of the 8 has a request: eight dots say nothing.
@@ -89,6 +107,8 @@ export function windowData(i: DataIn): WindowData {
     cache: cacheOf(i.live.lastWrite, i.now, i.foot.refillUsd),
     chart,
     hint: i.hint ?? null,
+    past: i.past ?? null,
+    hourly: i.live.activeMs >= MIN_HOURLY_MS ? perActiveHour(i.live) : null,
   };
 }
 
@@ -176,6 +196,7 @@ export function glanceLines(d: WindowData, cols: number): string[] {
   lines.push(ctx.join(SEP));
   const cache = d.cache === null ? null : `cache ${d.cache.isExpired ? "expired" : leftText(d.cache.leftMs)}${d.cache.refillUsd === null ? "" : `${SEP}rewrite cost ${moneyOf(d, d.cache.refillUsd)}`}`;
   if (cache !== null) lines.push(cache);
+  if (d.past != null) lines.push(`today ${moneyOf(d, d.past.today)}${SEP}30 days ${moneyOf(d, d.past.month)}`);
   if (d.chart !== null) lines.push(`8h ${d.chart}`);
   if (d.hint !== null) lines.push(`${HINT_MARK} ${d.hint.found}${d.hint.saving === null ? "" : `${SEP}${d.hint.saving}`}`);
   return lines.map(cut);

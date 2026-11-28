@@ -11,7 +11,7 @@ export async function syncExtra($: EngineInterface): Promise<Extra> {
   const hints = await readHints($);
   if (hints.failure === undefined && hints.key.startsWith("30d|all|")) extra.hints = hints.span;
   const history = await readHistory($);
-  if (history.failure === undefined && history.key.startsWith("all") && history.fill.length > 0) {
+  if (history.failure === undefined && history.key.startsWith("all") && !history.key.includes("@") && history.fill.length > 0) {
     const fill: Record<string, number> = {};
     for (const f of history.fill) fill[f.tool] = f.tokens;
     extra.toolFill = fill;

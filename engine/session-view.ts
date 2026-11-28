@@ -34,14 +34,16 @@ export type SessionData = {
   resident: Record<string, number>;
   /** The breakdown snapshot the schema figures rest on; `proxy` when it was taken in another session. */
   snapshot: { ts: number; proxy: boolean } | null;
+  /** What this session's compactions saved: a lower bound (context not carried, at the cache-read rate). */
+  compaction: { count: number; savedTokens: number; savedUsd: number };
 };
 
-export const EMPTY_SESSION: SessionData = { sessionId: "", at: 0, skills: [], mcp: [], rows: 0, resident: {}, snapshot: null };
+export const EMPTY_SESSION: SessionData = { sessionId: "", at: 0, skills: [], mcp: [], rows: 0, resident: {}, snapshot: null, compaction: { count: 0, savedTokens: 0, savedUsd: 0 } };
 
 /** The figures are rebuilt from the index at most this often. */
 export const SESSION_INTERVAL_MS = 300_000;
 
-const sessionAtom = atom({ plugin: "tally", key: "session" } as const, EMPTY_SESSION, { shape: "session-2" });
+const sessionAtom = atom({ plugin: "tally", key: "session" } as const, EMPTY_SESSION, { shape: "session-3" });
 
 export function readSession($: EngineInterface): Promise<SessionData> {
   return read($, sessionAtom);
@@ -93,7 +95,9 @@ async function build($: EngineInterface, live: Pick<LiveState, "sessionId" | "st
   const skills = Object.entries(summary.bySkill)
     .map(([name, m]) => ({ name, usd: m.usd }))
     .sort((a, b) => b.usd - a.usd || (a.name < b.name ? -1 : 1));
-  const data: SessionData = { sessionId: id, at: now, skills, mcp, rows: rows.length, resident: near === null ? {} : residentTokens(near.snap), snapshot: near === null ? null : { ts: near.snap.ts, proxy: near.proxy } };
+  const saved = summary.compaction?.bySession[id];
+  const compaction = { count: saved?.count ?? 0, savedTokens: saved?.savedTokens ?? 0, savedUsd: saved?.savedUsd ?? 0 };
+  const data: SessionData = { sessionId: id, at: now, skills, mcp, rows: rows.length, resident: near === null ? {} : residentTokens(near.snap), snapshot: near === null ? null : { ts: near.snap.ts, proxy: near.proxy }, compaction };
   await update($, sessionAtom, () => data);
   invalidateWindow($);
 }

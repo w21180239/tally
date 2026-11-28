@@ -169,7 +169,7 @@ describe("view/tabbar", () => {
   test("wide shows full names and the fold words; narrower shortens the names and then the fold button", () => {
     expect(tabFaces(90, 0).faces.session).toBe("Session");
     expect(tabFaces(90, 0).fold).toBe("\u{00d7} fold");
-    expect(tabFaces(62, 1).faces.session).toBe("Sess");
+    expect(tabFaces(58, 1).faces.session).toBe("Sess");
     expect(tabFaces(62, 0).faces.session).toBe("Session");
     expect(tabFaces(47, 0).faces.session).toBe("Ses");
     expect(tabFaces(47, 0).fold).toBe("\u{00d7}");
