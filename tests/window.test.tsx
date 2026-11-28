@@ -38,6 +38,7 @@ type Rig = {
   opened: PaneOpenArgs[];
   closed: string[];
   toasts: string[];
+  toastMs: Array<number | undefined>;
   stored: Map<string, unknown>;
   place: { v: (a: PaneOpenArgs) => { isPlaced: true } | { isPlaced: false; reason: string } };
   usage: { v: SessionUsage };
@@ -55,6 +56,7 @@ function rig(on: On, store: Record<string, unknown> = {}, world?: World): Rig {
     opened: [],
     closed: [],
     toasts: [],
+    toastMs: [],
     stored: new Map(Object.entries(store)),
     place: { v: () => ({ isPlaced: true }) },
     usage: { v: { startedAt: NOW, context: { tokens: 236_000, window: 1_000_000, percent: 24 }, rateLimits: limits(6), cost: { usd: 0 } } },
@@ -86,6 +88,7 @@ function rig(on: On, store: Record<string, unknown> = {}, world?: World): Rig {
   });
   on("ui.toast", (_, e) => {
     r.toasts.push(e.text);
+    r.toastMs.push((e as { timeoutMs?: number }).timeoutMs);
     return { value: undefined };
   });
   on("ui.log", (_, e) => {
@@ -208,9 +211,10 @@ describe("window: tabs and keys", () => {
     await start($);
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect(await ui.find(TEXT(/^keys active \u{b7} 0-5 switch tab \u{b7} esc collapse$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^keys active \u{b7} 1-5,0 tab {2}esc fold$/u))).toBeDefined();
     await ui.press({ key: "tab-hints" });
-    expect(await ui.find(TEXT(/0-5 switch tab \u{b7} s time span \u{b7} r repo filter \u{b7} esc collapse/u))).toBeDefined();
+    // This tab's keys, a divider, then the global pair.
+    expect(await ui.find(TEXT(/s span {2}r repo \u{2503} 1-5,0 tab {2}esc fold/u))).toBeDefined();
     await ui.unmount();
   });
 
@@ -241,14 +245,58 @@ describe("window: layouts", () => {
     await ui.unmount();
   });
 
-  test("a terminal under 110 columns cannot dock: the inline frame is the short view with no tabs", async ($, on) => {
+  test("a fullscreen terminal under 110 columns draws the tabs inline, not a short view (F2)", async ($, on) => {
     const r = rig(on);
     await start($);
     await turn($, r, "t1");
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...INLINE_NARROW });
+    expect(await ui.find({ key: "short" })).toBeUndefined();
+    expect(await ui.find({ key: "tab-usage" })).toBeDefined();
+    await ui.press({ key: "tab-help" });
+    expect(await ui.find({ key: "body-help" })).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("an inline frame under 6 rows is the short view and says what shows the tabs", async ($, on) => {
+    const r = rig(on);
+    await start($);
+    await turn($, r, "t1");
+    const tiny: Omit<RenderInput<"Pane">, "surface"> = { ...INLINE_NARROW, props: { ...INLINE_NARROW.props, scroll: { offset: 0, bodyRows: 5 } } };
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...tiny });
     expect(await ui.find({ key: "short" })).toBeDefined();
-    expect(await ui.find({ key: "tab-usage" })).toBeUndefined();
-    expect(await ui.find(TEXT(/widen the terminal to dock the tabs/))).toBeDefined();
+    expect(await ui.find(TEXT(/a taller terminal shows the tabs/))).toBeDefined();
+    await ui.unmount();
+  });
+
+  test("an inline frame is capped at 96 columns and keeps head and foot inside its rows (F9)", async ($, on) => {
+    const r = rig(on, { tab: "help" });
+    await start($);
+    await r.clock.settle();
+    const wide: Omit<RenderInput<"Pane">, "surface"> = { ...PANE, props: { ...PANE.props, placement: "inline", bodyColumns: 196, scroll: { offset: 0, bodyRows: 14 } } };
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...wide });
+    await r.clock.settle();
+    expect((await ui.find({ key: "window" }))?.props.width).toBe(96);
+    expect(await ui.find({ key: "tabs" })).toBeDefined();
+    expect(await hintOf(ui)).toMatch(/^\u{2193} \d+ more/u);
+    expect(await ui.find(TEXT(/^Context$/))).toBeDefined();
+    await ui.unmount();
+    const narrow = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    expect((await narrow.find({ key: "window" }))?.props.width).toBeUndefined();
+    await narrow.unmount();
+  });
+
+  test("the chosen tab and switch are bold and underlined, not only coloured (F13)", async ($, on) => {
+    const r = rig(on, { tab: "usage" });
+    await start($);
+    await r.clock.settle();
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
+    await r.clock.settle();
+    const underlined = await ui.findAll({ type: "Text" });
+    const drawn = JSON.stringify(await ui.drawn());
+    expect(underlined.length).toBeGreaterThan(0);
+    expect(drawn).toContain('"underline":true');
+    // One tab and one span choice are marked.
+    expect(drawn.split('"underline":true').length - 1).toBe(2);
     await ui.unmount();
   });
 
@@ -328,13 +376,13 @@ describe("window: surfaces", () => {
     await start($);
     await turn($, r, "t1");
     const code = await $.ui.mount({ plugin: PLUGIN, surface: "vscode", ...PANE });
-    expect(await code.find(TEXT(/esc collapse|ctrl\+x|0-5 switch tab/))).toBeUndefined();
+    expect(await code.find(TEXT(/esc fold|ctrl\+x|1-5,0 tab/))).toBeUndefined();
     expect((await code.find({ key: "tab-usage" }))?.props.plain).toBeUndefined();
     expect((await code.findAll({ type: "Svg" })).length).toBeGreaterThanOrEqual(3);
     expect(await code.find(TEXT(/\u{2588}|\u{2591}/u))).toBeUndefined();
     await code.unmount();
     const term = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect(await term.find(TEXT(/esc collapse/))).toBeDefined();
+    expect(await term.find(TEXT(/esc fold/))).toBeDefined();
     expect((await term.findAll({ type: "Svg" })).length).toBe(0);
     expect(await term.find(TEXT(/\u{2588}|\u{2591}/u))).toBeDefined();
     await term.unmount();
@@ -415,7 +463,7 @@ describe("window: the 8-hour chart", () => {
     const fold = await band.find({ type: "Button", key: "tally-fold" });
     expect(fold?.props.label).toContain("\u{b7}\u{b7}\u{b7}\u{2582}\u{b7}\u{b7}\u{2585}\u{b7}");
     await band.unmount();
-    const short = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...INLINE_NARROW });
+    const short = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...{ ...INLINE_NARROW, props: { ...INLINE_NARROW.props, scroll: { offset: 0, bodyRows: 5 } } } });
     expect(await short.find(TEXT(/^8h \u{b7}\u{b7}\u{b7}\u{2582}\u{b7}\u{b7}\u{2585}\u{b7}$/u))).toBeDefined();
     await short.unmount();
   });
@@ -679,7 +727,9 @@ describe("window: limit warning", () => {
     await turn($, r, "t2");
     await turn($, r, "t3");
     expect(r.toasts).toHaveLength(1);
-    expect(r.toasts[0]).toBe("tally: your 5-hour limit is 81% used (resets in 4h 20m).");
+    expect(r.toasts[0]).toBe("tally: 5-hour limit 81% used, resets in 4h 20m");
+    // Eight seconds, twice the engine's default, so it can be read.
+    expect(r.toastMs[0]).toBe(8000);
   });
 
   test("80% exactly raises nothing; a window that crosses later raises it then", async ($, on) => {
@@ -692,7 +742,7 @@ describe("window: limit warning", () => {
     r.usage.v = { ...r.usage.v, rateLimits: limits(80, 83) };
     await turn($, r, "t2");
     expect(r.toasts).toHaveLength(1);
-    expect(r.toasts[0]).toContain("7-day limit is 83% used");
+    expect(r.toasts[0]).toContain("7-day limit 83% used");
     await turn($, r, "t3");
     expect(r.toasts).toHaveLength(1);
   });
@@ -982,15 +1032,16 @@ describe("window: scrolling a docked tab (U1)", () => {
     await roomy.unmount();
   });
 
-  test("an inline frame is not windowed: the whole tab is drawn and the engine scrolls it", async ($, on) => {
+  test("an inline frame is windowed too, inside its rows and with no fixed height", async ($, on) => {
     const r = rig(on, { tab: "help" });
     await start($);
     await r.clock.settle();
     const inline: Omit<RenderInput<"Pane">, "surface"> = { ...PANE, viewport: { columns: 200, rows: 50, isFullscreen: false }, props: { ...PANE.props, placement: "inline", bodyColumns: 100, scroll: { offset: 0, bodyRows: 12 } } };
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...inline });
     await r.clock.settle();
-    expect(await hintOf(ui)).toBe("");
-    expect(await ui.find(TEXT(/^Version$/))).toBeDefined();
+    expect(await hintOf(ui)).toMatch(/^\u{2193} \d+ more/u);
+    expect(await ui.find(TEXT(/^Version$/))).toBeUndefined();
+    expect((await ui.find({ key: "window" }))?.props.height).toBeUndefined();
     await ui.unmount();
   });
 });

@@ -138,7 +138,7 @@ describe("usage tab", () => {
     expect(await ui.find(TEXT(/^Explore \u{b7} opus-5-5 \u{b7} 1 write$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^~\d/))).toBeDefined();
     expect(await ui.find(TEXT(/^105k tokens in this session$/))).toBeDefined();
-    expect(await ui.find(TEXT(/a agent list \u{b7} p\/n prev\/next \u{b7} v full text/u))).toBeDefined();
+    expect(await ui.find(TEXT(/a agents {2}p\/n prev\/next {2}v text/u))).toBeDefined();
     await ui.unmount();
   });
 

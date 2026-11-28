@@ -4,6 +4,10 @@ Release notes are cut from this file. Newest first.
 
 ## Unreleased
 
+- A fullscreen terminal under 110 columns now draws every tab inline instead of a four-line summary (80x24 reaches all six). An inline frame is windowed like the dock, under a fixed tab bar and foot, never wider than 96 columns; only a frame under 6 rows draws the short view.
+- The chosen tab and switch are bold and underlined, not only coloured. The key line shows this tab's keys first, then `1-5,0 tab` and `esc fold`, with key names bold, and drops keys by priority as the width falls.
+- The limit toast reads `tally: 5-hour limit 83% used, resets in 2h 10m` and stays 8 seconds.
+
 - A docked tab taller than the dock now scrolls under a fixed tab bar and foot: mouse wheel, `PgUp`, `PgDn` and the arrow keys while the window holds the keyboard, with a line saying how many rows lie above and below. The Help tab reaches its version line and Usage 30d reaches its cache write section. The scroll resets when the tab, span or list changes.
 - The tab bar stays on one row at any dock width with its digits shown, shortens the tab names as the width falls, and the Hints tab shows the session's hint count. The focus ring starts on the first row of the content.
 - `/tally close` folds the window as `esc` does and keeps it folded for the next session.

@@ -250,7 +250,7 @@ describe("session tab", () => {
     await mainStep($, 0);
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect(await ui.find(TEXT(/tab\/enter open rows/))).toBeDefined();
+    expect(await ui.find(TEXT(/tab\/enter open/))).toBeDefined();
     const kinds = (await ui.findAll({ type: "Button" })).map((b) => b.props.key).filter((k) => typeof k === "string" && k.startsWith("kind-"));
     expect(kinds).toEqual(["kind-input", "kind-output", "kind-cacheRead", "kind-cacheWrite", "kind-cw1h"]);
     await ui.press({ key: "kind-cacheRead" });
@@ -289,7 +289,7 @@ describe("session tab", () => {
     expect(await ui.find({ key: "went-6" })).toBeDefined();
     expect(await ui.find({ key: "went-7" })).toBeUndefined();
     expect(await ui.find(TEXT(/^2 more sub-agents$/))).toBeDefined();
-    expect(await ui.find(TEXT(/m full lists/))).toBeDefined();
+    expect(await ui.find(TEXT(/m more/))).toBeDefined();
     expect((await ui.find({ key: "lists-more" }))?.props.hotkey).toBe("m");
     await ui.press({ key: "lists-more" });
     expect(await ui.find({ key: "went-8" })).toBeDefined();

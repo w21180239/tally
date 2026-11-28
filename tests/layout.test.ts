@@ -5,8 +5,8 @@ import { emptyLive } from "../core/live-state.ts";
 import { cacheOf, contextWords, glanceLines, leftText, tokensText, untilText, windowData } from "../view/data.ts";
 import type { WindowData } from "../view/data.ts";
 import { footRows } from "../view/foot.tsx";
-import { keyLine, keyLineText, spansOf } from "../view/keys.ts";
-import { canDock, layoutOf, opensByItself } from "../view/layout.ts";
+import { keyLine, keyLineRuns, keyLineText, spansOf } from "../view/keys.ts";
+import { layoutOf, MAX_COLUMNS } from "../view/layout.ts";
 import { hourGlyph, textBar } from "../view/theme.ts";
 
 const NOW = Date.UTC(2026, 10, 27, 12);
@@ -40,23 +40,20 @@ describe("layoutOf", () => {
     expect(layoutOf(200, 40, "inline")).toBe("full");
   });
 
-  test("an inline frame under 10 rows is the short view at any width; a dock never is", () => {
-    expect(layoutOf(80, 9, "inline")).toBe("short");
-    expect(layoutOf(20, 9, "inline")).toBe("short");
-    expect(layoutOf(80, 10, "inline")).toBe("full");
-    expect(layoutOf(80, 9, "dock")).toBe("full");
+  test("an inline frame under 6 rows is the short view at any width; a dock never is", () => {
+    expect(layoutOf(80, 5, "inline")).toBe("short");
+    expect(layoutOf(20, 5, "inline")).toBe("short");
+    expect(layoutOf(80, 6, "inline")).toBe("full");
+    expect(layoutOf(80, 5, "dock")).toBe("full");
   });
 
-  test("an inline frame on a fullscreen terminal too narrow to dock is the short view whatever its height", () => {
-    expect(layoutOf(96, 40, "inline", { isFullscreen: true })).toBe("short");
-    expect(layoutOf(96, 40, "inline", { isFullscreen: false })).toBe("full");
+  test("a fullscreen terminal gets the same drawing as any other: 80x24 reaches the tabs", () => {
+    expect(layoutOf(78, 14, "inline")).toBe("full");
+    expect(layoutOf(54, 40, "inline")).toBe("narrow");
   });
 
-  test("docking needs 110 columns; the window opens by itself from 144", () => {
-    expect(canDock(109)).toBe(false);
-    expect(canDock(110)).toBe(true);
-    expect(opensByItself(143)).toBe(false);
-    expect(opensByItself(144)).toBe(true);
+  test("content is never drawn wider than 96 columns", () => {
+    expect(MAX_COLUMNS).toBe(96);
   });
 });
 
@@ -80,13 +77,35 @@ describe("keyLine", () => {
     expect(keyLine("session", { machines: true })).not.toContain("t computers");
   });
 
-  test("the line leads with how to focus, then whole entries while they fit", () => {
+  test("the line leads with how to focus, then this tab's keys, a divider and the global pair", () => {
     const keys = keyLine("hints");
-    expect(keyLineText(200, false, keys)).toBe("ctrl+x then tab to focus \u{b7} 0-5 switch tab \u{b7} s time span \u{b7} r repo filter \u{b7} esc collapse");
-    expect(keyLineText(200, true, keys).startsWith("keys active \u{b7} 0-5 switch tab")).toBe(true);
-    const cut = keyLineText(44, false, keys);
-    expect(cut.length).toBeLessThanOrEqual(44);
-    expect(cut.endsWith("0-5 switch tab")).toBe(true);
+    expect(keyLineText(200, false, keys)).toBe("ctrl+x then tab to focus \u{b7} s span  r repo \u{2503} 1-5,0 tab  esc fold");
+    expect(keyLineText(200, true, keys)).toBe("keys active \u{b7} s span  r repo \u{2503} 1-5,0 tab  esc fold");
+    // A tab with no keys of its own has only the pair.
+    expect(keyLineText(200, true, keyLine("help"))).toBe("keys active \u{b7} 1-5,0 tab  esc fold");
+  });
+
+  test("narrow, keys drop by priority: esc first, then the tab's own keys from the last, the tab switch last", () => {
+    const keys = keyLine("hints", { evidence: true, adopt: true });
+    const widths = [90, 70, 60, 50, 44, 40];
+    const lines = widths.map((w) => keyLineText(w, true, keys));
+    for (let i = 0; i < widths.length; i++) expect(lines[i]!.length).toBeLessThanOrEqual(widths[i]!);
+    // At the width where esc no longer fits, the tab's own keys and the switch remain.
+    const noEsc = lines.find((l) => !l.includes("esc fold") && l.includes("s span"));
+    expect(noEsc).toBeDefined();
+    expect(noEsc).toContain("1-5,0 tab");
+    // Smaller still: own keys go from the last, and the switch is the last to leave.
+    expect(keyLineText(33, true, keys)).toBe("keys active \u{b7} s span \u{2503} 1-5,0 tab");
+    expect(keyLineText(28, true, keys)).toBe("keys active \u{b7} 1-5,0 tab");
+    expect(keyLineText(10, true, keys)).toBe("keys active");
+    // An entry is whole or absent.
+    for (const l of lines) expect(l).not.toMatch(/tab\/e$|evide$/);
+  });
+
+  test("the runs name each key (drawn bold) apart from its words (dim)", () => {
+    const runs = keyLineRuns(200, true, keyLine("usage"));
+    expect(runs.filter((r) => r.role === "key").map((r) => r.text)).toEqual(["s", "1-5,0", "esc"]);
+    expect(runs.map((r) => r.text).join("")).toBe(keyLineText(200, true, keyLine("usage")));
   });
 
   test("only Usage cycles three spans; Hints two; the rest none", () => {
