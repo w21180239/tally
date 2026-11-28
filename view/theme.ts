@@ -1,16 +1,33 @@
-// Tones, glyphs and the two bar drawings (text and Svg) shared by every view. Non-ASCII glyphs are escapes.
+// The palette, glyphs and the two bar drawings (text and Svg) shared by every view. Non-ASCII glyphs are escapes.
+//
+// Tokens (only theme keys on the terminal, so the contrast is the user's theme and no signal rests on colour alone):
+//   text      no colour: labels, figures, bar fills
+//   muted     dimColor: notes, rules, secondary figures; never the only carrier of a state
+//   accent    "claude": key names, the hint mark; sits under 3:1 on a light theme, so it only ever tints a word
+//   ok/warn/crit  success / warning / error: thresholds only. warn comes with a word ("near limit"), crit with CRIT_MARK
+//   saving    success, after the word "save"; costs stay text
+//   selected  bold + underline (colour may add to it)
+//   category  a glyph from PART_GLYPHS plus a colour from PART_COLORS; never the status colours
+// Svg cannot take a theme key, so BAR_FILL and PART_FILLS are fixed fills, each at least 3:1 on white and on #1e1e1e.
 
-export type Tone = "success" | "warning" | "error" | "accent" | "dim";
+export type Tone = "success" | "warning" | "error" | "accent" | "dim" | "text";
 
 /** Used-share thresholds: a figure is amber from half and red from 80%. */
 export const WARN_SHARE = 0.5;
 export const HOT_SHARE = 0.8;
+/** A cache is amber when a fifth of its life or less is left. */
+export const CACHE_WARN_LEFT = 0.2;
 
 export const toneOfShare = (share: number): "success" | "warning" | "error" => (share >= HOT_SHARE ? "error" : share >= WARN_SHARE ? "warning" : "success");
+
+/** The cache's tone from the share of its life still left: green, amber from a fifth, red once expired. */
+export const toneOfCache = (leftShare: number, isExpired: boolean): "success" | "warning" | "error" => (isExpired ? "error" : leftShare <= CACHE_WARN_LEFT ? "warning" : "success");
 
 export const SEP = " \u{b7} ";
 export const HINT_MARK = "\u{25b2}";
 export const CACHE_MARK = "\u{29d7}";
+/** Leads a red figure or word, so red is never the only signal. */
+export const CRIT_MARK = "!";
 const FULL = "\u{2588}";
 const EMPTY = "\u{2591}";
 
@@ -23,8 +40,18 @@ export function textBar(share: number, cells: number): string {
   return FULL.repeat(filled) + EMPTY.repeat(n - filled);
 }
 
+/** A bar of `cells` characters as its two runs, so the fill and the empty part take their own styles. */
+export function barRuns(share: number, cells: number): { filled: string; empty: string } {
+  const n = Math.max(0, Math.floor(cells));
+  const filled = Math.round(clamp01(share) * n);
+  return { filled: FULL.repeat(filled), empty: EMPTY.repeat(n - filled) };
+}
+
+/** The Text props that mark a selected choice: bold and underlined, the rest dim. */
+export const selectedProps = (isSelected: boolean): Record<string, unknown> => (isSelected ? { weight: "bold", underline: true } : { dimColor: true });
+
 /** SVG cannot take a theme key, so a bar's fill is a fixed colour per tone. */
-export const BAR_FILL = { success: "#2e9e5b", warning: "#d99a1e", error: "#d64545", accent: "#c96442", dim: "#9aa3b2" } as const;
+export const BAR_FILL = { success: "#2e9e5b", warning: "#b7791f", error: "#d64545", accent: "#c96442", dim: "#6b7488", text: "#6b7488" } as const;
 
 /** A rounded bar of `width` x `height` pixels, `share` of it filled in `tone`. */
 export function svgBar(share: number, width: number, height: number, tone: Tone): string {
@@ -56,11 +83,14 @@ export function toneProps(tone: Tone | undefined, bold = false): Record<string, 
   return { ...(color !== undefined && { color }), ...(bold && { weight: "bold" }), ...(tone === "dim" && { dimColor: true }) };
 }
 
-/** Colours that tell the parts of a stacked bar apart: theme keys on the terminal, fixed fills in Svg. */
-export const PART_COLORS = ["claude", "permission", "success", "warning", "suggestion", "ide"] as const;
-export const PART_FILLS = ["#c96442", "#7a6ff0", "#2e9e5b", "#d99a1e", "#3b82c4", "#9aa3b2"] as const;
+/** What tells the parts of a stacked bar apart: a glyph and a colour. Theme keys on the terminal, fixed fills in Svg. */
+export const PART_COLORS = ["claude", "permission", "suggestion", "ide", "remember"] as const;
+export const PART_FILLS = ["#c96442", "#7a6ff0", "#3b82c4", "#2a8f8f", "#b85a9a"] as const;
+/** Full, dark, medium and light shade: four shapes, read without colour. A fifth part repeats a shape in its own colour. */
+export const PART_GLYPHS = ["\u{2588}", "\u{2593}", "\u{2592}", "\u{2591}"] as const;
 
 export const partColor = (i: number): (typeof PART_COLORS)[number] => PART_COLORS[i % PART_COLORS.length]!;
+export const partGlyph = (i: number): (typeof PART_GLYPHS)[number] => PART_GLYPHS[i % PART_GLYPHS.length]!;
 
 /** Cells for each part of a bar `cells` wide, in proportion to its share; every part above zero gets one at least, and they add up to `cells`. */
 export function partCells(shares: number[], cells: number): number[] {

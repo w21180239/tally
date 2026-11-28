@@ -169,8 +169,12 @@ describe("window data and glance", () => {
     expect(tokensText(236_000)).toBe("236k");
     expect(tokensText(1_000_000)).toBe("1M");
     expect(tokensText(1_250_000)).toBe("1.25M");
-    // Past a billion the unit steps up, so a 30-day total fits the 9-cell amount column.
-    expect(tokensText(999_994_000)).toBe("999.99M");
+    // Three significant digits: a count that rounds up to 1000 steps to the next unit.
+    expect(tokensText(842)).toBe("842");
+    expect(tokensText(4200)).toBe("4.2k");
+    expect(tokensText(329_400_000)).toBe("329M");
+    expect(tokensText(32_900_000)).toBe("32.9M");
+    expect(tokensText(999_994_000)).toBe("1B");
     expect(tokensText(999_996_000)).toBe("1B");
     expect(tokensText(999_600)).toBe("1M");
     expect(tokensText(3_016_010_000)).toBe("3.02B");
@@ -193,7 +197,7 @@ describe("window data and glance", () => {
   test("the foot has the cache row with its refill price, context with compact threshold, and each limit", () => {
     const rows = footRows(dataOf(), false);
     expect(rows.map((r) => r.label)).toEqual(["Cache", "Context", "", "Limits", ""]);
-    expect(rows[0]!.figure).toBe("45\u{a2}");
+    expect(rows[0]!.figure).toBe("$0.45");
     expect(rows[1]!.words[0]).toBe("236k of a 1M window");
     expect(rows[1]!.figure).toBe("24%");
     expect(rows[2]!.words[0]).toBe("compact at 800k");

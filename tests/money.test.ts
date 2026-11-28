@@ -1,5 +1,5 @@
 import { describe, expect, test } from "claude-code/testing";
-import { formatMoney } from "../core/money.ts";
+import { formatMoney, headlineMoney, moneyBlock } from "../core/money.ts";
 
 describe("formatMoney", () => {
   test("cents-and-dollars auto", () => {
@@ -68,5 +68,50 @@ describe("formatMoney", () => {
     expect(formatMoney(NaN, "cents-and-dollars", "auto")).toBe("0¢");
     expect(formatMoney(Infinity, "dollars", "auto")).toBe("$0.00");
     expect(formatMoney(-Infinity, "cents", "auto")).toBe("0¢");
+  });
+});
+
+describe("moneyBlock", () => {
+  const auto = (v: number[], m: "cents-and-dollars" | "cents" | "dollars" = "cents-and-dollars", d: "auto" | "0" | "1" | "2" | "3" | "4" = "auto") => moneyBlock(v, m, d);
+
+  test("a block with an amount of $1 or more is all dollars, tiny amounts read <$0.01", () => {
+    expect(auto([0.0013, 18.39, 53.5587, 0, 29.12])).toEqual(["<$0.01", "$18.39", "$53.56", "$0.00", "$29.12"]);
+  });
+
+  test("a block under $1 is all cents with one place", () => {
+    expect(auto([0.0002, 0.1286, 0.5])).toEqual(["<0.1¢", "12.9¢", "50.0¢"]);
+    expect(auto([0])).toEqual(["0.0¢"]);
+  });
+
+  test("the unit follows the largest amount after rounding to a cent", () => {
+    expect(auto([0.9996, 0.2])).toEqual(["$1.00", "$0.20"]);
+  });
+
+  test("the money setting fixes the unit for the whole block", () => {
+    expect(auto([0.0013, 18.39], "cents")).toEqual(["0.1¢", "1839.0¢"]);
+    expect(auto([0.0013, 0.5], "dollars")).toEqual(["<$0.01", "$0.50"]);
+  });
+
+  test("fixed decimals apply to the whole block and shrink together to fit 7 characters", () => {
+    expect(auto([0.5, 2], "cents-and-dollars", "3")).toEqual(["$0.500", "$2.000"]);
+    expect(auto([0.0004, 12.3456], "dollars", "4")).toEqual(["<$0.001", "$12.346"]);
+    expect(auto([0.0004, 1], "dollars", "0")).toEqual(["<$1", "$1"]);
+  });
+
+  test("from $1,000 the block is whole dollars", () => {
+    expect(auto([1234.5, 3.2, 0.001])).toEqual(["$1,235", "$3", "$0"]);
+  });
+
+  test("every row of a block is the same unit and no longer than 7 characters", () => {
+    const modes = ["cents-and-dollars", "cents", "dollars"] as const;
+    const decs = ["auto", "0", "1", "2", "3", "4"] as const;
+    const sets = [[0, 0.0004, 0.5], [0.99999, 1, 9.999], [99.99, 999.99, 999.996], [1000, 12345.67], [-0.5, 2], [1e6, 1e15], []];
+    for (const m of modes) for (const d of decs) for (const set of sets) for (const s of moneyBlock(set, m, d)) if (s.length > 7) throw new Error(`${set} ${m} ${d} -> ${s}`);
+  });
+
+  test("a headline is dollars unless cents are asked for", () => {
+    expect(headlineMoney(0.0268, "cents-and-dollars", "auto")).toBe("$0.03");
+    expect(headlineMoney(1.16, "cents-and-dollars", "auto")).toBe("$1.16");
+    expect(headlineMoney(0.0268, "cents", "auto")).toBe("2.7¢");
   });
 });
