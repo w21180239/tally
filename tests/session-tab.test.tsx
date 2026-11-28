@@ -1,6 +1,7 @@
 import type { On, RenderInput, TurnStepInput, TurnStepResult, TurnUsage } from "claude-code";
 import type { Engine } from "claude-code/testing";
 import { describe, expect, mock, test } from "claude-code/testing";
+import { linesOf } from "./render.ts";
 import type { BreakdownInput, BreakdownSnapshot } from "../core/breakdown.ts";
 import type { Shard } from "../core/shard.ts";
 import { dayIdx, saveBuckets } from "../engine/project-store.ts";
@@ -158,7 +159,7 @@ describe("session tab", () => {
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     expect(await ui.find({ key: "body-session" })).toBeDefined();
     expect(await ui.find(TEXT(/^Where it went$/))).toBeDefined();
-    expect(await ui.find(TEXT(/^Tokens by kind$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Billed kinds$/))).toBeDefined();
     expect(await ui.find(TEXT(/^Prompt cache$/))).toBeDefined();
     expect(await ui.find(TEXT(/^Leading hint$/))).toBeDefined();
     // The by-model legend names both models, and each sums its earlier-launch, live and cached parts.
@@ -185,9 +186,12 @@ describe("session tab", () => {
     // Sonnet sub-agent step at the 5-minute write price: 2000 + 10000 + 25000 + 5000 = 42000 -> 4.2 cents. Total 19.8 cents.
     const main = await ui.find({ key: "went-0" });
     expect(main).toBeDefined();
-    expect(await ui.find(TEXT(/^15\.6\u{a2}$/u))).toBeDefined();
-    expect(await ui.find(TEXT(/^4\.2\u{a2}$/u))).toBeDefined();
-    expect(await ui.find(TEXT(/^19\.8\u{a2}$/u))).toBeDefined();
+    // The legend is its own column of amounts, all under $1, so in cents; the rows share the tab's one dollar column.
+    expect(await ui.find(TEXT(/opus-5-5 15\.6\u{a2}$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/sonnet-5-5 4\.2\u{a2}$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^\$0\.20$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^\$0\.16$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^\$0\.04$/))).toBeDefined();
     await ui.unmount();
   });
 
@@ -207,7 +211,7 @@ describe("session tab", () => {
     expect(row).toBeDefined();
     // 100k resident schema tokens x $0.2 per MTok x 3 main requests = 6 cents; the label counts the one call.
     expect(await ui.find(TEXT(/^demo \u{b7} 1 call$/u))).toBeDefined();
-    expect(await ui.find(TEXT(/^6\u{a2}\*$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^(?:\$0\.06|6\.0\u{a2})\*$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^\* schema sizes from a snapshot taken in another session$/))).toBeDefined();
     await ui.unmount();
   });
@@ -223,8 +227,8 @@ describe("session tab", () => {
     await finishTurn($, 1000);
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect(await ui.find(TEXT(/^6\u{a2}$/u))).toBeDefined();
-    expect(await ui.find(TEXT(/^6\u{a2}\*$/u))).toBeUndefined();
+    expect(await ui.find(TEXT(/^(?:\$0\.06|6\.0\u{a2})$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^(?:\$0\.06|6\.0\u{a2})\*$/u))).toBeUndefined();
     expect(await ui.find(TEXT(/snapshot taken in another session/))).toBeUndefined();
     await ui.unmount();
   });
@@ -251,9 +255,9 @@ describe("session tab", () => {
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
     expect(await ui.find(TEXT(/tab\/enter open/))).toBeDefined();
-    const kinds = (await ui.findAll({ type: "Button" })).map((b) => b.props.key).filter((k) => typeof k === "string" && k.startsWith("kind-"));
-    expect(kinds).toEqual(["kind-input", "kind-output", "kind-cacheRead", "kind-cacheWrite", "kind-cw1h"]);
-    await ui.press({ key: "kind-cacheRead" });
+    const kinds = (await ui.findAll({ type: "Button" })).map((b) => b.props.key).filter((k) => typeof k === "string" && k.startsWith("open-kind-"));
+    expect(kinds).toEqual(["open-kind-input", "open-kind-output", "open-kind-cacheRead", "open-kind-cacheWrite", "open-kind-cw1h"]);
+    await ui.press({ key: "open-kind-cacheRead" });
     expect(await ui.find({ key: "body-usage" })).toBeDefined();
     expect(r.stored.get("tab")).toBe("usage");
     expect(r.stored.get("span")).toBe("session");
@@ -321,14 +325,50 @@ describe("session tab", () => {
     await term.unmount();
   });
 
+  for (const cols of [48, 54, 63, 80, 120, 144]) {
+    test(`at ${cols} columns every row is one line and each amount column ends on one edge`, async ($, on) => {
+      const r = rig(on);
+      await seedEarlier(r.world);
+      await start($);
+      await r.clock.settle();
+      await mainStep($, 0);
+      await mainStep($, 1, "ag-1");
+      await r.clock.settle();
+      const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE, props: { ...PANE.props, bodyColumns: cols, scroll: { offset: 0, bodyRows: 200 } } });
+      const body = (await ui.find({ key: "body-session" })) as unknown as Parameters<typeof linesOf>[0];
+      const tree = (await ui.drawn()) as unknown as { type: string; props?: Record<string, unknown>; children?: unknown[] };
+      const rows: Array<Parameters<typeof linesOf>[0]> = [];
+      const walk = (n: unknown): void => {
+        if (typeof n !== "object" || n === null) return;
+        const node = n as { props?: Record<string, unknown>; children?: unknown[] };
+        if (node.props?.height === 1) rows.push(n as Parameters<typeof linesOf>[0]);
+        for (const c of (node.children ?? []).flat()) walk(c);
+      };
+      walk(tree);
+      expect(body).toBeDefined();
+      expect(rows.length).toBeGreaterThan(5);
+      const went = rows.filter((n) => String((n as { props: { key?: string } }).props.key ?? "").startsWith("went-")).map((n) => linesOf(n, cols));
+      expect(went.length).toBeGreaterThan(1);
+      for (const lines of went) expect(lines).toHaveLength(1);
+      // Rows that carry a money figure end on the same cell: the tab's bar column is the only thing after it.
+      const lens = new Set(went.map((l) => l[0]!.length));
+      expect(lens.size).toBe(1);
+      for (const n of rows) for (const line of linesOf(n, cols)) expect(line.length).toBeLessThanOrEqual(cols);
+      await ui.unmount();
+    });
+  }
+
   test("a fresh session draws its empty state without throwing", async ($, on) => {
     const r = rig(on);
     await start($);
     await r.clock.settle();
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...PANE });
-    expect(await ui.find(TEXT(/^Where it went$/))).toBeDefined();
-    expect(await ui.find(TEXT(/^Nothing spent yet\.$/))).toBeDefined();
+    // One state, not a column of empty sections: the situation, then the step that follows.
     expect(await ui.find(TEXT(/^no requests yet$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Nothing has been spent in this session\.$/))).toBeDefined();
+    expect(await ui.find(TEXT(/Earlier days are on 4 History/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Where it went/))).toBeUndefined();
+    expect(await ui.find(TEXT(/^Leading hint/))).toBeUndefined();
     await ui.unmount();
   });
 });

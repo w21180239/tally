@@ -105,6 +105,8 @@ export type RowSpec = {
   tone?: Tone;
   quiet?: boolean;
   bold?: boolean;
+  /** The money figure's colour (a hint's saving). */
+  moneyTone?: Tone;
   /** Makes the label a button that opens what is behind the row. */
   onPress?: () => void;
 };
@@ -117,7 +119,7 @@ function figure(t: Table, key: string, width: number, text: string, props: Recor
   if (width <= 0) return null;
   const { Box, Text } = t;
   return (
-    <Box key={key} width={width} flexShrink={0} justifyContent="flex-end">
+    <Box width={width} flexShrink={0} justifyContent="flex-end">
       <Text wrap="truncate-end" {...props}>
         {text}
       </Text>
@@ -128,19 +130,19 @@ function figure(t: Table, key: string, width: number, text: string, props: Recor
 function barCell(t: Table, g: Grid, key: string, share: number | null | undefined, tone: Tone | undefined, quiet: boolean | undefined): RenderElement | null {
   if (g.bar <= 0) return null;
   const { Box, Text, Svg } = t;
-  if (share === undefined || share === null) return <Box key={`${key}-bar`} width={g.bar} flexShrink={0} />;
+  if (share === undefined || share === null) return <Box width={g.bar} flexShrink={0} />;
   const shown = quiet === true ? "dim" : (tone ?? "text");
   if (Svg !== null) {
     const px = g.bar * SVG_CELL_PX;
     return (
-      <Box key={`${key}-bar`} width={g.bar} flexShrink={0}>
+      <Box width={g.bar} flexShrink={0}>
         <Svg source={svgBar(share, px, SVG_BAR_H, shown)} alt={`${Math.round(share * 100)}%`} width={px} height={SVG_BAR_H} />
       </Box>
     );
   }
   const runs = barRuns(share, g.bar);
   return (
-    <Box key={`${key}-bar`} width={g.bar} flexShrink={0} flexDirection="row">
+    <Box width={g.bar} flexShrink={0} flexDirection="row">
       <Text {...toneProps(shown)}>{runs.filled}</Text>
       <Text dimColor>{runs.empty}</Text>
     </Box>
@@ -155,13 +157,13 @@ export function row(t: Table, g: Grid, r: RowSpec): RenderElement {
   return (
     <Box key={r.key} flexDirection="row" columnGap={1} {...oneLine(t)}>
       {g.lead > 0 && (
-        <Box key={`${r.key}-lead`} width={g.lead} flexShrink={0}>
+        <Box width={g.lead} flexShrink={0}>
           <Text weight="bold" wrap="truncate-end">
             {r.lead ?? ""}
           </Text>
         </Box>
       )}
-      <Box key={`${r.key}-label`} flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+      <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
         {r.onPress === undefined ? (
           <Text wrap="truncate-end" {...props}>
             {label}
@@ -173,7 +175,7 @@ export function row(t: Table, g: Grid, r: RowSpec): RenderElement {
         )}
       </Box>
       {figure(t, `${r.key}-tokens`, g.tokens, figureCell(r.tokens, r.est === true, g.tokens), props)}
-      {figure(t, `${r.key}-money`, g.money, figureCell(r.money, r.est === true, g.money), props)}
+      {figure(t, `${r.key}-money`, g.money, figureCell(r.money, r.est === true, g.money), { ...props, ...(r.moneyTone !== undefined && toneProps(r.moneyTone)) })}
       {barCell(t, g, r.key, r.share, r.tone, r.quiet)}
     </Box>
   );
@@ -187,8 +189,8 @@ export function section(t: Table, g: Grid, s: SectionSpec): RenderElement {
   const parts = titleParts(s.name, s.note, g.label);
   return (
     <Box key={`title-${s.key}`} flexDirection="row" columnGap={1} {...oneLine(t)}>
-      {g.lead > 0 && <Box key={`title-${s.key}-lead`} width={g.lead} flexShrink={0} />}
-      <Box key={`title-${s.key}-label`} flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden" flexDirection="row">
+      {g.lead > 0 && <Box width={g.lead} flexShrink={0} />}
+      <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden" flexDirection="row" columnGap={1}>
         <Text weight="bold" wrap="truncate-end">
           {parts.name}
         </Text>
@@ -201,7 +203,7 @@ export function section(t: Table, g: Grid, s: SectionSpec): RenderElement {
       </Box>
       {figure(t, `title-${s.key}-tokens`, g.tokens, figureCell(s.tokens, s.est === true, g.tokens), {})}
       {figure(t, `title-${s.key}-money`, g.money, figureCell(s.money, s.est === true, g.money), {})}
-      {g.bar > 0 && <Box key={`title-${s.key}-bar`} width={g.bar} flexShrink={0} />}
+      {g.bar > 0 && <Box width={g.bar} flexShrink={0} />}
     </Box>
   );
 }
@@ -214,6 +216,25 @@ export function wrapped(t: Table, key: string, text: string, opts: { max: number
       <Text wrap="wrap" maxLines={opts.max} {...(opts.quiet === true && { dimColor: true })}>
         {text}
       </Text>
+    </Box>
+  );
+}
+
+/** A term and its text: the term in a column of `cells`, the text wrapping beside it so a second line hangs under the first. */
+export function hanging(t: Table, key: string, term: string, text: string, opts: { cells: number; indent?: number; termColor?: string; quiet?: boolean }): RenderElement {
+  const { Box, Text } = t;
+  return (
+    <Box key={key} flexDirection="row" columnGap={1} paddingLeft={opts.indent ?? INDENT}>
+      <Box key={`${key}-term`} width={opts.cells} flexShrink={0}>
+        <Text wrap="truncate-end" {...(opts.termColor === undefined ? { dimColor: true } : { color: opts.termColor })}>
+          {term}
+        </Text>
+      </Box>
+      <Box flexGrow={1} flexShrink={1}>
+        <Text wrap="wrap" {...(opts.quiet === false ? {} : { dimColor: true })}>
+          {text}
+        </Text>
+      </Box>
     </Box>
   );
 }

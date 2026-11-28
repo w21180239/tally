@@ -102,6 +102,14 @@ export const blockOf = (d: MoneyOpts, usds: readonly number[]): string[] => mone
 /** The amount that heads a view, in dollars unless the setting asks for cents. */
 export const headlineOf = (d: MoneyOpts, usd: number): string => headlineMoney(usd, d.money, d.decimals);
 
+/** One column's formatter: every amount a tab draws goes through the block of all of them, so the column reads in one unit. */
+export function moneyColumn(d: MoneyOpts, usds: readonly number[]): (usd: number) => string {
+  const shown = blockOf(d, usds);
+  const by = new Map<number, string>();
+  usds.forEach((v, i) => by.set(v, shown[i]!));
+  return (usd) => by.get(usd) ?? blockOf(d, [...usds, usd]).at(-1)!;
+}
+
 /** Counts to three significant digits: `842`, `4.2k`, `236k`, `1.26M`, `32.9M`, `329M`, `1.5B`. */
 export function tokensText(n: number): string {
   const x = Number.isFinite(n) ? Math.max(0, n) : 0;

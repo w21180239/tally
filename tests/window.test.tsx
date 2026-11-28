@@ -909,7 +909,7 @@ async function seedFast(w: World): Promise<void> {
 }
 
 describe("window: the leading hint", () => {
-  const HINT = "\u{25b2} fast mode: 100% of spend \u{b7} ~$2.02";
+  const HINT = "\u{25b2} fast mode: 100% of spend \u{b7} save ~$2.02";
 
   test("fold line and Session tab carry the live session's leading hint and its estimated saving", async ($, on) => {
     const world = worldOf();
@@ -982,7 +982,7 @@ describe("window: scrolling a docked tab (U1)", () => {
     const ui = await $.ui.mount({ plugin: PLUGIN, surface: "terminal", ...dockOf(24) });
     await r.clock.settle();
     expect(await hintOf(ui)).toMatch(/^\u{2193} \d+ more/u);
-    expect(await ui.find(TEXT(/^Data sources$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Keys$/))).toBeDefined();
     expect(await ui.find(TEXT(/^Version$/))).toBeUndefined();
     // Head and foot stay: the tab bar and the key line are drawn whatever the window shows.
     expect(await ui.find({ key: "tabs" })).toBeDefined();
@@ -1017,7 +1017,7 @@ describe("window: scrolling a docked tab (U1)", () => {
     await ui.press({ key: "tab-usage" });
     await ui.press({ key: "tab-help" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(/^Data sources$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Keys$/))).toBeDefined();
     await ui.unmount();
   });
 

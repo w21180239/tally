@@ -319,14 +319,14 @@ describe("hints tab", () => {
     const r = rig(on);
     const ui = await open($, r);
     expect(await ui.find({ key: "body-hints" })).toBeDefined();
-    expect(await ui.find(TEXT(exact("Current session")))).toBeDefined();
-    expect(await ui.find(TEXT(exact("Past 30 days")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("This session")))).toBeDefined();
+    expect(await ui.find({ key: "title-span" })).toBeDefined();
     expect(await boxKeys(ui, "title-hint|session|")).toEqual(["title-hint|session|fast-mode"]);
     expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode", "title-hint|span|cache-rebuilt"]);
     // Fast mode's amount is a projected saving (half the fast cost, marked "~"); the rebuild's is the measured cost.
     expect(Math.round(usdOf(demoRows().usage.slice(0, 1)) * 1e6) / 1e6).toBe(FAST_USD);
-    expect((await ui.findAll(TEXT(exact(`~${money(FAST_SAVING)}`)))).length).toBe(2);
-    expect(await ui.find(TEXT(exact(money(REBUILD_USD))))).toBeDefined();
+    expect((await ui.findAll(TEXT(exact(`save ~${money(FAST_SAVING)}`)))).length).toBe(2);
+    expect(await ui.find(TEXT(exact(`save ${money(REBUILD_USD)}`)))).toBeDefined();
     expect((await ui.findAll(TEXT(exact("Fast-mode surcharge")))).length).toBe(2);
     expect(await ui.find(TEXT(exact("Cache expired while idle")))).toBeDefined();
     expect((await ui.findAll(TEXT(/ pricing; the same requests at standard speed would have cost /))).length).toBe(2);
@@ -337,9 +337,9 @@ describe("hints tab", () => {
   test("a hint with no dollar figure shows no amount, and a projected one is marked", async ($, on) => {
     hintsHost(on, { span: [hintOf("none", 0), hintOf("exact", 3), hintOf("projected", 2, { projected: true })] });
     const ui = await mountHost($);
-    expect(await ui.find(TEXT(exact(money(3))))).toBeDefined();
-    expect(await ui.find(TEXT(exact(`~${money(2)}`)))).toBeDefined();
-    expect(await ui.find(TEXT(exact(money(0))))).toBeUndefined();
+    expect(await ui.find(TEXT(exact(`save ${money(3)}`)))).toBeDefined();
+    expect(await ui.find(TEXT(exact(`save ~${money(2)}`)))).toBeDefined();
+    expect((await ui.findAll(TEXT(/^save /))).length).toBe(2);
     await ui.unmount();
   });
 
@@ -368,7 +368,7 @@ describe("hints tab", () => {
     expect((await boxKeys(ui, "title-hint|span|")).length).toBe(2);
     await ui.press({ key: "span-24h" });
     await r.clock.settle();
-    expect(await ui.find(TEXT(exact("Past 24 hours")))).toBeDefined();
+    expect(await ui.find({ key: "title-span" })).toBeDefined();
     expect(await boxKeys(ui, "title-hint|span|")).toEqual(["title-hint|span|fast-mode"]);
     await ui.unmount();
   });
@@ -504,16 +504,18 @@ describe("hints drawing", () => {
   test("a low-confidence hint says so; others do not", async ($, on) => {
     hintsHost(on, { span: [hintOf("a", 3, { confidence: "low" }), hintOf("b", 2, { confidence: "high" }), hintOf("c", 1)] });
     const ui = await mountHost($);
-    expect((await ui.findAll(TEXT(/^low confidence$/))).length).toBe(1);
-    expect(await ui.find(TEXT(exact("Title of a")))).toBeDefined();
+    expect((await ui.findAll(TEXT(/ \u{b7} low confidence$/u))).length).toBe(1);
+    expect(await ui.find(TEXT(exact("Title of a \u{b7} low confidence")))).toBeDefined();
+    expect(await ui.find(TEXT(exact("Title of b")))).toBeDefined();
     await ui.unmount();
   });
 
-  test("the Action label keeps its width beside a long action, so it never wraps to Actio / n", async ($, on) => {
+  test("the Do label keeps its width beside a long action, so it never wraps", async ($, on) => {
     hintsHost(on, { span: [hintOf("a", 3, { action: "A long action that wraps over several lines in a narrow pane. ".repeat(4) })] });
     const ui = await mountHost($);
-    const label = await ui.find({ key: `${hintRowKey("span", "a")}-action-label` });
+    const label = await ui.find({ key: `${hintRowKey("span", "a")}-action-term` });
     expect(label?.props.flexShrink).toBe(0);
+    expect(await ui.find(TEXT(exact("Do")))).toBeDefined();
     await ui.unmount();
   });
 

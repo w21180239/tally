@@ -457,7 +457,7 @@ describe("the t switch on History", () => {
     expect((await ui.findAll(TEXT(/This computer only/))).length).toBe(3);
     expect(await ui.find(TEXT(/^This computer only$/))).toBeDefined();
     expect(await ui.find(TEXT(/^tokens and spend \u{b7} This computer only$/u))).toBeDefined();
-    expect(await ui.find(TEXT(/^press a row for its resume command \u{b7} This computer only$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^press a row to resume \u{b7} This computer only$/u))).toBeDefined();
     // The blocks every file feeds carry no note.
     expect(await ui.find(TEXT(/^newest first/))).toBeDefined();
     expect(await ui.find(TEXT(/^newest first.*This computer only/))).toBeUndefined();
@@ -502,7 +502,7 @@ describe("the t switch on History", () => {
     await r.clock.settle();
     expect(await ui.find(TEXT(/^claude --resume s-1$/))).toBeDefined();
     // This file feeds sessions and context fill, so those blocks carry no note.
-    expect(await ui.find(TEXT(/^press a row for its resume command$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^press a row to resume$/))).toBeDefined();
     await ui.unmount();
   });
 

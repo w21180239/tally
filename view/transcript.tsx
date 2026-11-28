@@ -4,7 +4,8 @@ import type { RenderElement } from "claude-code";
 import type { AgentLive } from "../core/live-state.ts";
 import { tokensText } from "./data.ts";
 import type { KeyCtx } from "./keys.ts";
-import { amountRow, blank, textLines, title } from "./rows.tsx";
+import { gridOf } from "./grid.ts";
+import { blank, row, section, status, wrapped } from "./rows.tsx";
 import type { Table } from "./table.ts";
 import { SEP } from "./theme.ts";
 import type { TranscriptEntry } from "../engine/subagent-transcript.ts";
@@ -14,6 +15,8 @@ export const CALL_ROWS = 40;
 const PROMPT_LINES = 4;
 const ANSWER_LINES = 8;
 const CHARS_PER_TOKEN = 4;
+/** Width of the column that holds a call's tool name. */
+const TOOL_CELLS = 8;
 
 export type TranscriptInput = {
   agent: AgentLive;
@@ -37,21 +40,16 @@ export function drawTranscript(t: Table, i: TranscriptInput): TranscriptDrawing 
     </Button>,
   );
   const { entry } = i;
-  out.push(title(t, "transcript", "Transcript", `${i.agent.type}${entry?.status === "ready" ? `${SEP}${bytesText(entry.bytes)}${SEP}latest last` : ""}`));
+  // A call's tool name leads its row in a column of its own; the estimated size of its result is the figure.
+  const g = gridOf(t.cols, { tokens: true, lead: TOOL_CELLS });
+  const plain = gridOf(t.cols, { tokens: true });
+  out.push(section(t, plain, { key: "transcript", name: "Transcript", note: `${i.agent.type}${entry?.status === "ready" ? `${SEP}${bytesText(entry.bytes)}${SEP}latest last` : ""}` }));
   if (entry === undefined || entry.status === "loading") {
-    out.push(
-      <Text key="transcript-loading" dimColor>
-        Loading the transcript...
-      </Text>,
-    );
+    out.push(status(t, "transcript-loading", "Loading the transcript...", "It opens as soon as the file is read."));
     return { rows: out, ctx };
   }
   if (entry.status === "failed" || entry.view === null) {
-    out.push(
-      <Text key="transcript-failed" dimColor wrap="truncate-end">
-        {entry.message === "" ? "Its transcript could not be read." : entry.message}
-      </Text>,
-    );
+    out.push(status(t, "transcript-failed", entry.message === "" ? "Its transcript could not be read." : entry.message, "Press b to go back to the agent."));
     return { rows: out, ctx };
   }
   const v = entry.view;
@@ -61,12 +59,12 @@ export function drawTranscript(t: Table, i: TranscriptInput): TranscriptDrawing 
       Opening prompt
     </Text>,
   );
-  out.push(prompt.trim() === "" ? <Text key="transcript-prompt-none" dimColor>{"  (not recorded)"}</Text> : textLines(t, "transcript-prompt", prompt, PROMPT_LINES));
+  out.push(prompt.trim() === "" ? <Text key="transcript-prompt-none" dimColor>{"  (not recorded)"}</Text> : wrapped(t, "transcript-prompt", prompt, { max: PROMPT_LINES, quiet: true }));
   out.push(blank(t, "transcript-prompt"));
 
   const shown = i.more ? v.calls : v.calls.slice(-CALL_ROWS);
   const before = v.total - shown.length;
-  out.push(title(t, "transcript-calls", "Tools used", `${v.total} ${v.total === 1 ? "call" : "calls"}`));
+  out.push(section(t, plain, { key: "transcript-calls", name: "Tools used", note: `${v.total} ${v.total === 1 ? "call" : "calls"}` }));
   if (before > 0) {
     out.push(
       <Text key="transcript-before" dimColor>
@@ -78,7 +76,7 @@ export function drawTranscript(t: Table, i: TranscriptInput): TranscriptDrawing 
   const first = v.total - shown.length;
   for (const [n, c] of shown.entries()) {
     const at = first + n;
-    out.push(amountRow(t, { key: `call-${at}`, label: `${c.tool.padEnd(8)} ${c.item}`, amount: c.resultChars === null ? "" : `~${tokensText(c.resultChars / CHARS_PER_TOKEN)}`, quiet: true }));
+    out.push(row(t, g, { key: `call-${at}`, lead: c.tool, label: c.item, ...(c.resultChars !== null && { tokens: tokensText(c.resultChars / CHARS_PER_TOKEN), est: true }), quiet: true }));
   }
   if (v.total === 0) {
     out.push(
@@ -101,7 +99,7 @@ export function drawTranscript(t: Table, i: TranscriptInput): TranscriptDrawing 
       Latest reply
     </Text>,
   );
-  out.push(v.answer === "" ? <Text key="transcript-answer-none" dimColor>{"  (nothing said yet)"}</Text> : textLines(t, "transcript-answer", v.answer, ANSWER_LINES));
+  out.push(v.answer === "" ? <Text key="transcript-answer-none" dimColor>{"  (nothing said yet)"}</Text> : wrapped(t, "transcript-answer", v.answer, { max: ANSWER_LINES, quiet: true }));
   if (v.total > 0) {
     out.push(
       <Text key="transcript-note" dimColor wrap="truncate-end">

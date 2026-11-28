@@ -210,11 +210,12 @@ describe("context tab: what every request carries", () => {
     const r = rig(on);
     r.breakdown = { summary: bd(), full: bd() };
     const ui = await openContext($, r);
-    expect(await ui.find(TEXT(/^lazy .*deferred$/))).toBeDefined();
+    // A wholly deferred row's figure is starred, and the list's last line says what the star means.
+    expect(await ui.find(TEXT(/^lazy$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^900\*$/))).toBeDefined();
     expect(await ui.find(TEXT(/^demo/))).toBeDefined();
     expect(await ui.find(TEXT(/^demo.*deferred/))).toBeUndefined();
-    // The list's title says how much is deferred and that it is sent once used.
-    expect(await ui.find(TEXT(/900 deferred until searched for/))).toBeDefined();
+    expect(await ui.find(TEXT(/^\* 900 deferred: not loaded until searched for$/))).toBeDefined();
     expect(await ui.find(TEXT(/900 also deferred/))).toBeDefined();
     await ui.unmount();
   });
@@ -226,7 +227,10 @@ describe("context tab: what every request carries", () => {
     const ui = await openContext($, r);
     expect(await ui.find(TEXT(/^lint \u{b7} unused$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^idle \u{b7} unused$/u))).toBeDefined();
-    expect(await ui.find(TEXT(/^reviewer \u{b7} unused$/u))).toBeDefined();
+    // A list where nothing was called says so once in its title and does not repeat it on every row.
+    expect(await ui.find(TEXT(/^reviewer$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^reviewer .*unused/))).toBeUndefined();
+    expect(await ui.find(TEXT(/^1 \u{b7} none called in 30 days$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^deploy/))).toBeDefined();
     expect(await ui.find(TEXT(/^deploy .*unused/))).toBeUndefined();
     expect(await ui.find(TEXT(/^demo .*unused/))).toBeUndefined();
@@ -335,8 +339,8 @@ describe("context tab: sub-agents", () => {
     expect(await ui.find(TEXT(/^Current context \u{b7} 56% of its window$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^111k$/))).toBeDefined();
     expect(await ui.find(TEXT(/^Highest context \u{b7} 56% of its window$/u))).toBeDefined();
-    expect(await ui.find(TEXT(/^find the bug in the parser$/))).toBeDefined();
-    expect(await ui.find(TEXT(/^and report the file$/))).toBeDefined();
+    // The prompt is one wrapped text, its lines kept.
+    expect(await ui.find(TEXT(/^find the bug in the parser\nand report the file$/))).toBeDefined();
     expect(await ui.find({ key: "agent-tool-Bash" })).toBeDefined();
     expect(await ui.find(TEXT(/^2$/))).toBeDefined();
     expect(await ui.find(TEXT(/v open/))).toBeDefined();
@@ -454,7 +458,8 @@ describe("context tab: transcript view", () => {
     expect(await ui.find({ key: "call-2399" })).toBeDefined();
     expect(await ui.find({ key: "call-2360" })).toBeDefined();
     expect(await ui.find({ key: "call-2359" })).toBeUndefined();
-    expect(await ui.find(TEXT(/^Bash\s+echo step-2399$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Bash$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^echo step-2399$/))).toBeDefined();
     expect(await ui.find(TEXT(/^~600$/))).toBeDefined();
     expect(await ui.find(TEXT(/^find the bug in the parser$/))).toBeDefined();
     expect(await ui.find(TEXT(/^All done: the bug is in the lexer\.$/))).toBeDefined();
@@ -730,7 +735,7 @@ describe("MCP figures on the Session tab", () => {
     expect(await ui.find({ key: "mcp-demo" })).toBeDefined();
     expect(await ui.find(TEXT(/^demo \u{b7} 1 call$/u))).toBeDefined();
     // 100k tokens x $0.2 per MTok x 2 main requests = 4 cents.
-    expect(await ui.find(TEXT(/^~4\u{a2}$/u))).toBeDefined();
+    expect(await ui.find(TEXT(/^~(?:\$0\.04|4\.0\u{a2})$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^~ schemas only, from this launch's requests/))).toBeDefined();
     expect(await ui.find(TEXT(/^schemas: main requests; results: main and sub-agents$/))).toBeUndefined();
     await ui.unmount();

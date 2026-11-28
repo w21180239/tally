@@ -4,7 +4,7 @@ import { describe, expect, mock, test } from "claude-code/testing";
 import { cacheUnitPrices, costOf } from "../core/pricing.ts";
 import { BUILTIN_PRICES } from "../core/prices.builtin.ts";
 import { dayWords, historyOf, localDayName, scanOf, scanText, SCAN_STALE_MS } from "../core/history.ts";
-import { formatMoney } from "../core/money.ts";
+import { headlineMoney, moneyBlock } from "../core/money.ts";
 import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import type { BreakdownSnapshot } from "../core/breakdown.ts";
 import type { Shard } from "../core/shard.ts";
@@ -32,7 +32,9 @@ const PANE: Omit<RenderInput<"Pane">, "surface"> = {
   props: { title: "tally", isFocused: true, bodyColumns: 89, placement: "dock", scroll: { offset: 0, bodyRows: 120 }, view: {} },
 };
 const TEXT = (re: RegExp) => ({ type: "Text" as const, text: re });
-const money = (usd: number): string => formatMoney(usd, DEFAULT_SETTINGS.money, DEFAULT_SETTINGS.decimals);
+// The headline is in dollars; a row's figure is in the unit of the tab's whole money column (dollars from $1 in it, else cents).
+const money = (usd: number): string => headlineMoney(usd, DEFAULT_SETTINGS.money, DEFAULT_SETTINGS.decimals);
+const column = (usd: number): string => `(?:${moneyBlock([usd, 0], DEFAULT_SETTINGS.money, DEFAULT_SETTINGS.decimals)[0]!.replace(/[$.]/g, "\\$&")}|${moneyBlock([usd, 5], DEFAULT_SETTINGS.money, DEFAULT_SETTINGS.decimals)[0]!.replace(/[$.]/g, "\\$&")})`;
 
 type Rig = { world: World; clock: ReturnType<typeof mock.clock>; stored: Map<string, unknown>; cwd: { v: unknown } };
 
@@ -151,7 +153,7 @@ describe("history tab", () => {
     for (const name of ["Billed kinds", "Spend per day", "Spend per model", "Main thread and sub-agents", "Sub-agent type and model", "Spend per repo", "Largest sessions", "Context fill by tool", "MCP servers"]) {
       expect(await ui.find(TEXT(new RegExp(`^${name}$`)))).toBeDefined();
     }
-    for (const kind of [/^Input \u{b7}/u, /^Output \u{b7}/u, /^Cache read \u{b7}/u, /^Cache write \u{b7}/u]) expect(await ui.find(TEXT(kind))).toBeDefined();
+    for (const kind of [/^Input$/, /^Output$/, /^Cache read$/, /^Cache write$/]) expect(await ui.find(TEXT(kind))).toBeDefined();
     expect(await ui.find(TEXT(/^opus-5-5$/))).toBeDefined();
     expect(await ui.find(TEXT(/^Explore \u{b7} opus-5-5$/u))).toBeDefined();
     expect(await ui.find(TEXT(/^demo$/))).toBeDefined();
@@ -165,7 +167,9 @@ describe("history tab", () => {
     const r = rig(on);
     writeScan(r.world, "day", 42, 100);
     const ui = await open($, r);
-    expect(await ui.find(TEXT(/^42% of the transcripts indexed so far; these figures are still changing\.$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^Indexing transcripts$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^42%$/))).toBeDefined();
+    expect(await ui.find(TEXT(/^figures are still changing$/))).toBeDefined();
     expect(await ui.find(TEXT(/ tokens in the past 30 days/))).toBeDefined();
     expect(await ui.find(TEXT(/^Billed kinds$/))).toBeDefined();
     await ui.unmount();
@@ -175,7 +179,7 @@ describe("history tab", () => {
     const r = rig(on);
     writeScan(r.world, "day", 42, 100);
     const ui = await open($, r, { other: false });
-    expect(await ui.find(TEXT(/^42% of the transcripts/))).toBeDefined();
+    expect(await ui.find(TEXT(/^42%$/))).toBeDefined();
     expect(await ui.find(TEXT(/ \u{b7} 4 requests$/u))).toBeDefined();
     // The scan ends having indexed another project; the next draw after the check time sees both.
     await seedProject(r.world, "-work-other", otherRows());
@@ -316,7 +320,7 @@ describe("history tab", () => {
     const expected = read + (s.mcpReread.srv ?? 0);
     expect(expected).toBeGreaterThan(read);
     expect(await ui.find(TEXT(/^srv \u{b7} 2 calls$/u))).toBeDefined();
-    expect(await ui.find(TEXT(new RegExp(`^${money(expected).replace(/[$.]/g, "\\$&")}$`)))).toBeDefined();
+    expect(await ui.find(TEXT(new RegExp(`^${column(expected)}$`)))).toBeDefined();
     expect(await ui.find(TEXT(/no snapshot/))).toBeUndefined();
     await ui.unmount();
   });
